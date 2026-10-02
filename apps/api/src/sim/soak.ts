@@ -9,6 +9,7 @@ import { createPool, tx } from '../lib/db.ts';
 import { seedAdmin, seedSimTable, upsertClub } from '../seed.ts';
 import { runOutboxOnce, sweepOnce } from '../worker.ts';
 import { SimTable, type Send, keysToFile } from './tableSim.ts';
+import { SETTLE_GRACE_MS } from '../growth/leaderboards.ts';
 
 /**
  * Soak test for the phase-1 exit criterion (docs/06): N simulated rounds on a fresh database with
@@ -64,7 +65,8 @@ const growthFail: string[] = [];
 const check = (cond: boolean, what: string) => { if (!cond) growthFail.push(what); };
 check(!(await modeEnabled(db, 'real-fiat')) && !(await modeEnabled(db, 'real-crypto')), 'real money must stay off');
 const windowStart = new Date(Date.now() - 1_000), windowEnd = new Date(Date.now() + 12 * 3_600_000);
-const settleAt = new Date(windowEnd.getTime() + 60_000);
+// Settlement waits SETTLE_GRACE_MS after the end for late-committing bets.
+const settleAt = new Date(windowEnd.getTime() + SETTLE_GRACE_MS + 60_000);
 const realBoard = await api('POST', '/v1/admin/leaderboards', adminToken, {
   name: 'Soak real', mode: 'real-fiat', currency: 'EUR', metric: 'net', prize_split_bps: [10_000], starts_at: windowStart, ends_at: windowEnd,
 });
@@ -152,7 +154,9 @@ check(poolLeft === 0, `pool balance after settlement ${poolLeft}`);
 check(paid === funded + accrued - returned, `payouts ${paid} != funded ${funded} + accrued ${accrued} - returned ${returned}`);
 check(Object.keys(flows).every((k) => ['pool.fund.sponsor', 'pool.accrue.margin', 'pool.payout', 'pool.return'].includes(k)), `unexpected pool postings ${Object.keys(flows)}`);
 check(funded === FUND && fundingBy.sponsor === funded && (fundingBy.margin ?? 0) === accrued, 'leaderboard_funding must match the ledger');
-check(accrued === accruedByTicks, `accrual reported by the worker ${accruedByTicks} != ledger ${accrued}`);
+// Ticks report accruals on live boards only; settlement's final accrual (which, with the settle grace,
+// can be all of it on a short run) is in the ledger and leaderboard_funding, checked above.
+check(accruedByTicks <= accrued, `accrual reported by the worker ${accruedByTicks} > ledger ${accrued}`);
 check(paidOut.reduce((a, b) => a + b, 0) === paid, `recorded prizes ${paidOut} != paid ${paid}`);
 check(JSON.stringify(prizes.slice(0, 3)) === JSON.stringify(expectPrizes), `prizes ${prizes.slice(0, 3)} != split of pool ${poolAtSettle} (${expectPrizes})`);
 const promoClaims = (await db.query<{ user_id: string; amount_minor: string }>('select user_id, amount_minor::text as amount_minor from promotion_claims where promotion_id = $1', [promoId])).rows;
