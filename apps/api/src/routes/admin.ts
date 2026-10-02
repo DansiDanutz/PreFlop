@@ -20,7 +20,7 @@ export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...r
   return u;
 }
 
-const Setting = z.object({ value: z.unknown() });
+const Setting = z.object({ value: z.unknown(), note: z.string().max(500).optional() });
 
 /** Evidence of one round for reviewers: capture record, image, entries and procedure ordinals. */
 export async function evidenceOf(ctx: AppContext, roundId: string) {
@@ -61,13 +61,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.put('/v1/admin/settings/:key', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin');
     const { key } = req.params as { key: string };
-    const { value } = Setting.parse(req.body);
+    const { value, note } = Setting.parse(req.body);
     if (key === 'physical_play_enabled' && value !== false && value !== true) throw unprocessable('invalid_value', 'physical_play_enabled is true or false');
     if (key === 'modes_enabled' && (typeof value !== 'object' || value === null)) throw unprocessable('invalid_value', 'modes_enabled is an object of mode → boolean');
     return tx(ctx.db, async (c) => {
       const r = await c.query('update settings set value = $2, updated_at = now(), updated_by = $3 where key = $1 returning key', [key, JSON.stringify(value), u.id]);
       if (!r.rowCount) throw notFound('setting');
-      await audit(c, { type: 'settings.changed', key, value: value as never, by: u.id });
+      await audit(c, { type: 'settings.changed', key, value: value as never, note: note ?? null, by: u.id });
       return { key, value };
     });
   });

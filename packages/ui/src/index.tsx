@@ -164,10 +164,11 @@ export function RoundStepper({ phase, className }: { phase: RoundPhase; classNam
 export function formatMoney(minor: number, currency: string): string {
   const digits: Record<string, number> = { EUR: 2, USDT: 6, USDC: 6, PLAY: 0, CHIP: 0, DIAMOND: 0 };
   const d = digits[currency] ?? 2;
-  const v = minor / 10 ** d;
+  const v = Math.abs(minor) / 10 ** d;
   const shown = currency === 'USDT' || currency === 'USDC' ? 2 : d;
   const n = v.toLocaleString('en-US', { minimumFractionDigits: shown, maximumFractionDigits: shown });
-  return currency === 'EUR' ? `€${n}` : currency === 'PLAY' ? n : currency === 'DIAMOND' ? `${n} ◆` : `${n} ${currency}`;
+  const sign = minor < 0 ? '-' : '';
+  return currency === 'EUR' ? `${sign}€${n}` : currency === 'PLAY' ? `${sign}${n}` : currency === 'DIAMOND' ? `${sign}${n} ◆` : `${sign}${n} ${currency}`;
 }
 
 export const currencyLabel = (c: string) => ({ PLAY: 'Free chips', CHIP: 'Chips', DIAMOND: 'Diamonds', EUR: 'Euro', USDT: 'USDT', USDC: 'USDC' })[c] ?? c;

@@ -134,10 +134,13 @@ describe('pool room in virtual chips', () => {
     const room = (await h.api('POST', `/v1/org/${orgId}/rooms`, owner.token, { name: 'Friday pool', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' })).body;
     const n = await open();
     const rid = `sim-1:h${n}`;
-    await h.api('POST', '/v1/bets', a.token, { round_id: rid, selection_id: 'colour:mixed', stake_minor: 500, odds_centi: 100, room_id: room.id }, { 'idempotency-key': 'pool-a-0001' });
-    await h.api('POST', '/v1/bets', b.token, { round_id: rid, selection_id: 'colour:all-red', stake_minor: 500, odds_centi: 100, room_id: room.id }, { 'idempotency-key': 'pool-b-0001' });
+    const ba = await h.api('POST', '/v1/bets', a.token, { round_id: rid, selection_id: 'colour:mixed', stake_minor: 500, odds_centi: 100, room_id: room.id }, { 'idempotency-key': 'pool-a-0001' });
+    const bb = await h.api('POST', '/v1/bets', b.token, { round_id: rid, selection_id: 'colour:all-red', stake_minor: 500, odds_centi: 100, room_id: room.id }, { 'idempotency-key': 'pool-b-0001' });
+    expect([ba.status, bb.status], JSON.stringify([ba.body, bb.body])).toEqual([201, 201]);
     const out = await h.sim.playHand(n);
     await h.work();
+    const settled = (await h.db.query('select state, void_reason from rounds where id = $1', [rid])).rows[0];
+    expect(settled.state, JSON.stringify(settled)).toBe('SETTLED');
     const red = out.cards.every((c) => c.endsWith('h') || c.endsWith('d'));
     const black = out.cards.every((c) => c.endsWith('s') || c.endsWith('c'));
     // each stake 500: rake 50, PreFlop fee 7 (1.5%) → 443 in the pool each, 886 total

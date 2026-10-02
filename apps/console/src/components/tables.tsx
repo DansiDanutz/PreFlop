@@ -1,3 +1,4 @@
+import type { LinkSample } from '@preflop/client';
 import type { CertItem } from '@preflop/client';
 import { cx } from '@preflop/ui';
 import { CheckCircle2, Circle, Clock } from 'lucide-react';
@@ -61,7 +62,8 @@ const LINK_FLAGS: { keys: string[]; label: string }[] = [
 ];
 
 /** Heartbeat link stats against the docs/11 §3 limits. Unknown keys are listed as-is. */
-export function LinkHealth({ link, at }: { link: Record<string, unknown> | null; at: string | null }) {
+export function LinkHealth({ link: sample, at }: { link: LinkSample | Record<string, unknown> | null; at: string | null }) {
+  const link = sample as Record<string, unknown> | null;
   if (!link) return <p className="text-sm text-muted">No heartbeat received yet.</p>;
   const used = new Set<string>();
   const rows = LINK_RULES.flatMap((r) => {

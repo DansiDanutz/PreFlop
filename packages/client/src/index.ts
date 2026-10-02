@@ -65,12 +65,14 @@ export interface RoomDetail extends Room { odds: Record<string, number | null> }
 export interface OrgOverview {
   org: { id: string; kind: OrgKind; name: string; status: string; settings: Record<string, unknown> };
   kpis: { label: string; value: number; currency?: string; hint?: string }[];
-  series: { day: string; turnover_minor: number; ggr_minor: number; bets: number }[];
+  /** One row per day and currency (amounts are minor units of that currency). */
+  series: { day: string; currency: string; turnover_minor: number; ggr_minor: number; bets: number }[];
 }
 export interface StaffCredential { id: string; table_id: string; person_id: string; role: 'dealer' | 'floor' | 'floor_manager'; revoked: boolean; created_at: string }
 export interface Device { id: string; table_id: string; revoked: boolean; last_seq: number; created_at: string }
 export interface CertItem { ok: boolean; by?: string; at?: string; expires_at?: string }
-export interface ClubTable extends TableSummary { certification: Record<string, CertItem>; max_round_loss_minor: number; link: Record<string, unknown> | null; link_at: string | null }
+export interface LinkSample { uploadMbps: number; rttMs: number; jitterMs: number; packetLossPct: number; videoDelayMs: number; backupLinkUp: boolean; streamLive: boolean }
+export interface ClubTable extends TableSummary { certification: Record<string, CertItem>; max_round_loss_minor: number; link: LinkSample | null; link_at: string | null }
 export interface Statement {
   party: string; period: string; currency: string;
   lines: { label: string; metric?: number; tier?: string; rate_bps?: number; base_minor?: number; amount_minor: number }[];
@@ -217,9 +219,14 @@ export function createClient(o: ClientOptions) {
     partnerSaveWidget: (id: string, settings: Record<string, unknown>) => put<{ settings: Record<string, unknown>; snippet: string }>(`${org(id)}/widget`, { settings }),
 
     // ---------- PreFlop team (admin)
+    // ---------- Partner API (server to server only: never ship client_secret to a browser)
+    partnerToken: (client_id: string, client_secret: string) => post<{ access_token: string; token_type: 'Bearer'; expires_in: number }>('/v1/partner/oauth/token', { grant_type: 'client_credentials', client_id, client_secret }),
+    partnerCreatePlayer: (token: string, player_ref: string, display_name?: string) => req<{ player_ref: string; user_id: string }>('POST', '/v1/partner/players', { player_ref, ...(display_name ? { display_name } : {}) }, { authorization: `Bearer ${token}` }),
+    partnerPlayerSession: (token: string, player_ref: string) => req<{ token: string; user_id: string }>('POST', `/v1/partner/players/${encodeURIComponent(player_ref)}/session`, {}, { authorization: `Bearer ${token}` }),
+
     adminOverview: () => get<{ users: { n: number }; bets_24h: { n: number; staked: number }; rounds_24h: { settled: number; voided: number }; open_alerts: { n: number }; tables: TableSummary[] }>('/v1/admin/overview'),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
-    adminSetSetting: (key: string, value: unknown) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value }),
+    adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),
     adminAlerts: () => get<{ alerts: Alert[] }>('/v1/admin/alerts'),
     adminResolveAlert: (id: number) => post<{ ok: true }>(`/v1/admin/alerts/${id}/resolve`),
     adminReviewQueue: () => get<{ rounds: (Round & { review_reasons: string[] | null; table_name: string })[] }>('/v1/admin/review-queue'),
@@ -238,7 +245,7 @@ export function createClient(o: ClientOptions) {
     adminLedger: (f: { account?: string; kind?: string; limit?: number } = {}) => get<{ accounts: { account_id: string; balance_minor: number; currency: string }[]; entries: (LedgerLine & { tx_id: number })[] }>(`/v1/admin/ledger${q(f)}`),
     adminAudit: (f: { limit?: number } = {}) => get<{ chain: { ok: boolean; brokenAt: number | null; count: number }; events: { seq: number; at: string; hash: string; event: string }[] }>(`/v1/admin/audit${q(f)}`),
     adminStatements: (period?: string) => get<{ statements: Statement[] }>(`/v1/admin/statements${q({ period })}`),
-    adminRisk: () => get<{ rounds: { round_id: string; table_name: string; bets: number; staked_minor: number; worst_case_loss_minor: number; limit_minor: number; currency: string }[]; monitor: { table_id: string; table_name: string; hands: number; top: { selection_id: string; statistic: number }[] }[] }>('/v1/admin/risk'),
+    adminRisk: () => get<{ rounds: { round_id: string; table_name: string; bets: number; staked_minor: number; worst_case_loss_minor: number; limit_minor: number; currency: string }[]; monitor: { table_id: string; table_name: string; hands: number; threshold: number; top: { selection_id: string; statistic: number }[] }[] }>('/v1/admin/risk'),
     adminPayments: () => get<{ payments: (Payment & { user_email: string | null; org_id: string | null })[] }>('/v1/admin/payments'),
   };
 }

@@ -56,14 +56,16 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const { org } = await requireOrg(ctx, req, oid(req));
     const where = org.kind === 'club' ? `r.table_id in (select id from poker_tables where club_id = $1)`
       : org.kind === 'partner' ? `b.partner_id = $1` : `b.house_owner = $1`;
-    const series = (await ctx.db.query<{ day: string; turnover_minor: number; ggr_minor: number; bets: number }>(
-      `select to_char(date_trunc('day', b.placed_at), 'YYYY-MM-DD') as day, coalesce(sum(b.stake_minor), 0)::bigint as turnover_minor,
+    const series = (await ctx.db.query<{ day: string; currency: string; turnover_minor: number; ggr_minor: number; bets: number }>(
+      `select to_char(date_trunc('day', b.placed_at), 'YYYY-MM-DD') as day, b.currency, coalesce(sum(b.stake_minor), 0)::bigint as turnover_minor,
               coalesce(sum(b.stake_minor - coalesce(b.payout_minor, 0)) filter (where b.status in ('won','lost')), 0)::bigint as ggr_minor, count(*)::int as bets
          from bets b join rounds r on r.id = b.round_id
-        where ${where} and b.placed_at > now() - interval '30 days' group by 1 order by 1`, [org.id])).rows;
+        where ${where} and b.placed_at > now() - interval '30 days' group by 1, 2 order by 1, 2`, [org.id])).rows;
     const kpis: { label: string; value: number; currency?: string; hint?: string }[] = [];
-    const sum = (k: 'turnover_minor' | 'ggr_minor' | 'bets') => series.reduce((a, x) => a + Number(x[k]), 0);
-    kpis.push({ label: 'Bets (30 days)', value: sum('bets') }, { label: 'Turnover (30 days)', value: sum('turnover_minor'), hint: 'all currencies, minor units' }, { label: 'House result (30 days)', value: sum('ggr_minor') });
+    const sum = (k: 'turnover_minor' | 'ggr_minor' | 'bets', cur?: string) => series.filter((x) => !cur || x.currency === cur).reduce((a, x) => a + Number(x[k]), 0);
+    kpis.push({ label: 'Bets (30 days)', value: sum('bets') });
+    for (const cur of [...new Set(series.map((x) => x.currency))].sort())
+      kpis.push({ label: 'Turnover (30 days)', value: sum('turnover_minor', cur), currency: cur }, { label: 'House result (30 days)', value: sum('ggr_minor', cur), currency: cur });
     if (org.kind === 'club') {
       const h = (await ctx.db.query<{ n: number; t: number }>(`select count(*) filter (where r.state = 'SETTLED')::int as n, (select count(*)::int from poker_tables where club_id = $1) as t from rounds r where r.table_id in (select id from poker_tables where club_id = $1) and r.opened_at > now() - interval '30 days'`, [org.id])).rows[0]!;
       kpis.unshift({ label: 'Tables', value: h.t }, { label: 'Hands dealt (30 days)', value: h.n });
