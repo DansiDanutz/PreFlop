@@ -170,7 +170,8 @@ export async function payStatement(c: Tx, id: string, by: string): Promise<void>
   if (!s) throw notFound('statement');
   if (s.status !== 'approved') throw unprocessable('not_approved', 'approve the statement before paying it');
   if (s.agent_id === by) throw forbidden('self_approval', 'another admin pays your own statements');
-  const agent = (await c.query<{ status: string }>('select status from agents where user_id = $1', [s.agent_id])).rows[0];
+  // Held until the payment commits, so a concurrent suspension waits for it (or wins before it).
+  const agent = (await c.query<{ status: string }>('select status from agents where user_id = $1 for share', [s.agent_id])).rows[0];
   if (agent?.status !== 'active') throw unprocessable('agent_not_active', 'commission is paid to active agents only; re-activate the agent first');
   const mode = REAL_CURRENCIES[s.currency]!;
   if (!(await modeEnabled(c, mode))) throw forbidden('mode_disabled', `${mode} is switched off; commissions are paid when it is enabled`);
