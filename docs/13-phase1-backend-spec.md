@@ -8,7 +8,7 @@ re-implement betting maths.**
 ## 1. Scope
 
 **In scope for phase 1:**
-- Fixed-odds betting where **PreFlop is the house**, in one mode per table. **Physical tables run play money only** until the PreFlop Trusted Shuffler is certified (`docs/12` §2a, audit finding F01). Real-money modes are built and tested, but stay switched off.
+- Fixed-odds betting where **PreFlop is the house**, in one mode per table. **Physical-table play is disabled in every mode, including non-redeemable play money** (owner decision, re-audit of 2026-10-02). Certification of the PreFlop Trusted Shuffler (`docs/12` §2a, audit finding F01) is a **prerequisite for reconsidering** that decision, not permission to enable it automatically. Phase 1 runs end to end on the **simulated table** only; simulated practice play is a separate scope. Real-money modes are built and tested, but stay switched off.
 - The round lifecycle driven by the Provider API.
 - The double-entry ledger.
 - Bet placement with exact exposure.
@@ -117,8 +117,13 @@ create table rounds (
   channel              text not null default 'direct',
   state                text not null check (state in ('OPEN','LOCKED','DEALT','REVIEW','EVIDENCE_REJECTED','SETTLED','VOID')),
   opened_at            timestamptz not null default now(),
+  procedure_step       text not null default 'open' check (procedure_step in
+                         ('open','locked','shuffle_commanded','shuffled','cut_instructed','cut','dealing')),
+  shuffle_command_nonce text,                              -- single-use, issued at Start hand
+  shuffle_command_at   timestamptz,
   shuffle_complete_at  timestamptz,
   shuffle_source       text,
+  shuffle_attested_nonce text,                             -- nonce in the shuffler's signed completion
   locked_at            timestamptz,
   cut_depth            integer,
   cut_instruction_at   timestamptz,
@@ -129,6 +134,7 @@ create table rounds (
   void_reason          text,
   voided_by            text,                               -- staff credential id, or 'system:sweeper'
   review_reasons       jsonb,
+  review_started_at    timestamptz,                         -- set on entering REVIEW; the review SLA runs from here
   flop                 text[],
   flop_index           integer,
   unique (table_id, hand_no)
@@ -157,6 +163,33 @@ create table outbox (
 );
 -- At most one pending job per (kind, ref); enqueue with "on conflict do nothing".
 create unique index outbox_pending on outbox (kind, ref) where done_at is null;
+
+-- Per-hand procedure events with server-assigned ordinals (strictly increasing per round,
+-- assigned under the round lock as max(ord)+1), so steps can never tie on a timestamp.
+create table round_events (
+  round_id      text not null references rounds(id),
+  ord           integer not null,
+  step          text not null,     -- lock | shuffle_command | shuffle_complete | cut_instruction | cut | deal_start
+  at            timestamptz not null default clock_timestamp(),
+  credential_id text,
+  primary key (round_id, ord),
+  unique (round_id, step)
+);
+
+-- Generic write idempotency for every non-bet write route (start, cut, deal-start, entries, void,
+-- review, transfers…). The stored response is written in the SAME transaction as the effect, so a
+-- retry after a lost response returns exactly what was committed and never runs twice.
+create table idempotency_responses (
+  principal        text not null,          -- credential id or user id
+  idempotency_key  text not null,
+  method           text not null,
+  path             text not null,
+  request_sha256   text not null,          -- same key with a different request → 422 idempotency_mismatch
+  status           integer not null,
+  body             text not null,
+  created_at       timestamptz not null default now(),
+  primary key (principal, idempotency_key)
+);
 
 -- Only AUTHENTIC captures (device, signature, seq and chain verified) are stored here: one per round.
 create table captures (
@@ -276,38 +309,46 @@ create trigger audit_head_no_delete before delete on audit_head for each row exe
 ## 4. Round lifecycle
 
 ```
-OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND admitted capture──▶ DEALT ──content verified, 3-way match──▶ SETTLED
+OPEN ──Start hand (lock + shuffle command)──▶ LOCKED ──authentic AND admitted capture──▶ DEALT ──content verified, 3-way match──▶ SETTLED
   │                                        │  (entries alone, or a capture failing      ├─entries disagree─▶ REVIEW ──floor manager──▶ SETTLED | VOID
   │                                        │   authenticity, stay LOCKED)               └─content rejected─▶ EVIDENCE_REJECTED ──auto void──▶ VOID
   │                                        └─authentic but NOT admitted (premature / malformed)─▶ EVIDENCE_REJECTED ──auto void──▶ VOID
   └──────────────────────── void ──────────┴──── result deadline: still LOCKED or DEALT at locked_at + SLA ─────▶ VOID (refund all)
+
+LOCKED substates (procedure_step, enforced; each step is refused unless the previous one is recorded):
+  locked ─▶ shuffle_commanded ─▶ shuffled ─▶ cut_instructed ─▶ cut ─▶ dealing
+  (Start)   (nonce issued)        (fresh trusted   (random depth    (dealer   (deal-start)
+                                   shuffle, signed  drawn)           cut)
+                                   for the nonce)
 ```
 
 - **Round ids** are `<tableId>:h<handNo>`.
 - **Betting window** (same as `docs/01` §4): the round for hand N+1 **opens when flop N is captured**, meaning an **authentic and admitted** signed capture of flop N has been recorded and round N has moved to DEALT. Dealer and floor entries alone never open betting. Players bet on flop N+1 while the rest of hand N is played. Betting closes at Start hand N+1.
 - **Concurrency contract (applies to every operation below):**
   - Every operation that reads or changes a round runs in **one transaction that starts with `select … from rounds where id = $1 for update`**. That covers start, cut, deal-start, a manual entry, a capture, an image, `resolve()`, a void, a review decision, the sweeper and `ensureOpenRound()`. Concurrent inputs for one round are therefore strictly serialised, and each one sees every input committed before it.
-  - A capture also locks its device row (`select … from devices where id = $2 for update`) for the sequence check and update. **Lock order is always the round first, then the device, then wallet accounts**, so these locks never deadlock.
+  - A capture also locks its device row (`select … from devices where id = $2 for update`) for the sequence check and update.
+  - **Lock order, everywhere: one round row first, then the device, then wallet accounts in ascending account-id order.** A transaction locks **at most one round**, and **never takes a round lock while holding a wallet lock**. Bet placement follows the same order (§5). With every transaction acquiring locks in this one global order, no wait-for cycle can form by design.
+  - **Backstop and retry:** PostgreSQL's deadlock detector still runs. Any transaction that fails with `40P01 deadlock_detected` or `40001 serialization_failure` is rolled back completely and **retried from the start up to 3 times** with jittered backoff (10–50 ms, then 50–200 ms, then 200–800 ms). Retries are safe because every write is idempotent (`Idempotency-Key`, `(kind, ref)` on ledger transactions, the terminal compare-and-set). After the last retry the caller gets `503 retry_later`; a worker job is simply left in the outbox. Every retry is counted in metrics and a non-zero deadlock rate raises an alert, because it means a code path broke the lock order.
   - Every input that could complete a round's evidence also **enqueues a `resolve_round` job in `outbox`** in the same transaction. After commit, a worker runs `resolve()` (idempotent: a no-op unless the round is DEALT and every input is present). The sweeper re-enqueues any DEALT round that has all its inputs.
-  - **Exactly one terminal outcome:** money moves only after the caller **wins the terminal transition** in the same transaction. That transition is `update rounds set state = 'SETTLED' … where id = $1 and state = 'DEALT' returning id` for settlement, and `… set state = 'VOID' … where id = $1 and state in (<voidable states>) returning id` for a void. If no row is returned, the round was already settled or voided, so no payout or refund is posted. Bet rows are updated with the same rule (`where status = 'accepted'`). A refund and a payout for the same bet can therefore never both commit.
+  - **Exactly one terminal outcome:** money moves only after the caller **wins the terminal transition** in the same transaction. That transition is a compare-and-set on an **explicit expected source state that depends on who is settling**: `update rounds set state = 'SETTLED' … where id = $1 and state = $expected returning id`, where `$expected = 'DEALT'` for automatic settlement by `resolve()` and `$expected = 'REVIEW'` for an authorized floor-manager decision in `resolveReview()`. A void is `… set state = 'VOID' … where id = $1 and state in (<voidable states>) returning id`. No other path may settle, and the two settlement paths can never both win because a round is in exactly one state. If no row is returned, the round was already settled or voided, so no payout or refund is posted. Bet rows are updated with the same rule (`where status = 'accepted'`). A refund and a payout for the same bet can therefore never both commit.
   - So two entries committed concurrently, a crash between commit and resolve, or a settle racing a void can never leave a round stuck or paid twice.
 - **Opening a round** requires `tableReadiness()`: every certification flag is true **and not expired**, and the last heartbeat is less than 5 s old with a healthy link and the **stream live**. Otherwise the call fails with `409 table_not_ready`.
   - Exactly one round per table may be OPEN.
   - `ensureOpenRound()` reopens betting after a pause, once the table is healthy again.
-- **`shuffle-complete`** (OPEN): records the time and a `source` that is **derived from the credential, never sent by the caller**.
-  - Sent by the Table Box, which carries the paired Trusted Shuffler bridge, with its **device signature** → `shuffler`.
-  - Sent with any staff credential (dealer or floor tablet) → `manual`.
+- **Procedure steps are substates, not timestamps.** Each step below is accepted only from the previous `procedure_step`; anything else gets `409 invalid_procedure_step`. Each accepted step appends a `round_events` row with the next ordinal. `handProcedureProblems()` receives these **ordinals** (strictly increasing, never tied), plus the shuffle nonces.
+- **`start`** (OPEN → LOCKED, `procedure_step` `open → shuffle_commanded`), all in one transaction:
+  1. Lock the round (bets on this flop close).
+  2. Generate a fresh 128-bit **shuffle command nonce**, store `shuffle_command_nonce` / `shuffle_command_at`.
+  3. Audit the lock and the command.
+  4. Respond with `{ shuffle_command: { nonce } }`; the Table Box's shuffler bridge receives the same command over its own signed channel (`GET …/hands/:n/shuffle-command`).
 
-  A manual shuffle is recorded, but it **voids** the hand when `resolve()` runs. A staff tablet can therefore never pass off a hand shuffle as a machine shuffle.
-- **`start`** (OPEN → LOCKED), all in one transaction:
-  1. Require shuffle-complete.
-  2. Lock the round.
-  3. `drawCutDepth()` and store `cut_depth` / `cut_instruction_at`.
-  4. Audit the lock.
-  5. Respond with `{ cut_depth }`.
+  `start` does **not** require a prior shuffle: the deck is shuffled **after** the lock (`docs/12` §2a), so no deck order exists while bets are open. `start` does **not** open the next round. Round N+1 opens when this round reaches DEALT (see the betting window above).
+- **`shuffle-complete`** (`shuffle_commanded → shuffled`): the Trusted Shuffler performs a **fresh shuffle of one deck** for this command and signs a completion record `{shuffler_id, table_id, hand_no, nonce, completed_at}`; the Table Box forwards it with its **device signature**.
+  - The `source` is **derived from the credential, never sent by the caller**: device-signed with a valid shuffler attestation → `shuffler`; any staff credential → `manual`.
+  - The attested nonce is stored in `shuffle_attested_nonce`. A completion for another nonce, or a manual one, is recorded but **voids** the hand when `resolve()` runs.
+  - In the same transaction PreFlop runs `drawCutDepth()`, stores `cut_depth` / `cut_instruction_at`, moves to `cut_instructed`, and pushes the depth to the dealer tablet (`round.cut_instruction`). The response is `{ cut_depth }`.
+- **`cut`** (`cut_instructed → cut`) and **`deal-start`** (`cut → dealing`): staff `dealer`; record the step.
 
-  `start` does **not** open the next round. Round N+1 opens when this round reaches DEALT (see the betting window above).
-- **`cut`** and **`deal-start`** (LOCKED): record the timestamps.
 - **Dealer and floor flop entries** (LOCKED, DEALT, REVIEW or EVIDENCE_REJECTED):
   - Stored in `flop_entries`, each with the submitting `credential_id` and `person_id`. The **source is derived from the credential's role**: a `dealer` credential writes the dealer entry; a `floor` or `floor_manager` credential writes the floor entry. The body carries only the cards.
   - The two entries must come from **two different people** (a unique index enforces this). A dealer credential can never write the floor confirmation.
@@ -325,9 +366,9 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
   - **Otherwise the round must be LOCKED.** Any other state gets `409 invalid_round_state`, and the upload is logged in `capture_attempts`.
   - **Authentic** → in one transaction (round lock, then device lock):
     1. **Chain ingestion:** insert into `captures` and advance the device checkpoint (`last_seq`, `last_hash`). This always happens for an authentic record, so the Table Box chain stays continuous whatever happens to the round.
-    2. **Admission** (`captureAdmissionProblems()` in the engine): deal-start must be recorded; the signed `capturedAt` must fall after the lock and deal-start and within the capture window; and the record must hold three valid, distinct cards. These are all fields of the signed record, so this check runs now, before anything opens.
+    2. **Admission** (`captureAdmissionProblems()` in the engine): deal-start must be recorded (`procedure_step = 'dealing'`); the signed `capturedAt` must fall after the lock and deal-start and within the capture window; and the record must hold three valid, distinct cards. These are all fields of the signed record, so this check runs now, before anything opens.
     3. **Admitted** → move LOCKED → DEALT, **open round N+1** (skipped silently if the table is not ready), and enqueue `resolve_round`.
-    4. **Not admitted** (premature or malformed) → move to **EVIDENCE_REJECTED** with the reasons, raise a security alert, and **do not open round N+1**. Because N+1 never opened, no next-hand bets exist to unwind. The round auto-voids, and N+1 opens through `ensureOpenRound()` once the table is healthy.
+    4. **Not admitted** (premature or malformed) → move to **EVIDENCE_REJECTED** with the reasons, raise a security alert, **enqueue a durable `void_round` job in `outbox` in the same transaction**, and **do not open round N+1**. Because N+1 never opened, no next-hand bets exist to unwind. The round auto-voids (see *EVIDENCE_REJECTED is always voided* below), and N+1 opens through `ensureOpenRound()` once the table is healthy.
     5. Respond `200 {authentic: true, admitted}`.
   - **Not authentic** →
     1. append the upload to `capture_attempts` with its problems, as evidence only (it is never used to settle);
@@ -344,7 +385,7 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
     - the device is flagged;
     - the table pauses until a technician has inspected the Table Box;
     - round N+1 then opens through `ensureOpenRound()` once the table is healthy again.
-- **Result deadline (sweeper):** a job runs every few seconds. Any round still **LOCKED or DEALT** at `locked_at + result SLA` is **VOIDed** with a full refund and audited, **whatever is missing**: an authentic capture, the image matching the signed hash, the dealer entry or the floor entry. A round in **REVIEW** has its own floor-decision SLA and voids the same way when that expires. After a void, round N+1 opens through `ensureOpenRound()` once the table is healthy. Accepted bets can therefore never stay pending.
+- **Result deadline (sweeper):** a job runs every few seconds. Any round still **LOCKED or DEALT** at `locked_at + result SLA` is **VOIDed** with a full refund and audited, **whatever is missing**: an authentic capture, the image matching the signed hash, the dealer entry or the floor entry. A round in **REVIEW** has its own floor-decision SLA and voids the same way when that expires. A round in **EVIDENCE_REJECTED** is voided by the sweeper **immediately, with no SLA** (recovery backstop for the outbox job). After a void, round N+1 opens through `ensureOpenRound()` once the table is healthy. Accepted bets can therefore never stay pending.
 - **Image upload:** the image bytes may come with the capture or in a separate upload. Bytes are stored only if their SHA-256 equals the **signed** `capture.imageSha256`. The hash can't be changed without breaking the signature, so a corrupted or swapped image can simply be re-uploaded.
 - **`resolve()`** runs once an authentic capture, its matching image and both manual entries all exist:
   0. **Deadline first:** under the round lock, if `clock_timestamp() ≥ locked_at + result SLA`, **VOID** the round (refund) whatever evidence has arrived. Evidence that completes after the deadline never pays, even if the sweeper hasn't run yet.
@@ -355,8 +396,11 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
      - the dealer and floor entries.
   3. Decision `settle` → **settle**.
   4. Decision `review` (authentic capture, but the dealer or floor entry disagrees) → **REVIEW**, with `review_reasons`.
-  5. A content `reject` on an authentic capture (e.g. captured before the lock or deal-start, or after the deadline) → **EVIDENCE_REJECTED**, with the reasons, and a security alert.
-- **REVIEW** is resolved only with a **`floor_manager` credential** belonging to a person who did **not** submit either entry for that round: `resolveReview(roundId, credentialId, settle(cards) | void(reason))`, audited with the person id. The floor manager decides after viewing the **verified** evidence image.
+  5. A content `reject` on an authentic capture (e.g. captured before the lock or deal-start, or after the deadline) → **EVIDENCE_REJECTED**, with the reasons, a security alert and a `void_round` outbox job, all in the same transaction.
+- **REVIEW** is resolved only with a **`floor_manager` credential** belonging to a person who did **not** submit either entry for that round: `resolveReview(roundId, credentialId, settle(cards) | void(reason))`, audited with the person id. The floor manager decides after viewing the **verified** evidence image. In one transaction, under the round lock:
+  1. **Review deadline first:** if `clock_timestamp() ≥ review_started_at + review SLA`, the decision is refused with `409 review_expired` and the round is **VOIDed** (refund) in that same transaction. A late decision can never pay.
+  2. `settle(cards)` wins the terminal transition with `$expected = 'REVIEW'`, then posts payouts; `void(reason)` wins the void transition from REVIEW, then posts refunds. If no row is returned (the sweeper or another decision got there first), nothing is posted and the caller gets `409 invalid_round_state`.
+- **EVIDENCE_REJECTED is always voided, durably.** The transaction that enters EVIDENCE_REJECTED also enqueues `void_round` in `outbox`. The worker runs the void (terminal compare-and-set from EVIDENCE_REJECTED, then refunds); the sweeper re-voids any EVIDENCE_REJECTED round it finds, with no SLA. A crash after the rejection commits but before the refund therefore always ends in VOID with every bet refunded exactly once.
 - **EVIDENCE_REJECTED can never be settled by hand.** `resolveReview` refuses this state. Its only exit is **VOID** with a full refund, made automatically by the system and audited. A missing or mismatched image never reaches this state, because `resolve()` waits for image bytes that match the signed hash.
 - **Void** is allowed from OPEN, LOCKED, DEALT, REVIEW or EVIDENCE_REJECTED, and refunds every accepted bet. It can be requested **only by a `floor_manager` credential** (recorded in `voided_by`) or by the system (sweeper, procedure break, evidence rejection). A dealer cannot void.
 
@@ -372,14 +416,16 @@ Server timestamps use `clock_timestamp()`, never the client's clock.
 4. **Check the round and table:** the round must be `OPEN` (otherwise `409 round_locked`), and `tableReadiness()` must pass (otherwise `409 table_not_ready`).
 5. **Check the price:** `price(statsFor(selection), round.channel)`. It must be offered, and must equal the client's `odds_centi` (otherwise `409 price_changed` with the new odds). The payout must be ≤ the maximum payout.
 6. **Check exposure:** `RoundExposure.canAccept()` against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. This is a read-only check; the cache is not changed yet.
-7. **One database transaction:**
-   1. `lockAccount(wallet)`;
-   2. re-check that `rounds.state = 'OPEN'` (`for share`), because a lock may have landed meanwhile;
+7. **One database transaction, in the global lock order (§4): round first, then the wallet:**
+   1. `select state from rounds where id = $1 for share`, and re-check that it is `OPEN`, because a lock may have landed meanwhile (`FOR SHARE` lets bets on one round run in parallel, but conflicts with the `FOR UPDATE` taken by start, void and settlement);
+   2. `lockAccount(wallet)`;
    3. check balance ≥ stake;
    4. insert the bet;
    5. post `bet.stake` (wallet → `PreFlop:bankroll`);
    6. audit;
    7. read the round's accepted-bet count, and compare it with the cache's count plus one.
+
+   A deadlock or serialization failure rolls the whole transaction back and is retried per §4; the idempotency key makes the retry safe.
 8. **After commit, update the cache, or evict it:**
    - If the commit succeeded and the count matched, apply the bet to the cache (`tryAdd`).
    - If applying throws, the commit outcome is unknown (for example a lost connection), or the counts differed, **evict the round's cache**. The next bet rebuilds it from the database before its exposure check.
@@ -401,8 +447,9 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 | Route | Auth (credential → role) | Purpose |
 |---|---|---|
 | `POST /v1/provider/tables/:t/heartbeat` | Device (Table Box) | Link sample, including `streamLive` |
-| `POST /v1/provider/tables/:t/hands/:n/shuffle-complete` | **Device** → `shuffler`; any staff credential → recorded as `manual` (voids the hand) | No body field for the source |
-| `POST /v1/provider/tables/:t/hands/:n/start` | Staff: `dealer` | Lock; returns `{cut_depth}` |
+| `POST /v1/provider/tables/:t/hands/:n/start` | Staff: `dealer` | Lock; returns `{shuffle_command: {nonce}}` |
+| `GET /v1/provider/tables/:t/hands/:n/shuffle-command` | Device (Table Box shuffler bridge) | `{nonce}` once the round is LOCKED |
+| `POST /v1/provider/tables/:t/hands/:n/shuffle-complete` | **Device** with a valid shuffler attestation for the nonce → `shuffler`; any staff credential → recorded as `manual` (voids the hand) | `{attestation}`; no body field for the source. Returns `{cut_depth}` |
 | `POST /v1/provider/tables/:t/hands/:n/cut` · `/deal-start` | Staff: `dealer` | Procedure events |
 | `POST /v1/provider/tables/:t/hands/:n/flop` | Staff: `dealer` → dealer entry; `floor` / `floor_manager` → floor entry | `{cards}` only; the source comes from the role, and the two entries must be from different people |
 | `POST /v1/provider/tables/:t/hands/:n/capture` | Device (Table Box) | `{capture, signature, image_base64?}` → `200 {authentic: true, admitted}` (also returned for an identical replay, in any state), `422 evidence_rejected {expected_seq, expected_prev_hash}`, `409 capture_conflict`, or `409 invalid_round_state` |
@@ -433,8 +480,8 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
   4. `insert into request_nonces (credential_id, nonce)` succeeds, meaning the nonce has never been used.
 
   A reused nonce gets `401 replayed_request`. Nonces older than 5 minutes are pruned, which is safe because a request older than 30 s is refused anyway.
-- **Legitimate retries** (for example after a timeout) use a **new nonce** with the **same `Idempotency-Key`**. The server returns the stored response for that key, so a retry is never mistaken for a replay and never runs twice. The capture route also has its own `(device_id, seq, signature)` replay rule (§4).
-- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`, `capture_conflict`, `replayed_request`, `forbidden_role`.
+- **Legitimate retries** (for example after a timeout) use a **new nonce** with the **same `Idempotency-Key`**. The server returns the stored response for that key, so a retry is never mistaken for a replay and never runs twice. **Every write route requires an `Idempotency-Key`.** For bets the key lives on `bets`; for every other write (start, shuffle-complete, cut, deal-start, entries, void, review, admin writes) the response is stored in `idempotency_responses` **in the same transaction as the effect** and returned verbatim on retry. The same key with a different request body or route gets `422 idempotency_mismatch`. The capture route also has its own `(device_id, seq, signature)` replay rule (§4).
+- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`, `capture_conflict`, `replayed_request`, `forbidden_role`, `invalid_procedure_step`, `review_expired`, `idempotency_mismatch`, `retry_later`.
 
 ## 8. Acceptance criteria
 
@@ -459,6 +506,8 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
    - A dealer or floor mismatch on an authentic capture goes to REVIEW.
    - After a REVIEW or VOID hand, the same Table Box's next capture still verifies, because the checkpoint advanced.
    - A shuffle-complete sent with a staff credential is recorded as `manual` and voids the hand.
+   - A shuffle-complete before Start hand, or attesting another hand's nonce, is refused (`invalid_procedure_step`) or recorded and voids the hand. Cut and deal-start out of order get `409 invalid_procedure_step`.
+   - **Rejected evidence is refunded after a crash:** kill the process after the EVIDENCE_REJECTED transaction commits but before the refund. On restart the outbox worker (or the sweeper) voids the round and every bet is refunded exactly once.
 5. **Roles and request authentication:**
    - A dealer credential cannot write the floor entry, cannot void, and cannot resolve a review.
    - Both entries from the same person are refused.
@@ -472,13 +521,16 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
    - A settlement racing a void ends in exactly one of SETTLED or VOID, with a ledger that matches it.
    - A crash after commit but before resolve is completed by the outbox worker.
    - Two captures racing for one device produce one checkpoint advance.
+   - **Bet versus void / settlement on the same wallet:** concurrent bet placement on round N+1 and a void or settlement of round N that pays the same wallet complete without deadlock (lock order), and an injected `40P01` is retried to success.
+   - **Review settlement versus void:** a floor-manager `settle` and the sweeper's review-deadline void racing on one REVIEW round end in exactly one terminal state; a decision arriving after the review SLA is refused and the round is VOID.
+   - **Generic idempotency:** `start` retried after a lost response returns the stored response and does not issue a second shuffle command.
 7. Settlement is idempotent: running it twice pays once.
 8. A round never opens while the table is uncertified, the heartbeat is stale, or the stream is off air.
 9. The audit chain verifies from genesis, including after 50 concurrent transactions each appending events.
 10. **Exposure survives partial failures:** inject a failure after the bet commit but before the cache update. The next bet must still be refused once the round's true worst case reaches the limit.
 11. **Simulated table:** 10,000 rounds, each following the real sequence:
-   1. a crypto-random shuffle;
-   2. Start hand;
+   1. Start hand;
+   2. a simulated Trusted Shuffler performs a crypto-random shuffle for the command nonce and signs the completion;
    3. the cut performed at the issued depth;
    4. deal-start;
    5. hole cards for 9 seats, a burn, then the flop;

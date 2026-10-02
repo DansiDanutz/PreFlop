@@ -136,18 +136,38 @@ export interface OrganizerHouseConfig {
 
 export interface OrganizerHouseCheck {
   readonly ok: boolean;
-  /** Organizer's expected value per unit staked after PreFlop's fee and the provider share. */
-  /** Organizer's EV per unit staked at the MINIMUM stake (the worst case for fee rate). */
+  /**
+   * Organizer's guaranteed EV per unit staked: the margin after the provider share, minus a
+   * PROVEN upper bound on PreFlop's fee rate over every stake the room accepts.
+   */
   readonly organizerEv: number;
+  /** Proven upper bound of fee / stake for every stake >= minStakeMinor (see feeRateUpperBound). */
   readonly platformFeeRate: number;
-  /** Forecast at the typical stake, if one was given. */
+  /** Forecast at the typical stake, if one was given (never used to admit a configuration). */
   readonly typicalEv?: number;
   readonly problems: readonly string[];
 }
 
 /**
+ * Upper bound of platformFeeMinor(stake) / stake over ALL stakes >= minStake.
+ *
+ * Integer flooring makes the fee rate discontinuous (e.g. 150 bps with a 2-unit minimum: the fee
+ * is 2 at 199 but 3 at 200), so one sample at the minimum stake is not the maximum (audit F10,
+ * re-audit of 8cb639b). For s >= minStake:
+ *   fee(s) <= max(minPerBet, fixed + s·bps/10000)
+ *   fee(s)/s <= max(minPerBet/minStake, fixed/minStake + bps/10000)
+ * and the fee never exceeds the stake, so the bound is also capped at 1.
+ */
+export function feeRateUpperBound(mode: PlayMode, minStakeMinor: number, fee: PlatformFee): number {
+  if (!MODES[mode].feesApply) return 0;
+  const fixed = fee.fixedPerBetMinor ?? 0;
+  return Math.min(1, Math.max(fee.minPerBetMinor / minStakeMinor, fixed / minStakeMinor + fee.turnoverBps / 10000));
+}
+
+/**
  * An organizer may only be the house if its own book has the edge after paying
- * PreFlop and the provider club. Rejects configurations that would lose money on average.
+ * PreFlop and the provider club, for EVERY stake the room accepts. Rejects configurations
+ * that could lose money on average at some admissible stake.
  */
 export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseCheck {
   const problems: string[] = [];
@@ -156,22 +176,52 @@ export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseC
     problems.push(`margin ${c.marginBps} bps is below the global minimum ${GLOBAL_RULES.organizerMinMarginBps} bps`);
   if (!Number.isSafeInteger(c.minStakeMinor) || c.minStakeMinor <= 0) problems.push('minStakeMinor must be a positive integer');
   if (!Number.isInteger(c.providerShareBps) || c.providerShareBps < 0 || c.providerShareBps > 10000) problems.push('providerShareBps must be 0–10000');
-  const margin = c.marginBps / 10000;
-  const evAt = (stake: number) => {
-    const feeRate = platformFeeMinor(c.mode, stake, c.platformFee) / stake;
-    return { feeRate, ev: margin * (1 - c.providerShareBps / 10000) - feeRate };
-  };
-  const minStake = Math.max(1, Math.floor(c.minStakeMinor) || 1);
-  const atMin = evAt(minStake);
-  if (atMin.ev * 10000 < GLOBAL_RULES.organizerMinEvBps)
-    problems.push(`organizer EV at the minimum stake (${minStake}) is ${(atMin.ev * 100).toFixed(2)}%, below the required ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% — raise the minimum stake or the margin`);
-  const typical = c.typicalStakeMinor && c.typicalStakeMinor > 0 ? evAt(c.typicalStakeMinor).ev : undefined;
-  return { ok: problems.length === 0, organizerEv: atMin.ev, platformFeeRate: atMin.feeRate, ...(typical !== undefined ? { typicalEv: typical } : {}), problems };
+  const kept = (c.marginBps / 10000) * (1 - c.providerShareBps / 10000);
+  const minStake = Number.isSafeInteger(c.minStakeMinor) && c.minStakeMinor > 0 ? c.minStakeMinor : 1;
+  const feeRate = feeRateUpperBound(c.mode, minStake, c.platformFee);
+  const ev = kept - feeRate;
+  if (ev * 10000 < GLOBAL_RULES.organizerMinEvBps)
+    problems.push(`organizer EV is guaranteed only down to ${(ev * 100).toFixed(4)}% over stakes >= ${minStake} (fee rate up to ${(feeRate * 100).toFixed(4)}%), below the required ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% — raise the margin or the minimum stake`);
+  const typical = c.typicalStakeMinor && c.typicalStakeMinor > 0
+    ? kept - platformFeeMinor(c.mode, c.typicalStakeMinor, c.platformFee) / c.typicalStakeMinor
+    : undefined;
+  return { ok: problems.length === 0, organizerEv: ev, platformFeeRate: feeRate, ...(typical !== undefined ? { typicalEv: typical } : {}), problems };
 }
 
 /** Refuses a bet below the room's validated minimum stake. */
 export function assertOrganizerStake(c: Pick<OrganizerHouseConfig, 'minStakeMinor'>, stakeMinor: number): void {
   if (!Number.isSafeInteger(stakeMinor) || stakeMinor < c.minStakeMinor) throw new RangeError(`stake ${stakeMinor} is below the room's minimum ${c.minStakeMinor}`);
+}
+
+/**
+ * Exact organizer EV of ONE bet, in minor units, using the exact win count over 22,100 flops,
+ * the integer payout and the integer fee actually charged:
+ *   EV = (1 − providerShare)·(stake − p·payout) − fee
+ * Returned as a rational (numerator / 22100) to avoid rounding.
+ */
+export function organizerBetEvNumerator(
+  c: Pick<OrganizerHouseConfig, 'mode' | 'platformFee' | 'providerShareBps'>,
+  stats: Pick<SelectionStats, 'wins'>, stakeMinor: number, oddsCenti: number,
+): { numerator: bigint; denominator: bigint } {
+  const payout = BigInt(payoutMinor(stakeMinor, oddsCenti));
+  const fee = BigInt(platformFeeMinor(c.mode, stakeMinor, c.platformFee));
+  const N = 22100n;
+  // GGR·N = stake·N − wins·payout; organizer keeps (10000 − share)/10000 of it.
+  const ggrN = BigInt(stakeMinor) * N - BigInt(stats.wins) * payout;
+  return { numerator: ggrN * BigInt(10000 - c.providerShareBps) - fee * N * 10000n, denominator: N * 10000n };
+}
+
+/**
+ * Admission check for one organizer-house bet: the stake is at least the room minimum AND the
+ * exact EV of this bet (actual odds, payout rounding and fee) meets the global minimum EV rate.
+ * The configuration bound makes this pass for well-formed rooms; this check is the backstop.
+ */
+export function assertOrganizerBet(c: OrganizerHouseConfig, stats: Pick<SelectionStats, 'wins'>, stakeMinor: number, oddsCenti: number): void {
+  assertOrganizerStake(c, stakeMinor);
+  const { numerator, denominator } = organizerBetEvNumerator(c, stats, stakeMinor, oddsCenti);
+  // numerator/denominator >= stake · minEvBps / 10000
+  if (numerator * 10000n < BigInt(stakeMinor) * BigInt(GLOBAL_RULES.organizerMinEvBps) * denominator)
+    throw new RangeError(`organizer EV of this bet is below ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% of the stake`);
 }
 
 /**

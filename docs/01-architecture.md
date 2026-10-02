@@ -59,13 +59,14 @@ SCHEDULED ─────────────────────► OPE
 
 - **Opening:** bets on flop N+1 open the moment flop N is captured, so players bet while hand N plays out. This matches the confirmed cycle. In the backend this is the moment an authentic signed capture of flop N is recorded and round N moves to DEALT. Dealer and floor entries alone never open betting. Start hand only locks the round and draws the cut, and never opens the next one (`docs/13` §4).
 - **Every hand follows this sequence** (`docs/11`, `docs/12`):
-  1. *shuffle complete* from the club's **mandatory automatic shuffler**. With two decks this usually happens while hand N is still being played;
-  2. **LOCK**: after hand N ends, the dealer presses *Start hand* to take the shuffled deck. Bets on flop N+1 close here, **before any hole card exists**;
-  3. **random cut instruction**: PreFlop's server picks a cut depth (15–37 cards) only *after* the lock and shows it on the dealer tablet;
-  4. the dealer **cuts** at that depth (recorded on camera);
-  5. *deal start*, then the hole cards and the flop.
+  1. **LOCK**: after hand N ends, the dealer presses *Start hand*. Bets on flop N+1 close here, **before the deck for N+1 is even shuffled**, so no deck order exists while bets are open;
+  2. **shuffle command**: PreFlop issues a single-use nonce to the PreFlop Trusted Shuffler;
+  3. **fresh trusted shuffle**: the shuffler shuffles one deck for that command and signs its completion with the nonce (`docs/12` §2a);
+  4. **random cut instruction**: PreFlop's server picks a cut depth (15–37 cards) and shows it on the dealer tablet;
+  5. the dealer **cuts** at that depth (recorded on camera);
+  6. *deal start*, then the hole cards and the flop.
 
-  If any step is missing, out of order, or the shuffle signal was typed in rather than sent by the machine, the round is voided.
+  The backend enforces these as substates (`docs/13` §4). If any step is missing or out of order, or the shuffle completion was typed in or does not attest this hand's nonce, the round is voided.
 - **What the random cut does and does not do:** it makes it harder to aim at one exact card position. It does **not** defeat a shuffler that controls the deck order, which can still rig rules about groups of cards such as colour, suit or high/low. Shuffle integrity rests on the PreFlop Trusted Shuffler and on outcome monitoring (`docs/12` §2a).
   - Locking any later leaks information. One player's own two hole cards give up to +12.8% on some markets (`docs/04` §4).
   - The lock is server time-stamped. A bet whose request arrives after the lock is rejected, whatever the client clock says.

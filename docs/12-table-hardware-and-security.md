@@ -51,7 +51,7 @@ Status: proposed standard. Product names are examples to evaluate with vendors a
    - It has no output of the deck order (no card-reading data path, no USB, no wireless).
    - Firmware is signed by PreFlop, and the Table Box attests to it before every session.
    - Its randomness comes from an internal hardware random number generator.
-   - It shuffles **one deck per hand**, after Start hand, so no pre-shuffled deck waits in a tray the club can reach.
+   - It shuffles **one deck per hand**, **after Start hand**, on a single-use command nonce from PreFlop, and signs its completion with that nonce. So no deck order exists while bets are open, no pre-shuffled deck waits in a tray the club can reach, and a replayed or pre-arranged shuffle is detectable. The full sequence is in §6 and `docs/13` §4.
    - The model and its shuffle algorithm are **certified by an accredited gaming test laboratory**, covering both its RNG and how well it shuffles.
 2. **Outcome monitoring.** For every table and every market family, run sequential tests (for example CUSUM or SPRT) on outcome frequencies against the exact probabilities.
    - A stacked deck that forces "all red" (11.8% per flop) would trip the test within a few hands. Five in a row has a probability of about 2 × 10⁻⁵.
@@ -59,7 +59,7 @@ Status: proposed standard. Product names are examples to evaluate with vendors a
 3. **Limits.** Per-round, per-market and per-account stake caps, tighter on long shots and on market families an attacker could target. Linked-account clustering, and payout holds on wins that look anomalous.
 4. **Independent threat-model review** of this section, plus adversarial testing of the Trusted Shuffler, before go-live.
 
-**Until all four are in place, physical tables may run play money only** (`docs/06`, decision 7). Seals, cameras and the cut lower the risk, but they do **not** make the published probabilities a guarantee.
+**Physical-table play is disabled in every mode, including non-redeemable play money** (owner decision, re-audit of 2026-10-02; `docs/06`, decision 7). Having all four in place is a **prerequisite for reconsidering** that decision, not permission to enable physical play automatically. Seals, cameras and the cut lower the risk, but they do **not** make the published probabilities a guarantee. Until then PreFlop runs on the **simulated table** only; simulated practice play is a separate scope.
 
 ## 3. Cameras: what to buy and how to install them
 
@@ -198,16 +198,17 @@ Tests confirm each case: edited cards, a swapped image, a wrong key, a revoked d
 ## 6. Per-hand procedure
 
 ```
-1  shuffler: shuffle complete (PreFlop Trusted Shuffler signal, one deck per hand, §2a)
-2  dealer:   presses START HAND, takes the deck   ══ LOCK: bets on this flop close ══
-3  PreFlop:  draws a random cut depth (15–37 cards) and shows it on the dealer tablet
-4  dealer:   cuts at that depth with a cut card and presses CUT   (C3 records it)
-5  dealer:   deal-start → hole cards → burn → FLOP
-6  Table Box: signed capture of the board   ·   dealer and floor enter the flop on their tablets
-7  PreFlop:  verifies the signature, chain, timing and image hash, and checks the 3-way match → settle, or send to review
+1  dealer:   presses START HAND   ══ LOCK: bets on this flop close (no deck order exists yet) ══
+2  PreFlop:  issues a single-use shuffle command nonce to the Trusted Shuffler (via the Table Box)
+3  shuffler: FRESH shuffle of one deck for that command; signs completion {hand, nonce}; Table Box forwards it
+4  PreFlop:  draws a random cut depth (15–37 cards) and shows it on the dealer tablet
+5  dealer:   cuts at that depth with a cut card and presses CUT   (C3 records it)
+6  dealer:   deal-start → hole cards → burn → FLOP
+7  Table Box: signed capture of the board   ·   dealer and floor enter the flop on their tablets
+8  PreFlop:  verifies the signature, chain, timing and image hash, and checks the 3-way match → settle, or send to review
 ```
 
-Any missing or out-of-order step, or a shuffle signal that did not come from the machine, **voids the round and refunds every bet** (`handProcedureProblems`).
+The backend enforces the steps as substates with server-assigned ordinals. Any missing or out-of-order step, a shuffle signal that did not come from the machine, or a completion that does not attest this hand's nonce **voids the round and refunds every bet** (`handProcedureProblems`).
 
 The random cut makes it harder to aim at one **exact** card position. It does **not** stop a shuffler that controls the deck order from rigging rules about groups of cards (colour, suit, high/low); see §2a. Shuffle integrity rests on the Trusted Shuffler and on outcome monitoring, not on the cut.
 

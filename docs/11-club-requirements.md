@@ -16,11 +16,11 @@ Every club table must be **certified** before it can host PreFlop rounds, and mu
 ## 2. Per-hand sequence
 
 ```
-shuffler: shuffle-complete ─► dealer: Start hand ══ LOCK ══ ─► PreFlop: random cut depth ─► dealer: cut ─► deal-start ─► hole cards ─► flop
+dealer: Start hand ══ LOCK ══ ─► PreFlop: shuffle command (nonce) ─► Trusted Shuffler: fresh shuffle, signed for the nonce ─► PreFlop: random cut depth ─► dealer: cut ─► deal-start ─► hole cards ─► flop
 ```
 
 - Bets on flop N+1 are open while hand N plays out. They close when the dealer presses Start hand for hand N+1, before any hole card exists (`docs/04` §4).
-- If the shuffle signal is missing, did not come from the machine, or the cut is missing or out of order, then **every bet on that flop is void and refunded** (`handProcedureProblems()`).
+- If the shuffle signal is missing, did not come from the machine, does not attest this hand's command nonce, or any step is missing or out of order, then **every bet on that flop is void and refunded** (`handProcedureProblems()`).
 
 ## 3. Connectivity
 

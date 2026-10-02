@@ -117,21 +117,32 @@ export function canOpenRound(cert: TableCertification, link: LinkSample): { ok: 
 }
 
 /**
- * Per-hand procedure (docs/11 §2, docs/12 §6):
+ * Per-hand procedure (docs/11 §2, docs/12 §2a and §6), one coherent sequence:
  *
- *   shuffle-complete (from the shuffler) → LOCK (bets on this flop close)
+ *   LOCK (bets on this flop close)
+ *   → PreFlop issues a shuffle command carrying a fresh single-use nonce
+ *   → the Trusted Shuffler performs a FRESH shuffle and reports completion, signed and bound to that nonce
  *   → PreFlop draws a random cut depth → dealer cuts at that depth → deal-start
  *
- * The cut depth is chosen only AFTER the lock, which makes aiming at one exact card
- * position harder. It is NOT a defence against a shuffler that controls the deck
- * order: a stacked deck can make every reachable flop share a property such as
- * colour (see test/audit-2026-10-02.test.ts and docs/12 §2a).
+ * The shuffle happens after the lock, so nobody can know the deck order while bets are open,
+ * and the nonce binding proves it is this hand's fresh shuffle, not a replayed or pre-arranged
+ * one. The cut is a minor extra control only: it is NOT a defence against a shuffler that
+ * controls the deck order (test/audit-2026-10-02.test.ts, docs/12 §2a).
+ *
+ * The values are the server's per-table event ORDINALS (a strictly increasing sequence the
+ * round state machine assigns as each step is accepted), not wall-clock times, so two steps
+ * can never tie. The backend enforces the order as substates; this check re-verifies it.
  */
 export interface HandEvents {
+  readonly lockedAt?: number;
+  /** PreFlop's shuffle command for this hand (issued after the lock). */
+  readonly shuffleCommandAt?: number;
+  readonly shuffleCommandNonce?: string;
   readonly shuffleCompleteAt?: number;
   /** Signal must come from the paired shuffler, not typed by staff. */
   readonly shuffleSource?: 'shuffler' | 'manual';
-  readonly lockedAt?: number;
+  /** Nonce the shuffler's signed completion attests; must equal the command's nonce. */
+  readonly shuffleAttestedNonce?: string;
   /** When PreFlop's server issued the random cut depth. */
   readonly cutInstructionAt?: number;
   readonly cutAt?: number;
@@ -146,24 +157,26 @@ export function drawCutDepth(): number {
   return randomInt(CUT_DEPTH.min, CUT_DEPTH.max + 1);
 }
 
-const ORDER: readonly (keyof HandEvents)[] = ['shuffleCompleteAt', 'lockedAt', 'cutInstructionAt', 'cutAt', 'dealStartAt'];
+const ORDER = ['lockedAt', 'shuffleCommandAt', 'shuffleCompleteAt', 'cutInstructionAt', 'cutAt', 'dealStartAt'] as const;
 const LABEL: Record<string, string> = {
-  shuffleCompleteAt: 'shuffle-complete', lockedAt: 'lock', cutInstructionAt: 'cut instruction', cutAt: 'cut', dealStartAt: 'deal-start',
+  lockedAt: 'lock', shuffleCommandAt: 'shuffle command', shuffleCompleteAt: 'shuffle-complete', cutInstructionAt: 'cut instruction', cutAt: 'cut', dealStartAt: 'deal-start',
 };
 
 /**
- * A hand is valid for settlement only if every step happened, in order, and the
- * shuffle was reported by the machine itself. Otherwise every bet on that hand's
+ * A hand is valid for settlement only if every step happened, in strict order, and the
+ * fresh post-lock shuffle was reported by the machine itself for this hand's command. Otherwise every bet on that hand's
  * flop is void and refunded.
  */
 export function handProcedureProblems(e: HandEvents): string[] {
   const p: string[] = [];
   for (const k of ORDER) if (e[k] === undefined) p.push(`no ${LABEL[k]} recorded`);
   if (e.shuffleCompleteAt !== undefined && e.shuffleSource !== 'shuffler') p.push('shuffle not reported by the automatic shuffler');
+  if (e.shuffleCompleteAt !== undefined && (!e.shuffleCommandNonce || e.shuffleAttestedNonce !== e.shuffleCommandNonce))
+    p.push("shuffle completion is not bound to this hand's shuffle command");
   for (let i = 1; i < ORDER.length; i++) {
-    const a = e[ORDER[i - 1]!] as number | undefined;
-    const b = e[ORDER[i]!] as number | undefined;
-    if (a !== undefined && b !== undefined && b < a) p.push(`${LABEL[ORDER[i]!]} happened before ${LABEL[ORDER[i - 1]!]}`);
+    const a = e[ORDER[i - 1]!];
+    const b = e[ORDER[i]!];
+    if (a !== undefined && b !== undefined && !(b > a)) p.push(`${LABEL[ORDER[i]!]} did not happen after ${LABEL[ORDER[i - 1]!]}`);
   }
   return p;
 }

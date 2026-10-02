@@ -8,9 +8,9 @@ import { RoundExposure } from '../src/exposure.ts';
 import { allocateLargestRemainder, poolBreakdown, settleParimutuel } from '../src/fees.ts';
 import { flopFromCards } from '../src/flops.ts';
 import { GLOBAL_RULES } from '../src/globalRules.ts';
-import { betPostings, validateOrganizerHouse } from '../src/houses.ts';
+import { assertOrganizerBet, betPostings, feeRateUpperBound, platformFeeMinor, validateOrganizerHouse } from '../src/houses.ts';
 import { getSelection } from '../src/markets.ts';
-import { payoutMinor } from '../src/pricing.ts';
+import { oddsForMargin, payoutMinor } from '../src/pricing.ts';
 import { statsFor } from '../src/probability.ts';
 import { CUT_DEPTH } from '../src/tableReadiness.ts';
 import { CLUB_POLICY, computeStatement } from '../src/sharing.ts';
@@ -104,6 +104,49 @@ describe('F10 — organizer economics are validated at the minimum stake', () =>
     expect(tiny.ok).toBe(false);
     expect(tiny.organizerEv).toBeLessThan(0);
     expect(tiny.typicalEv).toBeCloseTo(0.039, 10);
+  });
+});
+
+describe('F10 (re-audit of 8cb639b) — the fee rate is bounded over every stake, not sampled at the minimum', () => {
+  const fee = GLOBAL_RULES.platformFee; // 150 bps, minimum 2
+  const cfg = { mode: 'real-fiat' as const, marginBps: 300, platformFee: fee, providerShareBps: 4000, minStakeMinor: 199 };
+
+  it('the fee jumps from 2 at stake 199 to 3 at stake 200, so the rate is not monotonic', () => {
+    expect(platformFeeMinor('real-fiat', 199, fee)).toBe(2);
+    expect(platformFeeMinor('real-fiat', 200, fee)).toBe(3);
+    expect(3 / 200).toBeGreaterThan(2 / 199);
+  });
+
+  it('the bound dominates the actual fee rate at every stake from the minimum up', () => {
+    for (const min of [1, 2, 50, 133, 199, 200, 1000]) {
+      const bound = feeRateUpperBound('real-fiat', min, fee);
+      for (let s = min; s <= min + 5000; s++) expect(platformFeeMinor('real-fiat', s, fee) / s).toBeLessThanOrEqual(bound);
+    }
+    expect(feeRateUpperBound('real-fiat', 199, fee)).toBeCloseTo(0.015, 12);
+    expect(feeRateUpperBound('play', 1, fee)).toBe(0);
+  });
+
+  it("rejects Codex's counterexample configuration (it passed before: 0.795% modeled at stake 199)", () => {
+    const r = validateOrganizerHouse(cfg);
+    expect(r.ok).toBe(false);
+    expect(r.organizerEv).toBeCloseTo(0.03 * 0.6 - 0.015, 12);
+  });
+
+  it('the exact per-bet admission check refuses the real no-pair bet at stake 200 (EV 0.358% < 0.5%)', () => {
+    const noPair = statsFor(getSelection('rank-pattern:no-pair'));
+    const odds = oddsForMargin(noPair.wins, 300);
+    expect(odds).toBe(117);
+    expect(() => assertOrganizerBet(cfg, noPair, 200, odds)).toThrow(RangeError);
+    expect(() => assertOrganizerBet(cfg, noPair, 199, odds)).not.toThrow(); // fee 2: EV ≈ 0.85%
+    expect(() => assertOrganizerBet(cfg, noPair, 198, odds)).toThrow(RangeError); // below the room minimum
+  });
+
+  it('a configuration accepted by the bound admits every stake at its true odds', () => {
+    const ok = { ...cfg, marginBps: 600, providerShareBps: 2000, minStakeMinor: 100 };
+    expect(validateOrganizerHouse(ok).ok).toBe(true);
+    const noPair = statsFor(getSelection('rank-pattern:no-pair'));
+    const odds = oddsForMargin(noPair.wins, 600);
+    for (let s = 100; s <= 3000; s++) expect(() => assertOrganizerBet(ok, noPair, s, odds)).not.toThrow();
   });
 });
 

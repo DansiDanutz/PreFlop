@@ -35,7 +35,7 @@ Clubs supply tables and live video. Betting companies integrate through an API. 
 | **Phase 1 backend spec (to implement)** | `docs/13-phase1-backend-spec.md` |
 | Generated odds book (every market's probability, odds, net EV) | `docs/odds-book.md`, `docs/odds-book.json` |
 | Generated profit per participant (8 scenarios) | `docs/profitability.md` |
-| Engine code (TypeScript, 122 tests) | `packages/odds-engine/src/*` |
+| Engine code (TypeScript, 130 tests) | `packages/odds-engine/src/*` |
 
 Run it:
 
@@ -59,8 +59,9 @@ pnpm book    # regenerate odds book and profitability
 4. **Exposure is exact.** The worst-case house loss over all 22,100 flops is checked before every bet. An organizer's collateral must cover its worst case plus PreFlop's fees.
 5. **Integrity:**
    - Betting closes **before hole cards exist**.
-   - The cut depth is random and drawn **after** the lock. **This is not a defence against a shuffler that controls the deck order** (audit F01). Shuffle integrity needs the PreFlop Trusted Shuffler and outcome monitoring (`docs/12` §2a).
-   - A broken shuffle → lock → cut → deal sequence voids the hand.
+   - The deck is shuffled **after** the lock, by the PreFlop Trusted Shuffler, on a single-use command nonce that its signed completion must attest. The cut depth is random and drawn after that. **The cut is not a defence against a shuffler that controls the deck order** (audit F01). Shuffle integrity needs the Trusted Shuffler and outcome monitoring (`docs/12` §2a).
+   - A broken lock → shuffle command → shuffle → cut → deal sequence (checked on server-assigned ordinals, never on timestamps) voids the hand.
+   - **Physical-table play is disabled in every mode, including play money** (owner decision).
 6. **Evidence.** A flop settles only when all three hold:
    - an Ed25519-signed, hash-chained Table Box capture verifies;
    - the image hash matches;
@@ -74,7 +75,7 @@ pnpm book    # regenerate odds book and profitability
 | Decision | Why | Where |
 |---|---|---|
 | Lock at **Start hand**, not at the flop reveal | One player's two hole cards give up to +12.8% on some markets, which beats the margin | `docs/04` §4 |
-| Shuffle integrity rests on a **PreFlop Trusted Shuffler plus outcome monitoring**. The random cut is only a minor extra control | The 2026-10-02 audit (F01) showed that the cut does **not** defeat a shuffler that controls the deck order. Until the Trusted Shuffler is certified, physical tables run play money only | `docs/12` §2a |
+| Shuffle integrity rests on a **PreFlop Trusted Shuffler plus outcome monitoring**. The random cut is only a minor extra control | The 2026-10-02 audit (F01) showed that the cut does **not** defeat a shuffler that controls the deck order. **Owner decision: physical-table play is disabled in every mode, including play money.** Certification is a prerequisite for reconsidering, not automatic enablement | `docs/12` §2a |
 | PreFlop never reads hole cards | Leaks from hole-card data in past cheating scandals | `docs/12` §1 |
 | Ace = 14 everywhere; A-2-3 and Q-K-A count as straights; colour = red/black | Avoids rules that are open to interpretation | `docs/03` §1 |
 | Three ways to resolve bets: fixed odds, parimutuel pools, contests | Keeps house risk separate from player-vs-player play | `docs/01` §3 |
@@ -135,7 +136,7 @@ Verdict: *request changes*. Every finding was accepted. Where each one now stand
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
-| F01 | Blocker | The random cut does not defeat a compromised shuffler | **Accepted.** The claim was removed everywhere. `docs/12` §2a adds the PreFlop Trusted Shuffler, outcome monitoring, limits and a threat-model review. **Physical tables run play money only until the shuffler is certified.** The attack is reproduced as a regression test |
+| F01 | Blocker | The random cut does not defeat a compromised shuffler | **Accepted.** The claim was removed everywhere. `docs/12` §2a adds the PreFlop Trusted Shuffler, outcome monitoring, limits and a threat-model review. The attack is reproduced as a regression test. Physical play is now disabled entirely (see round 2) |
 | F02 | Major | Capture retry fails after a lost success response | Fixed in the spec: identical-record replay returns the original `200` in any round state, checked before any state or sequence check |
 | F03 | Major | Invalid signed content opens betting on the next hand | Fixed in the spec and engine: chain ingestion is separate from **admission** (`captureAdmissionProblems`). Only an admitted capture moves the round to DEALT and opens N+1 |
 | F04 | Major | Resolution has no concurrency contract | Fixed in the spec: every round operation takes the round row lock, lock order is fixed, a durable outbox drives `resolve_round`, and concurrency and crash tests are added |
@@ -146,6 +147,22 @@ Verdict: *request changes*. Every finding was accepted. Where each one now stand
 | F09 | Major | Duplicate share parties overwrite each other | Fixed in the engine: duplicates and the reserved `PreFlop` id are rejected |
 | F10 | Major | Organizer EV checked only at the typical stake | Fixed in the engine: EV is validated at the room's **minimum** stake (the worst case for the fee rate); `assertOrganizerStake` refuses smaller stakes |
 | F11 | Minor | The evidence API didn't match the spec | Fixed in the engine: `verifyCaptureAuthenticity`, `captureAdmissionProblems`, `verifyCaptureContent`; `verifyCapture` composes them |
-| F12 | Minor | The checked-in ruleset isn't active protection | Template now targets `main` explicitly. **The repository owner must set `main` as the default branch and import or activate the ruleset** (a settings change the agent cannot make) |
+| F12 | Minor | The checked-in ruleset isn't active protection | Template now targets `main` explicitly. **Closed in round 2:** the default branch is `main`, and ruleset 24343697 "Protect main" is active (verified live by Codex) |
 
 Also from the audit's answers, both now added to the spec: certification items carry provenance (who and when) and an expiry, and stacked-deck monitoring has an acceptance test.
+
+### Round 2: Codex re-audit, 2026-10-02 (audited `8cb639b`)
+
+Verdict: *request changes*. F02, F03, F05, F06 and F11 materially addressed; F07–F09 counterexamples rejected; F12 closed by verified settings. Responses:
+
+| # | Finding | Status |
+|---|---|---|
+| Owner decision | Keep physical-table play disabled, **including non-redeemable play money**. Certification is a prerequisite for reconsideration, not permission | **Applied** in `AUDIT.md`, `docs/06` (decision 7 and phase 2), `docs/12` §2a and `docs/13` §1. Simulated practice is a separate scope |
+| R2-1 (F10) | The minimum-stake fee rate is not always the maximum (fee 2 at 199, 3 at 200) | **Fixed in the engine.** `feeRateUpperBound()` is a proven bound over every stake ≥ the minimum: `max(minPerBet/minStake, fixed/minStake + bps)`. `validateOrganizerHouse` uses it, so Codex's 199-stake configuration is now rejected. `assertOrganizerBet()` adds an exact per-bet admission check (true win count, integer payout and fee). Regression tests cover 199→200 and the fee-jump boundaries |
+| R2-2 (F04) | Bet placement reversed the lock order | **Fixed in the spec.** One global order: one round (`FOR SHARE` for bets, `FOR UPDATE` otherwise) → device → wallets in ascending id; never a round lock while holding a wallet. The "never deadlock" claim is replaced by a design argument plus a backstop: `40P01`/`40001` roll back and retry up to 3 times with jitter. Tests: bet versus void/settlement on the same wallet, injected deadlock |
+| R2-3 | Terminal transition blocked review settlement | **Fixed in the spec.** The compare-and-set uses an explicit expected source state: `DEALT` for `resolve()`, `REVIEW` for `resolveReview()`. The review deadline is checked inside the review transaction. Tests: review-settle versus void, late review decision |
+| R2-4 | Post-lock trusted shuffle contradicted the lifecycle | **Fixed in the spec and engine.** One sequence: Start hand (lock + shuffle command nonce) → fresh trusted shuffle signed for the nonce → random cut → cut → deal-start, enforced as substates. `handProcedureProblems()` now checks this order on server ordinals and the nonce binding. Physical play stays disabled; this is a future-enablement prerequisite |
+| R2-5 | Rejected-evidence refunds not explicitly durable | **Fixed in the spec.** Entering EVIDENCE_REJECTED enqueues a `void_round` outbox job in the same transaction; the sweeper voids EVIDENCE_REJECTED rounds immediately as a backstop. Test: crash after rejection, before refund |
+| Note | Generic write idempotency and procedure ordinals | **Added to the spec:** `idempotency_responses` (stored response written with the effect) for every non-bet write; `round_events` with server-assigned ordinals |
+
+**Distinction kept, as requested:** every backend item above, and the three Greptile-driven changes at `8cb639b` (atomic terminal transition, deadline at settlement, checkpoint sync), are **specification** fixes. They become executed guarantees only when the backend's PostgreSQL integration tests in `docs/13` §8 pass. The engine items (R2-1, R2-4's procedure check) are executed and tested now.

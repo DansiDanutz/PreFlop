@@ -22,9 +22,11 @@ A club has to do very little: run a tablet app (or a hardware bridge) that sends
 
 ```
 POST /v1/provider/tables/{tableId}/hands                 # hand N+1 is about to be shuffled → opens nothing, registers hand
-POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # from the paired automatic shuffler (mandatory)
-POST /v1/provider/tables/{tableId}/hands/{n}/start       # LOCK: dealer takes the deck for hand n → no more bets on its flop (before hole cards)
-    → 200 { "cut_depth": 27 }                          # random cut depth, drawn by PreFlop only after the lock
+POST /v1/provider/tables/{tableId}/hands/{n}/start       # LOCK: no more bets on hand n's flop (before the deck is shuffled)
+    → 200 { "shuffle_command": { "nonce": "…" } }       # single-use command for the Trusted Shuffler
+GET  /v1/provider/tables/{tableId}/hands/{n}/shuffle-command    # Table Box shuffler bridge fetches the nonce
+POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # fresh shuffle, signed by the Trusted Shuffler for the nonce (mandatory)
+    → 200 { "cut_depth": 27 }                          # random cut depth, drawn by PreFlop after the shuffle
 POST /v1/provider/tables/{tableId}/hands/{n}/cut         # dealer cut at the instructed depth (mandatory)
 POST /v1/provider/tables/{tableId}/hands/{n}/deal-start  # dealing begins
 POST /v1/provider/tables/{tableId}/hands/{n}/flop        # dealer / floor manual entry {cards:["Kh","Kd","7h"], source:"dealer|floor"}
