@@ -241,7 +241,7 @@ create trigger audit_head_no_delete before delete on audit_head for each row exe
 OPEN ──Start hand (lock + random cut)──▶ LOCKED ──AUTHENTIC signed capture──▶ DEALT ──content verified, 3-way match──▶ SETTLED
   │                                        │  (entries alone, or a capture        ├─entries disagree─▶ REVIEW ──floor──▶ SETTLED | VOID
   │                                        │   failing authenticity, stay LOCKED) └─content rejected─▶ EVIDENCE_REJECTED ──auto void──▶ VOID
-  └──────────────────────── void ──────────┴─────────── (no authentic capture by the result SLA) ───────────────▶ VOID (refund all)
+  └──────────────────────── void ──────────┴──── result deadline: still LOCKED or DEALT at locked_at + SLA ─────▶ VOID (refund all)
 ```
 
 - **Round ids** are `<tableId>:h<handNo>`.
@@ -264,7 +264,8 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──AUTHENTIC signed
   `start` does **not** open the next round. Round N+1 opens when this round reaches DEALT (see the betting window above).
 - **`cut`** and **`deal-start`** (LOCKED): record the timestamps.
 - **Dealer and floor flop entries** (LOCKED, DEALT, REVIEW or EVIDENCE_REJECTED): stored in `flop_entries`. They **never change the round's state and never open betting**. After each one, call `resolve()`.
-- **Signed capture** (`POST …/capture`, device signature, LOCKED). Capture is handled in two stages. The **authenticity** stage runs immediately on receipt:
+- **Signed capture** (`POST …/capture`, device signature, LOCKED). Capture is handled in two stages. The **authenticity** stage runs immediately on receipt.
+  - **Idempotent replay first:** if `captures` already holds a row for the same `(device_id, seq)` **with the same signature**, respond with the original `200 {authentic: true}` and change nothing. This covers a lost success response: the Table Box's retry of the identical record gets its acknowledgement and then advances. The same `seq` with a **different** signature is a conflict: log it in `capture_attempts`, raise a security alert, and respond `409 capture_conflict`.
   - **Authenticity check:**
     - the device is known, not revoked and bound to this table;
     - the Ed25519 signature is valid;
@@ -272,7 +273,7 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──AUTHENTIC signed
     - `prev_hash = last_hash`;
     - the capture names this table, round and hand.
 
-    Codex should expose this half as `verifyCaptureAuthenticity()` in the engine, and keep `verifyCapture()` as the full check.
+    Codex should split the engine check into `verifyCaptureAuthenticity()` (this list, run **once, on receipt**) and `verifyCaptureContent()` (timing, image hash and 3-way match, run by `resolve()`). `verifyCapture()` stays as the two composed together, for standalone use.
   - **Authentic** → in one transaction:
     1. insert into `captures`;
     2. **advance the device checkpoint** (`last_seq`, `last_hash`);
@@ -287,15 +288,16 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──AUTHENTIC signed
     2. raise a security alert;
     3. leave the round **LOCKED** and the checkpoint unchanged;
     4. respond `422 evidence_rejected` with `{expected_seq, expected_prev_hash}`.
-  - **Retry protocol (Table Box):** the Table Box keeps every signed capture in its encrypted local buffer and **advances its own `seq` only after the server answers `authentic: true`**. On `evidence_rejected` it re-sends the **same signed record** (same `seq` N, same `prev_hash`) from its buffer. If that record is lost, it re-captures the board and signs it again under the same `seq` N and `prev_hash`. The retry is checked against the unchanged checkpoint, so recovery never trusts anything that was rejected. After **3 failed attempts**, or when the result SLA expires without an authentic capture:
+  - **Retry protocol (Table Box):** the Table Box keeps every signed capture in its encrypted local buffer and **advances its own `seq` only after the server answers `authentic: true`**. On `evidence_rejected` it re-sends the **same signed record** (same `seq` N, same `prev_hash`) from its buffer. If that record is lost, it re-captures the board and signs it again under the same `seq` N and `prev_hash`. The retry is checked against the unchanged checkpoint, so recovery never trusts anything that was rejected. On a timeout or lost response it also re-sends the same record, and the idempotent replay rule above answers `200`. After **3 failed attempts**:
     - the round goes to **VOID** with a refund;
     - the device is flagged;
     - the table pauses until a technician has inspected the Table Box;
     - round N+1 then opens through `ensureOpenRound()` once the table is healthy again.
+- **Result deadline (sweeper):** a job runs every few seconds. Any round still **LOCKED or DEALT** at `locked_at + result SLA` is **VOIDed** with a full refund and audited, **whatever is missing**: an authentic capture, the image matching the signed hash, the dealer entry or the floor entry. A round in **REVIEW** has its own floor-decision SLA and voids the same way when that expires. After a void, round N+1 opens through `ensureOpenRound()` once the table is healthy. Accepted bets can therefore never stay pending.
 - **Image upload:** the image bytes may come with the capture or in a separate upload. Bytes are stored only if their SHA-256 equals the **signed** `capture.imageSha256`. The hash can't be changed without breaking the signature, so a corrupted or swapped image can simply be re-uploaded.
 - **`resolve()`** runs once an authentic capture, its matching image and both manual entries all exist:
   1. `handProcedureProblems(events)`. If there are any problems → **VOID** with the reason (refund every bet).
-  2. `verifyCapture(...)` content checks:
+  2. `verifyCaptureContent(...)`: content checks only. Authenticity (device, signature, seq and chain) was already checked once on receipt, and is **not** checked again here. The device checkpoint has already moved past this capture, so re-running the sequence and chain checks would wrongly reject it as a replay. The content checks are:
      - the server-stamped `locked_at` / `deal_start_at` timing;
      - the stored image bytes against the signed hash;
      - the dealer and floor entries.
@@ -351,7 +353,7 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 | `POST /v1/provider/tables/:t/hands/:n/start` | Staff HMAC (dealer tablet) | Lock; returns `{cut_depth}` |
 | `POST /v1/provider/tables/:t/hands/:n/cut` · `/deal-start` | HMAC | Procedure events |
 | `POST /v1/provider/tables/:t/hands/:n/flop` | HMAC | `{source: dealer\|floor, cards}` |
-| `POST /v1/provider/tables/:t/hands/:n/capture` | Device signature (Table Box) | `{capture, signature, image_base64?}` → `200 {authentic: true}` or `422 evidence_rejected {expected_seq, expected_prev_hash}` |
+| `POST /v1/provider/tables/:t/hands/:n/capture` | Device signature (Table Box) | `{capture, signature, image_base64?}` → `200 {authentic: true}` (also returned for an identical replay), `422 evidence_rejected {expected_seq, expected_prev_hash}`, or `409 capture_conflict` |
 | `PUT /v1/provider/tables/:t/hands/:n/capture/image` | Device signature (Table Box) | Raw image bytes; stored only if their SHA-256 equals the signed `imageSha256` |
 | `POST /v1/provider/tables/:t/hands/:n/void` | HMAC | `{reason}` |
 | `GET /v1/tables/:t/rounds/current` | Player | Open round, plus its prices from the book |
@@ -364,7 +366,7 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
   - **Staff HMAC** for dealer and floor tablets. Header `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + rawBody)>`.
 
   For both, reject anything older than 30 s and compare with a constant-time check. Routes marked "device signature" refuse the staff HMAC.
-- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`.
+- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`, `capture_conflict`.
 
 ## 8. Acceptance criteria
 
@@ -376,7 +378,10 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 4. Evidence:
    - A forged, replayed or edited capture is logged in `capture_attempts`, leaves the round LOCKED and the checkpoint unchanged, and **can never settle**.
    - A retry of the same signed record at the same `seq` then verifies and settles the hand. The next hand's capture (`seq + 1`) also verifies.
-   - After 3 failed attempts, or when the result deadline passes, the round voids and the table pauses.
+   - After 3 failed attempts, the round voids and the table pauses.
+   - **Lost response:** the server commits the capture but the `200` is dropped. The Box retries the identical record, gets `200 {authentic: true}`, advances, and its next capture verifies. The same `seq` with a different signature gets `409 capture_conflict`.
+   - **Content-only resolution:** an authentic capture settles even though the device checkpoint has already advanced past it.
+   - **Result deadline:** a round whose authentic capture's image never arrives, or that is missing a dealer or floor entry, is VOIDed with a refund at `locked_at + SLA`. No accepted bet stays pending after the deadline.
    - Dealer and floor entries alone never move the round to DEALT and never open round N+1. Only an authentic capture does.
    - An image whose hash differs from the signed hash is refused, and the round waits for the correct bytes. A capture timed before the lock goes to EVIDENCE_REJECTED and voids.
    - A dealer or floor mismatch on an authentic capture goes to REVIEW.
