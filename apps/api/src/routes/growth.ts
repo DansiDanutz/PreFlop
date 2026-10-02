@@ -174,15 +174,17 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- players
   app.get('/v1/leaderboards', async (req) => {
     const q = z.object({ mode: MODE.optional() }).parse(req.query);
+    const u = await optionalUser(ctx, req);
+    // Visibility is applied before the limit, with the same rule as canSeeBoard.
     const rows = (await ctx.db.query<LeaderboardRow>(
       `select l.* from leaderboards l left join organizations o on o.id = l.owner_org
         where (l.owner_org is null or o.status = 'active') and ($1::text is null or l.mode = $1)
           and (l.status in ('scheduled','active') or (l.status = 'settled' and l.settled_at > now() - interval '30 days'))
-        order by (l.status = 'settled'), l.ends_at limit 100`, [q.mode ?? null])).rows;
-    const u = await optionalUser(ctx, req);
-    const visible: LeaderboardRow[] = [];
-    for (const r of rows) if (await canSeeBoard(ctx, r, u)) visible.push(r);
-    return { leaderboards: await Promise.all(visible.map((r) => boardView(ctx, r))) };
+          and not exists (select 1 from rooms r where l.scope = 'room' and r.id = l.scope_ref and r.visibility = 'invite' and not $2::boolean
+                            and not exists (select 1 from room_members m where m.room_id = r.id and m.user_id = $3)
+                            and not exists (select 1 from memberships ms where ms.org_id = r.org_id and ms.user_id = $3))
+        order by (l.status = 'settled'), l.ends_at limit 100`, [q.mode ?? null, u?.platform_role != null, u?.id ?? null])).rows;
+    return { leaderboards: await Promise.all(rows.map((r) => boardView(ctx, r))) };
   });
 
   app.get('/v1/leaderboards/:id', async (req) => {

@@ -79,7 +79,11 @@ A promotion is a player-facing offer with an owner (PreFlop or an organization),
 - **Closing a month** builds a statement per agent, currency and level:
   - L1 = `rate_l1 × max(0, ΣNGR(own players) + carry-in)`, where the carry-in is last month's negative balance (zero or less). A negative result is carried out to the next month.
   - L2 = `rate_l2 × max(0, ΣNGR(sub-agents' players))`. Level 2 has no carry.
-  - Closing the same month again creates nothing new (unique per agent, month, currency and level).
+  - A month can be closed once, starting one hour after it ends (UTC); earlier gives `month_not_ended`. Revenue is grouped by settlement time, so a bet that settles later counts in the month it settles.
+  - The close is recorded (`agent_month_closes`), so closing the same month again creates nothing, even if agents were reparented, approved or suspended since.
+  - Suspended agents still get statements, so their carry stays intact, but they are not paid until re-activated (`agent_not_active`).
+  - The carry-in is the carry-out of the agent's latest earlier level-1 statement.
+- Reparenting locks the agent and the new parent together, so two concurrent changes can never build a third level.
 - Statements go `draft` → `approved` (admin or ops) → `paid` (super admin only). Paying posts `agent.commission` from `PreFlop:marketing` to the agent's wallet in that mode and currency, and needs the mode switched on.
 - While real money is off, statements still compute in the sandbox, but none can be paid (`403 mode_disabled`).
 

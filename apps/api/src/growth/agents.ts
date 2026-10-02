@@ -51,7 +51,11 @@ export async function bindReferral(c: Tx, userId: string, code: string | undefin
 export interface AgentUpdate { status?: 'active' | 'suspended' | 'rejected'; rate_l1_bps?: number; rate_l2_bps?: number; parent_agent_id?: string | null }
 
 export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: string): Promise<AgentRow> {
-  const a = (await c.query<AgentRow>('select * from agents where user_id = $1 for update', [agentId])).rows[0];
+  // Lock the agent and the new parent together, in id order, so two concurrent reparentings
+  // serialize and each depth check below sees the other's result.
+  const ids = [agentId, ...(u.parent_agent_id ? [u.parent_agent_id] : [])].sort();
+  await c.query('select 1 from agents where user_id = any($1) order by user_id for update', [ids]);
+  const a = (await c.query<AgentRow>('select * from agents where user_id = $1', [agentId])).rows[0];
   if (!a) throw notFound('agent');
   if (u.rate_l1_bps !== undefined && (u.rate_l1_bps < 0 || u.rate_l1_bps > RATE_CAPS.l1)) throw unprocessable('rate_cap', `level-1 rate is 0–${RATE_CAPS.l1 / 100}%`);
   if (u.rate_l2_bps !== undefined && (u.rate_l2_bps < 0 || u.rate_l2_bps > RATE_CAPS.l2)) throw unprocessable('rate_cap', `level-2 rate is 0–${RATE_CAPS.l2 / 100}%`);
@@ -73,8 +77,13 @@ export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: st
   return row;
 }
 
-const monthStart = (m: string) => {
-  if (!/^\d{4}-\d{2}$/.test(m)) throw unprocessable('invalid_month', 'month is YYYY-MM');
+/** Bets that settle in the last moments of a month may commit a little later; wait this long after month end. */
+export const CLOSE_GRACE_MS = 3_600_000;
+
+const monthStart = (m: string, now: Date) => {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw unprocessable('invalid_month', 'month is YYYY-MM');
+  const [y, mo] = m.split('-').map(Number) as [number, number];
+  if (Date.UTC(y, mo, 1) + CLOSE_GRACE_MS > now.getTime()) throw unprocessable('month_not_ended', `${m} can be closed an hour after it ends (UTC)`);
   return `${m}-01`;
 };
 
@@ -97,18 +106,23 @@ async function ngr(c: Tx, playersSql: string, params: unknown[], month: string, 
 }
 
 /**
- * Builds the month's statements for every active agent and real currency (idempotent: a month
- * already closed is left as it is). Level 1 carries a negative balance forward; level 2 does not.
+ * Builds the statements for a month that has ended, once: the month is recorded as closed, so
+ * closing it again changes nothing even if agents were reparented or suspended since. Suspended
+ * agents keep their accounts (and their carry) but are not paid while suspended. Level 1 carries
+ * a negative balance forward; level 2 does not.
  */
-export async function closeMonth(c: Tx, monthYm: string, by: string): Promise<number> {
-  const month = monthStart(monthYm);
-  const agents = (await c.query<AgentRow>(`select * from agents where status = 'active' order by user_id`)).rows;
+export async function closeMonth(c: Tx, monthYm: string, by: string, now = new Date()): Promise<number> {
+  const month = monthStart(monthYm, now);
+  const first = await c.query(`insert into agent_month_closes (month, statements, closed_by) values ($1, 0, $2) on conflict do nothing`, [month, by]);
+  if (!first.rowCount) return 0;
+  const agents = (await c.query<AgentRow>(`select * from agents where status in ('active','suspended') order by user_id`)).rows;
   let created = 0;
   for (const a of agents) {
     for (const currency of Object.keys(REAL_CURRENCIES)) {
       const ngr1 = await ngr(c, 'select id from users where referred_by_agent = $1', [a.user_id], month, currency);
+      // The latest earlier level-1 statement holds the running negative balance.
       const prev = (await c.query<{ carry_out_minor: string }>(
-        `select carry_out_minor::text from agent_statements where agent_id = $1 and currency = $2 and level = 1 and month = ($3::date - interval '1 month')::date`,
+        `select carry_out_minor::text from agent_statements where agent_id = $1 and currency = $2 and level = 1 and month < $3::date order by month desc limit 1`,
         [a.user_id, currency, month])).rows[0];
       const carryIn = Number(prev?.carry_out_minor ?? 0);
       const base = ngr1 + carryIn;
@@ -127,6 +141,7 @@ export async function closeMonth(c: Tx, monthYm: string, by: string): Promise<nu
       }
     }
   }
+  await c.query('update agent_month_closes set statements = $2 where month = $1', [month, created]);
   await audit(c, { type: 'agent.month_closed', month, statements: created, by });
   return created;
 }
@@ -143,6 +158,8 @@ export async function payStatement(c: Tx, id: string, by: string): Promise<void>
     'select agent_id, currency, amount_minor::text, status from agent_statements where id = $1 for update', [id])).rows[0];
   if (!s) throw notFound('statement');
   if (s.status !== 'approved') throw unprocessable('not_approved', 'approve the statement before paying it');
+  const agent = (await c.query<{ status: string }>('select status from agents where user_id = $1', [s.agent_id])).rows[0];
+  if (agent?.status !== 'active') throw unprocessable('agent_not_active', 'commission is paid to active agents only; re-activate the agent first');
   const mode = REAL_CURRENCIES[s.currency]!;
   if (!(await modeEnabled(c, mode))) throw forbidden('mode_disabled', `${mode} is switched off; commissions are paid when it is enabled`);
   const amount = Number(s.amount_minor);

@@ -206,6 +206,6 @@ The ledger kinds are:
 | `GET /v1/me/agent` | Your agent account, players referred, sub-agents and statements. `/v1/me` also carries `agent: {status, code}` |
 | `GET /v1/admin/agents` | Rate caps, every agent with parent and player count, and every statement (team) |
 | `PUT /v1/admin/agents/:id` | Status, rates and parent (admin, ops). Errors: `rate_cap`, `invalid_parent`, `depth_limit` |
-| `POST /v1/admin/agents/statements/close?month=YYYY-MM` | Build the month's statements; idempotent (admin, ops) |
+| `POST /v1/admin/agents/statements/close?month=YYYY-MM` | Build the statements for a month that has ended, once (admin, ops). `422 month_not_ended` before one hour after month end; a closed month returns `created: 0` |
 | `POST /v1/admin/agents/statements/:id/approve` | Draft → approved (admin, ops) |
-| `POST /v1/admin/agents/statements/:id/pay` | Approved → paid (admin only). `403 mode_disabled` while that real-money mode is off |
+| `POST /v1/admin/agents/statements/:id/pay` | Approved → paid (admin only). `403 mode_disabled` while that real-money mode is off; `422 agent_not_active` while the agent is suspended |

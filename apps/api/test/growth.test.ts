@@ -136,6 +136,7 @@ describe('leaderboards and prize pools', () => {
     }
     expect((await h.api('GET', `/v1/leaderboards/${lb.id}`, owner.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/leaderboards', admin)).body.leaderboards.some((b: any) => b.id === lb.id)).toBe(true);
+    expect((await h.api('GET', '/v1/leaderboards', owner.token)).body.leaderboards.some((b: any) => b.id === lb.id)).toBe(true);
   });
 
   it('real-money prizes wait while the mode is off and go only to verified players', async () => {
