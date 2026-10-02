@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ClubTable, TableSummary } from '@preflop/client';
-import { Button, formatMoney } from '@preflop/ui';
+import { Badge, Button, formatMoney } from '@preflop/ui';
 import { Pause, Play } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { isNotAvailable, pad3 } from '../../lib/format.ts';
@@ -9,6 +9,10 @@ import { DataTable, type Column } from '../../components/DataTable.tsx';
 import { Callout, ConfirmDialog, ErrorBox, Loading, Modal, PageHeader, Section, useAction } from '../../components/ui.tsx';
 import { FlopText, KindChip, Problems, RoundStateBadge, TableStatus } from '../../components/domain.tsx';
 import { CertBadge, CertChecklist, LinkHealth } from '../../components/tables.tsx';
+
+/** The admin view also carries the PreFlop real-money approval (migration 012). */
+type AdminTable = ClubTable & { real_money_approved_at?: string | null };
+const isReal = (t: TableSummary) => t.mode === 'real-fiat' || t.mode === 'real-crypto';
 
 function baseColumns<T extends TableSummary>(): Column<T>[] {
   return [
@@ -32,12 +36,29 @@ export function Tables() {
     onSuccess: () => setTarget(null),
   });
 
-  const cols: Column<ClubTable>[] = [
-    ...baseColumns<ClubTable>(),
+  // Real-money approval (PUT /v1/admin/tables/:id/real-money): a real-fiat/real-crypto table takes
+  // real-money bets only once approved here; a club change of certification or mode clears it.
+  const setApproval = useAction((a: { id: string; approved: boolean }) => api.raw<{ id: string }>('PUT', `/v1/admin/tables/${encodeURIComponent(a.id)}/real-money`, { approved: a.approved }), {
+    invalidate: [['admin', 'tables']],
+    success: (_, a) => (a.approved ? 'Table approved for real money.' : 'Real-money approval revoked.'),
+  });
+
+  const cols: Column<AdminTable>[] = [
+    ...baseColumns<AdminTable>(),
     { key: 'cert', header: 'Certification', className: 'whitespace-nowrap', sort: (t) => Object.values(t.certification ?? {}).filter((c) => c.ok).length, cell: (t) => <CertBadge cert={t.certification} /> },
+    {
+      key: 'real', header: 'Real money', className: 'whitespace-nowrap', sort: (t) => (isReal(t) ? (t.real_money_approved_at ? 2 : 1) : 0),
+      cell: (t) => !isReal(t) ? <span className="text-faint">—</span>
+        : t.real_money_approved_at ? <Badge tone="live">Approved</Badge> : <Badge tone="warn">Not approved</Badge>,
+    },
     {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', className: 'w-px', cell: (t) => (
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+          {isReal(t) && (
+            <Button size="sm" variant="secondary" disabled={setApproval.isPending} onClick={() => setApproval.mutate({ id: t.id, approved: !t.real_money_approved_at })}>
+              {t.real_money_approved_at ? 'Revoke' : 'Approve'}
+            </Button>
+          )}
           {t.status === 'paused'
             ? <Button size="sm" variant="secondary" onClick={() => setTarget({ t, to: 'active' })}><Play size={14} aria-hidden />Resume</Button>
             : <Button size="sm" variant="secondary" onClick={() => setTarget({ t, to: 'paused' })} disabled={t.status === 'retired'}><Pause size={14} aria-hidden />Pause</Button>}
