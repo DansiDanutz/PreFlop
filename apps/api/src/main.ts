@@ -1,11 +1,11 @@
 import { migrate } from '@preflop/db';
 import { buildApp } from './app.ts';
-import { loadConfig } from './config.ts';
+import { loadConfigOrExit } from './config.ts';
 import { createPool } from './lib/db.ts';
 import { startWebhookFanout } from './routes/partner.ts';
 import { startWorker } from './worker.ts';
 
-const config = loadConfig();
+const config = loadConfigOrExit();
 const db = createPool(config.databaseUrl);
 const applied = await migrate(db);
 if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);

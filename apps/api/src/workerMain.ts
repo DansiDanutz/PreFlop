@@ -1,5 +1,5 @@
 import { migrate } from '@preflop/db';
-import { loadConfig } from './config.ts';
+import { loadConfigOrExit } from './config.ts';
 import { createPool } from './lib/db.ts';
 import { startWorker } from './worker.ts';
 
@@ -8,7 +8,7 @@ import { startWorker } from './worker.ts';
  * started with RUN_WORKER=false. Several workers may run: jobs are taken with SKIP LOCKED and
  * every job is idempotent. (Webhook fan-out listens to in-process events, so it stays with the API.)
  */
-const config = loadConfig();
+const config = loadConfigOrExit();
 const db = createPool(config.databaseUrl, 5);
 await migrate(db);
 const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs });

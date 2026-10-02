@@ -33,7 +33,7 @@ export interface AppContext {
 }
 
 export async function buildApp(db: Db, config: Config): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.LOG === '1', bodyLimit: 12 * 1024 * 1024 });
+  const app = Fastify({ logger: config.log, trustProxy: config.trustProxy, bodyLimit: 12 * 1024 * 1024 });
 
   // Keep the raw body: provider requests are signed over its exact bytes.
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
