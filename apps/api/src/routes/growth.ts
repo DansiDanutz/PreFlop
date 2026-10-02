@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import type { SessionUser } from '../auth/players.ts';
 import {
-  DEFAULT_MIN_ROUNDS, type LeaderboardRow, type Metric, assertBoardModeAllowed, cancel, fund, lockBoard, poolBalance, settle, standingOf, standings,
+  CLOSED_LOOP_MODES, DEFAULT_MIN_ROUNDS, type LeaderboardRow, type Metric, assertBoardModeAllowed, cancel, fund, lockBoard, poolBalance, settle, standingOf, standings,
 } from '../growth/leaderboards.ts';
 import { type PromotionRow, claim, isLive } from '../growth/promotions.ts';
 import { audit } from '../lib/audit.ts';
@@ -85,6 +85,7 @@ async function assertOrgScope(ctx: AppContext, orgId: string, kind: string, b: B
 async function createBoard(ctx: AppContext, b: BoardInput, ownerOrg: string | null, by: string): Promise<LeaderboardRow> {
   validateBoard(b);
   await assertBoardModeAllowed(ctx.db, b.mode as PlayMode);
+  if (!ownerOrg && CLOSED_LOOP_MODES.has(b.mode as PlayMode)) throw unprocessable('org_required', 'chips and diamonds belong to one organization; its portal creates and funds the board');
   if (ownerOrg && b.margin_bps > 0) throw forbidden('margin_preflop_only', 'only PreFlop boards take a share of PreFlop’s margin');
   return tx(ctx.db, async (c) => {
     const id = newId('lb');
@@ -99,6 +100,17 @@ async function createBoard(ctx: AppContext, b: BoardInput, ownerOrg: string | nu
     await audit(c, { type: 'leaderboard.created', leaderboardId: id, ownerOrg, by, mode: b.mode, metric: b.metric });
     return lb;
   });
+}
+
+/** A board on an invite-only room is seen only by those who may see the room (as GET /v1/rooms/:id). */
+async function canSeeBoard(ctx: AppContext, lb: LeaderboardRow, u: SessionUser | null): Promise<boolean> {
+  if (lb.scope !== 'room') return true;
+  const r = (await ctx.db.query<{ visibility: string; org_id: string }>('select visibility, org_id from rooms where id = $1', [lb.scope_ref])).rows[0];
+  if (!r || r.visibility !== 'invite') return true;
+  if (!u) return false;
+  if (u.platform_role !== null) return true;
+  return !!(await ctx.db.query('select 1 from room_members where room_id = $1 and user_id = $2 union all select 1 from memberships where org_id = $3 and user_id = $2',
+    [lb.scope_ref, u.id, r.org_id])).rowCount;
 }
 
 async function boardView(ctx: AppContext, lb: LeaderboardRow) {
@@ -167,14 +179,17 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
         where (l.owner_org is null or o.status = 'active') and ($1::text is null or l.mode = $1)
           and (l.status in ('scheduled','active') or (l.status = 'settled' and l.settled_at > now() - interval '30 days'))
         order by (l.status = 'settled'), l.ends_at limit 100`, [q.mode ?? null])).rows;
-    return { leaderboards: await Promise.all(rows.map((r) => boardView(ctx, r))) };
+    const u = await optionalUser(ctx, req);
+    const visible: LeaderboardRow[] = [];
+    for (const r of rows) if (await canSeeBoard(ctx, r, u)) visible.push(r);
+    return { leaderboards: await Promise.all(visible.map((r) => boardView(ctx, r))) };
   });
 
   app.get('/v1/leaderboards/:id', async (req) => {
     const { id } = req.params as { id: string };
     const lb = (await ctx.db.query<LeaderboardRow>('select * from leaderboards where id = $1', [id])).rows[0];
-    if (!lb) throw notFound('leaderboard');
     const u = await optionalUser(ctx, req);
+    if (!lb || !(await canSeeBoard(ctx, lb, u))) throw notFound('leaderboard');
     const settledResults = lb.status === 'settled'
       ? (await ctx.db.query<{ rank: number; user_id: string; display_name: string; score: string; rounds: number; prize_minor: string; badge: string | null }>(
         `select r.rank, r.user_id, u.display_name, r.score::text as score, r.rounds, r.prize_minor::text as prize_minor, r.badge

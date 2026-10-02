@@ -19,7 +19,7 @@ A **leaderboard** ranks players over a period, in one currency:
 
 | Field | Values |
 |---|---|
-| `owner` | PreFlop (null) or an organization (club or organizer) |
+| `owner` | PreFlop (null) or an organization (club or organizer). Chip and diamond boards always have an organization owner, because those currencies live in its closed loop; their prizes land in the winner's wallet for that organization (`org_required` otherwise) |
 | `mode`, `currency` | `play`/PLAY, `diamonds`/DIAMOND, `virtual-chips`/CHIP, `real-fiat`/EUR, `real-crypto`/USDT·USDC |
 | `scope` | `global`, one club's tables (`org`), one table, or one room |
 | `metric` | `net` (returned − staked), `volume` (staked), `roi` (returned ÷ staked), `points` (each correct prediction scores `round(odds × 10)`) |
@@ -31,6 +31,7 @@ A **leaderboard** ranks players over a period, in one currency:
 **Standings** are computed live from settled and voided bets in scope and period: `bets` joined to `rounds` and `poker_tables`. Voided bets do not count. Self-excluded and suspended users are left out.
 - Ties are broken by fewer rounds, then by who reached the score first.
 - Players see their own rank and the top 50.
+- A board on an invite-only room is visible only to those who can see the room: its members, the organization's portal members and the PreFlop team. Everyone else gets `404`, and the board is left out of the list.
 
 **Responsible gaming:** a `volume` board shows a "volume rewards activity" note. A setting can switch volume boards off, and that setting defaults to **on** for play money only.
 
@@ -47,7 +48,9 @@ Every leaderboard owns a pool account: `leaderboard:<id>:pool:<mode>:<currency>`
 
 **Paying out:** at `ends_at` the worker closes the board. It takes the final standings and pays `prize_split_bps` of the pool to the qualifying ranks in order (`pool.payout`, ref `<board>:<rank>`). It awards badges, and anything unallocated (fewer qualifiers than prize ranks, or rounding) returns to whoever funded the board, pro rata (`pool.return`).
 - **Play money:** prizes are free chips into `wallet:play`, plus badges (`champion`, `podium`, `top10`). There are never diamonds, real money or goods. The UI says "Free chips. No cash value."
-- **Real money:** creating, funding and paying a board requires `modes_enabled` for that mode, a verified KYC for winners, and a prize under the player's limits. Today the API refuses real-money boards with `403 mode_disabled`.
+- **Real money:** creating and funding a board requires `modes_enabled` for that mode. Today the API refuses real-money boards with `403 mode_disabled`.
+  - Settlement waits while the mode is switched off. The board settles once the mode is back on, or the team cancels it and the pool returns to its funders.
+  - Only verified (KYC), active players can take a prize. Anyone else steps aside and the ranks close up. Self-excluded and suspended players are already out of the standings. Responsible-gaming limits cap deposits and losses, so they do not block a prize credit.
 
 ## 3. Promotions
 

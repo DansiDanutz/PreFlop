@@ -117,6 +117,50 @@ describe('leaderboards and prize pools', () => {
     expect((await h.api('POST', `/v1/admin/leaderboards/${lb.body.id}/cancel`, admin)).status).toBe(200);
     expect(await balance(h.db as never, `${org}:treasury:diamonds:DIAMOND`)).toBe(5_000);
   });
+
+  it('chip and diamond boards always belong to an organization, so prizes land in a spendable wallet', async () => {
+    const base = { name: 'Global diamonds', metric: 'net', prize_split_bps: [10_000], ...window() };
+    expect((await h.api('POST', '/v1/admin/leaderboards', admin, { ...base, mode: 'diamonds', currency: 'DIAMOND' })).body.type).toBe('org_required');
+    expect((await h.api('POST', '/v1/admin/leaderboards', admin, { ...base, mode: 'virtual-chips', currency: 'CHIP' })).body.type).toBe('org_required');
+  });
+
+  it('a board on an invite-only room is hidden from everyone who cannot see the room', async () => {
+    const owner = await user('room-owner');
+    const org = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Back Room', owner_email: owner.email })).body.id as string;
+    const room = (await h.api('POST', `/v1/org/${org}/rooms`, owner.token, { name: 'Private', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'invite' })).body;
+    const lb = (await h.api('POST', `/v1/org/${org}/leaderboards`, owner.token, { name: 'Private week', mode: 'virtual-chips', currency: 'CHIP', metric: 'net', prize_split_bps: [10_000], scope: 'room', scope_ref: room.id, ...window() })).body;
+    const outsider = await user('outsider');
+    for (const t of [undefined, outsider.token]) {
+      expect((await h.api('GET', '/v1/leaderboards', t)).body.leaderboards.some((b: any) => b.id === lb.id)).toBe(false);
+      expect((await h.api('GET', `/v1/leaderboards/${lb.id}`, t)).status).toBe(404);
+    }
+    expect((await h.api('GET', `/v1/leaderboards/${lb.id}`, owner.token)).status).toBe(200);
+    expect((await h.api('GET', '/v1/leaderboards', admin)).body.leaderboards.some((b: any) => b.id === lb.id)).toBe(true);
+  });
+
+  it('real-money prizes wait while the mode is off and go only to verified players', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    await modes(true);
+    const lb = (await h.api('POST', '/v1/admin/leaderboards', admin, { name: 'Real week', mode: 'real-fiat', currency: 'EUR', metric: 'net', min_rounds: 1, prize_split_bps: [10_000], fund_minor: 5_000, ...window() })).body;
+    const [verified, unverified] = [await user('Vera'), await user('Uri')];
+    await h.db.query(`update users set kyc_status = 'verified' where id = $1`, [verified.id]);
+    const round = (await h.db.query<{ id: string }>('select id from rounds limit 1')).rows[0]!.id;
+    for (const [u, payout] of [[unverified.id, 9_000], [verified.id, 3_000]] as const) {
+      await h.db.query(`insert into bets (id, idempotency_key, user_id, round_id, selection_id, stake_minor, odds_centi, mode, currency, status, payout_minor, settled_at)
+        values ($1, $1, $2, $3, 'colour:all-red', 1000, 200, 'real-fiat', 'EUR', 'won', $4, now())`, [`rm-${u}`, u, round, payout]);
+    }
+    await modes(false);
+    await growthTick(h.db, afterEnd());
+    expect((await h.api('GET', `/v1/leaderboards/${lb.id}`, admin)).body.leaderboard.status).not.toBe('settled');
+    expect(await balance(h.db as never, `${verified.id}:wallet:real-fiat:EUR`)).toBe(0);
+    await modes(true);
+    await growthTick(h.db, afterEnd());
+    // The unverified player led the board but steps aside; the verified player takes rank 1.
+    expect(await balance(h.db as never, `${unverified.id}:wallet:real-fiat:EUR`)).toBe(0);
+    expect(await balance(h.db as never, `${verified.id}:wallet:real-fiat:EUR`)).toBe(5_000);
+    await modes(false);
+    for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
+  });
 });
 
 describe('promotions', () => {

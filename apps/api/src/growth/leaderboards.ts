@@ -12,6 +12,8 @@ import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.t
 
 export type Metric = 'net' | 'volume' | 'roi' | 'points';
 export const REAL_MODES = new Set<PlayMode>(['real-fiat', 'real-crypto']);
+/** Chips and diamonds live in one organization's closed loop, so their boards always belong to an organization. */
+export const CLOSED_LOOP_MODES = new Set<PlayMode>(['virtual-chips', 'diamonds']);
 export const DEFAULT_MIN_ROUNDS: Record<Metric, number> = { net: 10, volume: 1, roi: 20, points: 1 };
 
 export interface LeaderboardRow {
@@ -31,6 +33,7 @@ export const poolBalance = (c: Q, lb: Pick<LeaderboardRow, 'id' | 'mode' | 'curr
 /** The wallet a prize lands in: free chips and real money in the player's own wallet; chips and diamonds stay in the owner's closed loop. */
 export function prizeWallet(lb: Pick<LeaderboardRow, 'mode' | 'currency' | 'owner_org'>, userId: string): string {
   if (lb.mode === 'play' || REAL_MODES.has(lb.mode)) return acct(userId, 'wallet', lb.mode, lb.currency);
+  if (!lb.owner_org) throw unprocessable('org_required', `${lb.mode} prizes are paid inside an organization's closed loop`);
   return acct(userId, walletPurpose(lb.owner_org), lb.mode, lb.currency);
 }
 
@@ -180,15 +183,30 @@ async function returnRemainder(c: Tx, lb: LeaderboardRow, kind: string): Promise
 }
 
 /**
+ * The qualified players who may take a prize, re-ranked. On real-money boards only verified
+ * identities win; anyone else steps aside and the ranks close up (self-excluded and suspended
+ * players are already out of the standings).
+ */
+async function winners(c: Tx, lb: LeaderboardRow, now: Date): Promise<Standing[]> {
+  const n = Math.max(10, lb.prize_split_bps.length);
+  if (!REAL_MODES.has(lb.mode)) return (await standings(c, lb, n, now)).filter((s) => s.qualified);
+  const all = (await standings(c, lb, 100_000, now)).filter((s) => s.qualified);
+  const ok = new Set((await c.query<{ id: string }>(`select id from users where id = any($1) and kyc_status = 'verified' and status = 'active'`, [all.map((s) => s.user_id)])).rows.map((r) => r.id));
+  return all.filter((s) => ok.has(s.user_id)).slice(0, n).map((s, i) => ({ ...s, rank: i + 1 }));
+}
+
+/**
  * Closes an ended board: final accrual, prizes by rank to qualified players, badges for the top
  * ten, and whatever is unallocated back to the funders. Idempotent: a settled board is skipped.
+ * A real-money board waits while its mode is switched off; the team can cancel it to refund the pool.
  */
 export async function settle(c: Tx, id: string, now = new Date()): Promise<boolean> {
   const lb = await lockBoard(c, id);
   if (!lb || lb.status === 'settled' || lb.status === 'cancelled' || lb.ends_at > now) return false;
+  if (REAL_MODES.has(lb.mode) && !(await modeEnabled(c, lb.mode))) return false;
   await accrue(c, lb, now);
   const pool = await poolBalance(c, lb);
-  const top = (await standings(c, lb, Math.max(10, lb.prize_split_bps.length), now)).filter((s) => s.qualified);
+  const top = await winners(c, lb, now);
   for (const s of top) {
     const prize = s.rank! <= lb.prize_split_bps.length ? Math.floor((pool * lb.prize_split_bps[s.rank! - 1]!) / 10_000) : 0;
     if (prize > 0) await post(c, 'pool.payout', `${lb.id}:${s.rank}`, [{ from: poolAccount(lb), to: prizeWallet(lb, s.user_id), amountMinor: prize }]);

@@ -30,7 +30,8 @@ function useScope() {
 
 function BoardEditor({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { admin, orgId, kind } = useScope();
-  const modes = admin ? ['play', 'diamonds', 'virtual-chips', 'real-fiat', 'real-crypto'] : ['diamonds', 'virtual-chips'];
+  // Chips and diamonds are an organization's closed loop: those boards are created from its portal.
+  const modes = admin ? ['play', 'real-fiat', 'real-crypto'] : ['diamonds', 'virtual-chips'];
   const [f, setF] = useState({ name: '', mode: modes[0]!, currency: MODE_CURRENCY[modes[0]!]![0]!, metric: 'net' as LeaderboardMetric, min_rounds: '',
     scope: admin ? 'global' : 'org', scope_ref: '', split: '50, 30, 20', starts: localInput(new Date()), ends: localInput(new Date(Date.now() + 7 * 86_400_000)),
     margin: '0', contribution: '0', fund: '' });
