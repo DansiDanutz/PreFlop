@@ -14,6 +14,8 @@ import * as C from './portals/club/index.tsx';
 import * as P from './portals/partner/index.tsx';
 import * as G from './portals/organizer/index.tsx';
 import * as W from './portals/growth/index.tsx';
+import { Agents } from './portals/growth/Agents.tsx';
+import { AgentOverview } from './portals/agent/index.tsx';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token, loading, me, error } = useAuth();
@@ -57,6 +59,12 @@ export function App() {
         <Route path="settings" element={<A.Settings />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
         <Route path="promotions" element={<W.Promotions />} />
+        <Route path="agents" element={<Agents />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+
+      <Route path="/agent" element={shell}>
+        <Route index element={<AgentOverview />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 

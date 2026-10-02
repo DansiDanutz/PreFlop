@@ -38,7 +38,7 @@ export interface User {
 }
 export interface Membership { org_id: string; kind: OrgKind; name: string; role: OrgRole; status: string }
 export interface Wallet { mode: PlayMode; currency: string; balance_minor: number; org_id?: string | null; org_name?: string | null }
-export interface Me extends User { memberships: Membership[]; wallets: Wallet[] }
+export interface Me extends User { memberships: Membership[]; wallets: Wallet[]; agent?: { status: AgentStatus; code: string } | null }
 
 export interface BookSelection { id: string; label: string; probability: number; wins: number; offered: boolean; odds_centi: number; reason?: string }
 export interface BookMarket { id: string; family: string; name: string; description: string; first_release: boolean; exhaustive: boolean; selections: BookSelection[] }
@@ -153,6 +153,18 @@ export interface PromotionInput {
   kind: PromotionKind; title: string; body?: string; link?: string | null; leaderboard_id?: string | null; mode?: PlayMode | null; currency?: string | null;
   amount_minor?: number | null; budget_minor?: number | null; starts_at: string; ends_at: string; draft?: boolean;
 }
+export type AgentStatus = 'applied' | 'active' | 'suspended' | 'rejected';
+export interface Agent { user_id: string; code: string; parent_agent_id: string | null; status: AgentStatus; rate_l1_bps: number; rate_l2_bps: number; note: string | null; created_at: string }
+export interface AgentStatement {
+  id: string; agent_id: string; month: string; currency: string; level: 1 | 2; ngr_minor: number; carry_in_minor: number; carry_out_minor: number;
+  rate_bps: number; amount_minor: number; status: 'draft' | 'approved' | 'paid'; display_name?: string;
+}
+export interface MyAgent { agent: Agent | null; players?: number; sub_agents?: { user_id: string; display_name: string; code: string; status: AgentStatus; players: number }[]; statements?: AgentStatement[] }
+export interface AdminAgents {
+  caps: { rate_l1_bps: number; rate_l2_bps: number };
+  agents: (Agent & { display_name: string; email: string; players: number; parent_name: string | null })[];
+  statements: AgentStatement[];
+}
 export interface Badge { id: string; kind: 'champion' | 'podium' | 'top10'; label: string; leaderboard_id: string | null; awarded_at: string }
 
 export function createClient(o: ClientOptions) {
@@ -198,7 +210,7 @@ export function createClient(o: ClientOptions) {
     apply: (a: { kind: OrgKind; name: string; email: string; details?: Record<string, unknown> }) => post<{ id: string }>('/v1/applications', a),
 
     // ---------- auth
-    register: (b: { email: string; password: string; display_name: string; country?: string }) => post<{ token: string; user: Pick<User, 'id' | 'email' | 'display_name'> }>('/v1/auth/register', b),
+    register: (b: { email: string; password: string; display_name: string; country?: string; ref?: string }) => post<{ token: string; user: Pick<User, 'id' | 'email' | 'display_name'> }>('/v1/auth/register', b),
     login: (b: { email: string; password: string }) => post<{ token: string }>('/v1/auth/login', b),
     logout: () => post<{ ok: true }>('/v1/auth/logout'),
 
@@ -216,6 +228,8 @@ export function createClient(o: ClientOptions) {
     joinRoom: (code: string) => post<Room>('/v1/rooms/join', { code }),
     leaderboards: (mode?: PlayMode) => get<{ leaderboards: Leaderboard[] }>(`/v1/leaderboards${mode ? `?mode=${mode}` : ''}`),
     leaderboard: (id: string) => get<LeaderboardDetail>(`/v1/leaderboards/${encodeURIComponent(id)}`),
+    myAgent: () => get<MyAgent>('/v1/me/agent'),
+    applyAgent: (note?: string) => post<Agent>('/v1/me/agent/apply', note ? { note } : {}),
     myBadges: () => get<{ badges: Badge[] }>('/v1/me/badges'),
     promotions: () => get<{ promotions: Promotion[] }>('/v1/promotions'),
     claimPromotion: (id: string) => post<{ amount_minor: number; currency: string }>(`/v1/promotions/${encodeURIComponent(id)}/claim`),
@@ -290,6 +304,11 @@ export function createClient(o: ClientOptions) {
     adminRounds: (f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number; table_name: string })[] }>(`/v1/admin/rounds${q(f)}`),
     adminUsers: (f: { q?: string; limit?: number } = {}) => get<{ users: (User & { created_at: string; bets: number })[] }>(`/v1/admin/users${q(f)}`),
     adminUpdateUser: (id: string, b: Partial<Pick<User, 'status' | 'kyc_status' | 'platform_role'>>) => put<User>(`/v1/admin/users/${encodeURIComponent(id)}`, b),
+    adminAgents: () => get<AdminAgents>('/v1/admin/agents'),
+    adminUpdateAgent: (id: string, b: { status?: 'active' | 'suspended' | 'rejected'; rate_l1_bps?: number; rate_l2_bps?: number; parent_agent_id?: string | null }) => put<Agent>(`/v1/admin/agents/${encodeURIComponent(id)}`, b),
+    adminCloseAgentMonth: (month: string) => post<{ created: number }>(`/v1/admin/agents/statements/close?month=${encodeURIComponent(month)}`),
+    adminApproveStatement: (id: string) => post<{ ok: true }>(`/v1/admin/agents/statements/${encodeURIComponent(id)}/approve`),
+    adminPayStatement: (id: string) => post<{ ok: true }>(`/v1/admin/agents/statements/${encodeURIComponent(id)}/pay`),
     adminLeaderboards: () => get<{ leaderboards: Leaderboard[] }>('/v1/admin/leaderboards'),
     adminCreateLeaderboard: (b: LeaderboardInput) => post<Leaderboard>('/v1/admin/leaderboards', b),
     adminFundLeaderboard: (lb: string, amount_minor: number) => post<Leaderboard>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),

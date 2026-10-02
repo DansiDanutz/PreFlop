@@ -1,0 +1,154 @@
+import { randomBytes } from 'node:crypto';
+import { type PlayMode } from '@preflop/odds-engine';
+import { audit } from '../lib/audit.ts';
+import type { Tx } from '../lib/db.ts';
+import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
+import { newId } from '../lib/ids.ts';
+import { acct, post } from '../lib/ledger.ts';
+import { modeEnabled } from './leaderboards.ts';
+
+/**
+ * Agents (docs/16 §4): a two-level affiliate paid on net gaming revenue. Only modes with cash
+ * value count; play money, chips and diamonds never earn commission. Depth is capped at two by
+ * construction: a sub-agent's parent is always a top-level agent, and an agent with sub-agents
+ * cannot itself be given a parent.
+ */
+
+export const REAL_CURRENCIES: Record<string, PlayMode> = { EUR: 'real-fiat', USDT: 'real-crypto', USDC: 'real-crypto' };
+export const RATE_CAPS = { l1: 4000, l2: 1000 } as const;
+
+export interface AgentRow {
+  user_id: string; code: string; parent_agent_id: string | null; status: 'applied' | 'active' | 'suspended' | 'rejected';
+  rate_l1_bps: number; rate_l2_bps: number; note: string | null; approved_by: string | null; created_at: Date;
+}
+
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function newCode(): string {
+  const b = randomBytes(6);
+  return 'PF' + [...b].map((x) => ALPHABET[x % ALPHABET.length]).join('');
+}
+
+export async function apply(c: Tx, userId: string, note: string | null): Promise<AgentRow> {
+  const existing = (await c.query<AgentRow>('select * from agents where user_id = $1', [userId])).rows[0];
+  if (existing && existing.status !== 'rejected') throw conflict('already_applied', `your agent account is ${existing.status}`);
+  const row = existing
+    ? (await c.query<AgentRow>(`update agents set status = 'applied', note = $2 where user_id = $1 returning *`, [userId, note])).rows[0]!
+    : (await c.query<AgentRow>('insert into agents (user_id, code, note) values ($1, $2, $3) returning *', [userId, newCode(), note])).rows[0]!;
+  await audit(c, { type: 'agent.applied', userId });
+  return row;
+}
+
+/** Binds a newly registered player to the agent whose code they used. Unknown or inactive codes are ignored. */
+export async function bindReferral(c: Tx, userId: string, code: string | undefined): Promise<string | null> {
+  if (!code) return null;
+  const a = (await c.query<{ user_id: string }>(`select user_id from agents where code = $1 and status = 'active'`, [code.trim().toUpperCase()])).rows[0];
+  if (!a || a.user_id === userId) return null;
+  await c.query('update users set referred_by_agent = $2 where id = $1 and referred_by_agent is null', [userId, a.user_id]);
+  await audit(c, { type: 'agent.referral', userId, agentId: a.user_id });
+  return a.user_id;
+}
+
+export interface AgentUpdate { status?: 'active' | 'suspended' | 'rejected'; rate_l1_bps?: number; rate_l2_bps?: number; parent_agent_id?: string | null }
+
+export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: string): Promise<AgentRow> {
+  const a = (await c.query<AgentRow>('select * from agents where user_id = $1 for update', [agentId])).rows[0];
+  if (!a) throw notFound('agent');
+  if (u.rate_l1_bps !== undefined && (u.rate_l1_bps < 0 || u.rate_l1_bps > RATE_CAPS.l1)) throw unprocessable('rate_cap', `level-1 rate is 0–${RATE_CAPS.l1 / 100}%`);
+  if (u.rate_l2_bps !== undefined && (u.rate_l2_bps < 0 || u.rate_l2_bps > RATE_CAPS.l2)) throw unprocessable('rate_cap', `level-2 rate is 0–${RATE_CAPS.l2 / 100}%`);
+  if (u.parent_agent_id !== undefined && u.parent_agent_id !== null) {
+    if (u.parent_agent_id === agentId) throw unprocessable('invalid_parent', 'an agent cannot be its own parent');
+    const p = (await c.query<AgentRow>('select * from agents where user_id = $1', [u.parent_agent_id])).rows[0];
+    if (!p || p.status !== 'active') throw unprocessable('invalid_parent', 'the parent must be an active agent');
+    if (p.parent_agent_id) throw unprocessable('depth_limit', 'agents go two levels deep: the parent must be a top-level agent');
+    const kids = (await c.query('select 1 from agents where parent_agent_id = $1 limit 1', [agentId])).rowCount;
+    if (kids) throw unprocessable('depth_limit', 'this agent has its own sub-agents, so it cannot have a parent');
+  }
+  const row = (await c.query<AgentRow>(
+    `update agents set status = coalesce($2, status), rate_l1_bps = coalesce($3, rate_l1_bps), rate_l2_bps = coalesce($4, rate_l2_bps),
+            parent_agent_id = case when $6 then $5 else parent_agent_id end,
+            approved_by = case when $2 = 'active' and status <> 'active' then $7 else approved_by end
+      where user_id = $1 returning *`,
+    [agentId, u.status ?? null, u.rate_l1_bps ?? null, u.rate_l2_bps ?? null, u.parent_agent_id ?? null, u.parent_agent_id !== undefined, by])).rows[0]!;
+  await audit(c, { type: 'agent.updated', agentId, by, ...u });
+  return row;
+}
+
+const monthStart = (m: string) => {
+  if (!/^\d{4}-\d{2}$/.test(m)) throw unprocessable('invalid_month', 'month is YYYY-MM');
+  return `${m}-01`;
+};
+
+/**
+ * NGR of a set of players for one month and currency: settled stakes − payouts on bets in modes
+ * with cash value, minus the value of promotions they claimed in that currency.
+ */
+async function ngr(c: Tx, playersSql: string, params: unknown[], month: string, currency: string): Promise<number> {
+  const i = params.length;
+  const r = (await c.query<{ ngr: string }>(
+    `with p as (${playersSql})
+     select (coalesce((select sum(b.stake_minor - coalesce(b.payout_minor, 0)) from bets b
+                        where b.user_id in (select id from p) and b.currency = $${i + 2} and b.mode in ('real-fiat','real-crypto')
+                          and b.status in ('won','lost') and b.settled_at >= $${i + 1}::date and b.settled_at < ($${i + 1}::date + interval '1 month')), 0)
+           - coalesce((select sum(pc.amount_minor) from promotion_claims pc join promotions pr on pr.id = pc.promotion_id
+                        where pc.user_id in (select id from p) and pr.currency = $${i + 2}
+                          and pc.claimed_at >= $${i + 1}::date and pc.claimed_at < ($${i + 1}::date + interval '1 month')), 0))::text as ngr`,
+    [...params, month, currency])).rows[0]!;
+  return Number(r.ngr);
+}
+
+/**
+ * Builds the month's statements for every active agent and real currency (idempotent: a month
+ * already closed is left as it is). Level 1 carries a negative balance forward; level 2 does not.
+ */
+export async function closeMonth(c: Tx, monthYm: string, by: string): Promise<number> {
+  const month = monthStart(monthYm);
+  const agents = (await c.query<AgentRow>(`select * from agents where status = 'active' order by user_id`)).rows;
+  let created = 0;
+  for (const a of agents) {
+    for (const currency of Object.keys(REAL_CURRENCIES)) {
+      const ngr1 = await ngr(c, 'select id from users where referred_by_agent = $1', [a.user_id], month, currency);
+      const prev = (await c.query<{ carry_out_minor: string }>(
+        `select carry_out_minor::text from agent_statements where agent_id = $1 and currency = $2 and level = 1 and month = ($3::date - interval '1 month')::date`,
+        [a.user_id, currency, month])).rows[0];
+      const carryIn = Number(prev?.carry_out_minor ?? 0);
+      const base = ngr1 + carryIn;
+      const ngr2 = await ngr(c, 'select u.id from users u join agents s on s.user_id = u.referred_by_agent where s.parent_agent_id = $1', [a.user_id], month, currency);
+      const rows: [level: 1 | 2, n: number, cin: number, cout: number, rate: number, amount: number][] = [
+        [1, ngr1, carryIn, Math.min(0, base), a.rate_l1_bps, base > 0 ? Math.floor((base * a.rate_l1_bps) / 10_000) : 0],
+        [2, ngr2, 0, 0, a.rate_l2_bps, ngr2 > 0 ? Math.floor((ngr2 * a.rate_l2_bps) / 10_000) : 0],
+      ];
+      for (const [level, n, cin, cout, rate, amount] of rows) {
+        if (n === 0 && cin === 0) continue;
+        const ins = await c.query(
+          `insert into agent_statements (id, agent_id, month, currency, level, ngr_minor, carry_in_minor, carry_out_minor, rate_bps, amount_minor)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) on conflict (agent_id, month, currency, level) do nothing`,
+          [newId('ast'), a.user_id, month, currency, level, n, cin, cout, rate, amount]);
+        created += ins.rowCount ?? 0;
+      }
+    }
+  }
+  await audit(c, { type: 'agent.month_closed', month, statements: created, by });
+  return created;
+}
+
+export async function approveStatement(c: Tx, id: string, by: string): Promise<void> {
+  const r = await c.query(`update agent_statements set status = 'approved', decided_by = $2 where id = $1 and status = 'draft'`, [id, by]);
+  if (!r.rowCount) throw unprocessable('not_draft', 'only a draft statement can be approved');
+  await audit(c, { type: 'agent.statement_approved', statementId: id, by });
+}
+
+/** Pays an approved statement from PreFlop marketing into the agent's wallet in that currency. */
+export async function payStatement(c: Tx, id: string, by: string): Promise<void> {
+  const s = (await c.query<{ agent_id: string; currency: string; amount_minor: string; status: string }>(
+    'select agent_id, currency, amount_minor::text, status from agent_statements where id = $1 for update', [id])).rows[0];
+  if (!s) throw notFound('statement');
+  if (s.status !== 'approved') throw unprocessable('not_approved', 'approve the statement before paying it');
+  const mode = REAL_CURRENCIES[s.currency]!;
+  if (!(await modeEnabled(c, mode))) throw forbidden('mode_disabled', `${mode} is switched off; commissions are paid when it is enabled`);
+  const amount = Number(s.amount_minor);
+  if (amount > 0) {
+    await post(c, 'agent.commission', id, [{ from: acct('PreFlop', 'marketing', mode, s.currency), to: acct(s.agent_id, 'wallet', mode, s.currency), amountMinor: amount }]);
+  }
+  await c.query(`update agent_statements set status = 'paid', decided_by = $2 where id = $1`, [id, by]);
+  await audit(c, { type: 'agent.statement_paid', statementId: id, amountMinor: amount, by });
+}

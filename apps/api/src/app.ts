@@ -11,6 +11,7 @@ import { ApiError } from './lib/errors.ts';
 import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
+import { agentRoutes } from './routes/agents.ts';
 import { growthRoutes } from './routes/growth.ts';
 import { orgRoutes } from './routes/org.ts';
 import { partnerRoutes } from './routes/partner.ts';
@@ -118,6 +119,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   await providerRoutes(app, ctx);
   await accountRoutes(app, ctx);
   await growthRoutes(app, ctx);
+  await agentRoutes(app, ctx);
   await orgRoutes(app, ctx);
   await partnerRoutes(app, ctx);
   await adminRoutes(app, ctx);

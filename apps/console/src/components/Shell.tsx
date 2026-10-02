@@ -44,7 +44,7 @@ export function PortalMenu({ current }: { current: Portal }) {
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/40 bg-accent-deep text-accent"><Icon size={17} aria-hidden /></span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{current.name}</span>
-          <span className="block truncate text-xs text-muted">{KIND_LABEL[current.kind]} · {current.role}</span>
+          <span className="block truncate text-xs text-muted">{current.kind === 'agent' ? current.status : `${KIND_LABEL[current.kind]} · ${current.role}`}</span>
         </span>
         <ChevronsUpDown size={15} className="text-faint" aria-hidden />
       </button>

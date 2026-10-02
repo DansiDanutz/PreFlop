@@ -14,12 +14,14 @@ import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
+import { bindReferral } from '../growth/agents.ts';
 
 const Register = z.object({
   email: z.string().email().max(200).transform((s) => s.toLowerCase()),
   password: z.string().min(8).max(200),
   display_name: z.string().min(1).max(60),
   country: z.string().length(2).optional(),
+  ref: z.string().trim().max(20).optional(),
 });
 const Login = z.object({ email: z.string().email().transform((s) => s.toLowerCase()), password: z.string() });
 const Bet = z.object({
@@ -81,6 +83,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       // Organizations approved for this email before the account existed get their owner now.
       await c.query(`insert into memberships (user_id, org_id, role) select $1, id, 'owner' from organizations where settings->>'owner_email' = $2 on conflict do nothing`, [id, b.email]);
       await audit(c, { type: 'user.registered', userId: id });
+      await bindReferral(c, id, b.ref);
       return createSession(c, id);
     });
     return reply.code(201).send({ token, user: { id, email: b.email, display_name: b.display_name } });
@@ -107,7 +110,8 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/me', async (req) => {
     const u = await ctx.user(req);
-    return { ...u, memberships: await memberships(ctx, u.id), wallets: await wallets(ctx, u.id) };
+    const agent = (await ctx.db.query<{ status: string; code: string }>('select status, code from agents where user_id = $1', [u.id])).rows[0] ?? null;
+    return { ...u, memberships: await memberships(ctx, u.id), wallets: await wallets(ctx, u.id), agent };
   });
 
   // Display name only; email and password changes need their own verified flows.

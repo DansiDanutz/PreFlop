@@ -69,15 +69,16 @@ A promotion is a player-facing offer with an owner (PreFlop or an organization),
 - An **agent** is a user approved by the PreFlop team (admin or ops). Each agent has a referral code and rates:
   - `rate_l1_bps` (≤ 4,000) on the NGR of the players they referred;
   - `rate_l2_bps` (≤ 1,000) on the NGR of the players referred by agents they recruited.
-- An agent may have one parent agent. **Depth is capped at two levels by design**: an agent's commission never reaches a third level.
-- **Referral:** a player who registers with `?ref=CODE` gets an immutable `referred_by`. Self-referral and loops are refused.
-- **NGR** is per player, per month, per currency: stakes − payouts − promotion value given. It counts only modes with cash value (real fiat and crypto). Play money and diamonds never earn commission.
-- **Commission statement** per agent, month and currency:
-  - L1 = `rate_l1 × max(0, ΣNGR(own players) − carry)`;
-  - L2 = `rate_l2 × max(0, ΣNGR(sub-agents' players))`.
-  - Negative NGR carries forward to the next month.
-  - Statements are `draft` → `approved` → `paid`; paid means posted from `PreFlop:marketing` to the agent's wallet.
-- While real money is off, statements compute in the sandbox and show zero payable.
+- An agent may have one parent agent, and that parent must be a top-level agent. An agent who already has sub-agents cannot be given a parent. **Depth is therefore capped at two levels**: an agent's commission never reaches a third level.
+- **Applying:** a player applies from their profile (`applied`). The team approves with rates and an optional parent (`active`), or rejects. A rejected player may apply again. An active agent can be `suspended`; their code then stops binding new players.
+- **Referral:** a player who registers through `/register?ref=CODE` (the app sends `ref` in the register body) is bound to that agent for good (`users.referred_by_agent`). Unknown, inactive or self codes are ignored silently, so registration never fails because of a code.
+- **NGR** is per month and currency: settled stakes − payouts − the value of promotions claimed. It counts only modes with cash value (`real-fiat` EUR, `real-crypto` USDT and USDC). Free chips, chips and diamonds never earn commission.
+- **Closing a month** builds a statement per agent, currency and level:
+  - L1 = `rate_l1 × max(0, ΣNGR(own players) + carry-in)`, where the carry-in is last month's negative balance (zero or less). A negative result is carried out to the next month.
+  - L2 = `rate_l2 × max(0, ΣNGR(sub-agents' players))`. Level 2 has no carry.
+  - Closing the same month again creates nothing new (unique per agent, month, currency and level).
+- Statements go `draft` → `approved` (admin or ops) → `paid` (super admin only). Paying posts `agent.commission` from `PreFlop:marketing` to the agent's wallet in that mode and currency, and needs the mode switched on.
+- While real money is off, statements still compute in the sandbox, but none can be paid (`403 mode_disabled`).
 
 ## 5. Surfaces
 

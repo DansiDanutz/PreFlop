@@ -27,7 +27,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 ## Player
 | Route | Purpose |
 |---|---|
-| `POST /v1/auth/register` · `login` · `logout` | Sessions. A new account gets 10,000 free play chips. `register` and `login` are rate-limited per IP; `login` also locks an email after 5 failures in 15 minutes (`429 login_locked`) |
+| `POST /v1/auth/register` · `login` · `logout` | Sessions. A new account gets 10,000 free play chips. `register` takes an optional `ref` (an agent code, docs/16 §4). `register` and `login` are rate-limited per IP; `login` also locks an email after 5 failures in 15 minutes (`429 login_locked`) |
 | `GET /v1/me` · `/v1/me/wallets` | Profile, memberships, and wallets. Wallets cover play, chips, diamonds per organization, fiat and stablecoins |
 | `PATCH /v1/me` | Change the display name (1–60 characters). Email and password changes are not part of this route |
 | `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user |
@@ -195,4 +195,17 @@ The ledger kinds are:
 - `pool.accrue.margin`, `pool.accrue.contribution`: the worker's accruals;
 - `pool.payout`, ref `<board>:<rank>`: a prize;
 - `pool.return`, `pool.cancel`: money going back to the funders;
-- `promo.claim`, ref `<promotion>:<user>`: a claimed promotion.
+- `promo.claim`, ref `<promotion>:<user>`: a claimed promotion;
+- `agent.commission`, ref `<statement>`: an agent commission, from `PreFlop:marketing` to the agent's wallet.
+
+## Agents (docs/16 §4)
+
+| Endpoint | What it does |
+|---|---|
+| `POST /v1/me/agent/apply` | Apply to become an agent, with an optional note. Returns the code (inactive until approved). `409 already_applied` unless the last application was rejected |
+| `GET /v1/me/agent` | Your agent account, players referred, sub-agents and statements. `/v1/me` also carries `agent: {status, code}` |
+| `GET /v1/admin/agents` | Rate caps, every agent with parent and player count, and every statement (team) |
+| `PUT /v1/admin/agents/:id` | Status, rates and parent (admin, ops). Errors: `rate_cap`, `invalid_parent`, `depth_limit` |
+| `POST /v1/admin/agents/statements/close?month=YYYY-MM` | Build the month's statements; idempotent (admin, ops) |
+| `POST /v1/admin/agents/statements/:id/approve` | Draft → approved (admin, ops) |
+| `POST /v1/admin/agents/statements/:id/pay` | Approved → paid (admin only). `403 mode_disabled` while that real-money mode is off |

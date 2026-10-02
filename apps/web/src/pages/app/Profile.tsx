@@ -1,7 +1,7 @@
 import type { Limits, Wallet } from '@preflop/client';
 import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney } from '@preflop/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Briefcase, ChevronDown, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
+import { Briefcase, Check, ChevronDown, Copy, Network, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { PageHeader, initials } from '../../components/AppShell.tsx';
@@ -79,7 +79,7 @@ export function ProfilePage() {
         <Card className="flex flex-col items-center justify-center p-7 text-center">
           <span className="grid h-14 w-14 place-items-center rounded-full border border-accent/40 bg-accent-deep"><ChipIcon size={36} /></span>
           <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.16em] text-ink/85">Your practice balance</p>
-          <p className="mt-3 font-serif text-[46px] leading-none tracking-[-0.03em]">{play ? formatMoney(play.balance_minor, 'PLAY') : <Skeleton className="mx-auto h-11 w-36" />}</p>
+          <div className="mt-3 font-serif text-[46px] leading-none tracking-[-0.03em]">{play ? formatMoney(play.balance_minor, 'PLAY') : <Skeleton className="mx-auto h-11 w-36" />}</div>
           <p className="mt-3 text-[13px] text-ink/80">Free chips · No cash value</p>
           <Button className="mt-5" onClick={() => setConfirmReset(true)}><RotateCcw className="h-4 w-4" aria-hidden /> Reset free chips</Button>
           <p className="mt-3 text-[11px] text-ink/70">Always free. Your history stays.</p>
@@ -106,6 +106,9 @@ export function ProfilePage() {
 
       <div className="mt-6 space-y-4">
       <Section icon={<Ticket className="h-5 w-5" />} title="Join a room" subtitle="Have an invite code from an organizer?"><JoinRoom /></Section>
+      <Section icon={<Network className="h-5 w-5" />} title={u?.agent?.status === 'active' ? 'Your agent account' : 'Become an agent'} subtitle={u?.agent?.status === 'active' ? `Code ${u.agent.code} · invite players and earn commission` : 'Invite players and earn a share of net revenue'}>
+        <AgentSection />
+      </Section>
       <Section icon={<Briefcase className="h-5 w-5" />} title="Become an organizer" subtitle="Run your own room with chips or diamonds"><OrganizerForm email={u?.email ?? ''} name={u?.display_name ?? ''} /></Section>
       <Section icon={<HeartHandshake className="h-5 w-5" />} title="Responsible play" subtitle="Limits, time-outs and self-exclusion"><ResponsiblePlay /></Section>
       <Section icon={<ShieldCheck className="h-5 w-5" />} title="Identity & payments" subtitle={real ? 'Verify your identity, deposit and withdraw' : 'Real money is switched off'}>
@@ -147,6 +150,52 @@ function WalletCard({ title, wallets, note }: { title: string; wallets: readonly
       </ul>
       <p className="mt-2 text-xs text-faint">{note}</p>
     </Card>
+  );
+}
+
+function AgentSection() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['me', 'agent'], queryFn: () => api.myAgent() });
+  const [note, setNote] = useState('');
+  const [copied, setCopied] = useState(false);
+  const applyM = useMutation({ mutationFn: () => api.applyAgent(note.trim() || undefined), onSuccess: () => { void qc.invalidateQueries({ queryKey: ['me'] }); } });
+  if (q.isLoading) return <Skeleton className="h-20" />;
+  if (q.isError) return <Notice tone="warn">{errorText(q.error)}</Notice>;
+  const a = q.data?.agent;
+  if (!a || a.status === 'rejected') {
+    return (
+      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); applyM.mutate(); }}>
+        <p className="text-sm text-ink/80">Agents invite players with a personal link. You earn a share of the net revenue from the players you bring, and a smaller share from agents you recruit. Two levels, never more. Commission is paid on real-money play only, which is switched off for now.</p>
+        {a?.status === 'rejected' && <Notice tone="info">Your last application was not approved. You can apply again.</Notice>}
+        <TextArea label="Tell us about your community (optional)" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
+        <Button type="submit" className="w-full" disabled={applyM.isPending}>Apply to become an agent</Button>
+        {applyM.isError && <Notice tone="warn">{errorText(applyM.error)}</Notice>}
+      </form>
+    );
+  }
+  if (a.status === 'applied') return <Notice tone="info">Your application is with the PreFlop team. We’ll set your rates and activate your code.</Notice>;
+  if (a.status === 'suspended') return <Notice tone="warn">Your agent account is suspended. Contact support for details.</Notice>;
+  const link = `${window.location.origin}/register?ref=${a.code}`;
+  const copy = () => { void navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {}); };
+  const dueBy = new Map<string, number>();
+  for (const s of q.data?.statements ?? []) if (s.status !== 'paid' && s.amount_minor > 0) dueBy.set(s.currency, (dueBy.get(s.currency) ?? 0) + s.amount_minor);
+  const due = [...dueBy].map(([cur, v]) => formatMoney(v, cur)).join(', ');
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-[12px] text-ink/75">Your invitation link</div>
+        <div className="mt-1.5 flex gap-2">
+          <input readOnly value={link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()} className="h-11 min-w-0 flex-1 rounded-[8px] border border-line-strong bg-surface-2 px-3 font-mono text-[13px] text-ink" />
+          <Button type="button" variant="secondary" onClick={copy}>{copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}{copied ? 'Copied' : 'Copy'}</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div className="rounded-[10px] border border-line-strong/60 p-3"><div className="font-serif text-[24px]">{q.data?.players ?? 0}</div><div className="text-[12px] text-muted">Players</div></div>
+        <div className="rounded-[10px] border border-line-strong/60 p-3"><div className="font-serif text-[24px]">{q.data?.sub_agents?.length ?? 0}</div><div className="text-[12px] text-muted">Sub-agents</div></div>
+        <div className="rounded-[10px] border border-line-strong/60 p-3"><div className="font-serif text-[24px]">{(a.rate_l1_bps / 100).toFixed(0)}%</div><div className="text-[12px] text-muted">Your rate</div></div>
+      </div>
+      <p className="text-[13px] text-ink/75">Level 1: {(a.rate_l1_bps / 100).toFixed(1)}% of your players’ net revenue. Level 2: {(a.rate_l2_bps / 100).toFixed(1)}% from agents you recruit. Losing months carry forward. {due ? `Pending commission: ${due}.` : 'Real-money play is off, so nothing is payable yet.'}</p>
+    </div>
   );
 }
 

@@ -74,8 +74,10 @@ export function RegisterPage() {
   const [password, setPassword] = useState('');
   const [country, setCountry] = useState('');
   const [adult, setAdult] = useState(false);
+  // An agent's invitation link: /register?ref=CODE
+  const ref = /^[A-Za-z0-9]{4,20}$/.test(params.get('ref') ?? '') ? params.get('ref')!.toUpperCase() : null;
   const reg = useMutation({
-    mutationFn: () => api.register({ display_name: name.trim(), email: email.trim(), password, ...(country ? { country } : {}) }),
+    mutationFn: () => api.register({ display_name: name.trim(), email: email.trim(), password, ...(country ? { country } : {}), ...(ref ? { ref } : {}) }),
     onSuccess: ({ token: t }) => {
       qc.clear();
       setToken(t);
@@ -89,6 +91,7 @@ export function RegisterPage() {
     <AuthFrame title="Play free" subtitle="Create an account and get 10,000 free chips to practice with."
       footer={<>Already have an account? <Link to={`/login${params.get('next') ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-semibold text-accent">Sign in</Link></>}>
       <form onSubmit={submit} className="space-y-4" noValidate>
+        {ref && <p className="rounded-[8px] border border-accent/40 bg-accent-deep/40 px-3 py-2 text-[13px] text-ink/85">Invited with code <span className="font-mono text-accent">{ref}</span>.</p>}
         <Field label="Display name" autoComplete="nickname" required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />
         <Field label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         <Field label="Password" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}

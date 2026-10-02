@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, BadgeEuro, BookOpen, Building2, Coins, CreditCard, Diamond, FileText, Gauge, Gem, KeyRound, LayoutDashboard,
-  Landmark, ListChecks, Trophy, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2,
+  Landmark, ListChecks, Trophy, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
   type LucideIcon,
 } from 'lucide-react';
 import type { PortalKind } from '../lib/portals.ts';
@@ -30,6 +30,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
     { label: 'Growth', items: [
       { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
       { to: 'promotions', label: 'Promotions', icon: Gift },
+      { to: 'agents', label: 'Agents', icon: Network },
     ] },
     { label: 'Platform', items: [
       { to: 'audit', label: 'Audit', icon: ShieldCheck },
@@ -88,6 +89,9 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
       { to: 'members', label: 'Members', icon: UserCog },
     ] },
   ],
+  agent: [
+    { items: [{ to: '', label: 'Overview', icon: LayoutDashboard, end: true }] },
+  ],
 };
 
-export const PORTAL_ICON: Record<PortalKind, LucideIcon> = { admin: Gauge, club: Building2, partner: Plug, organizer: Diamond };
+export const PORTAL_ICON: Record<PortalKind, LucideIcon> = { admin: Gauge, club: Building2, partner: Plug, organizer: Diamond, agent: Network };

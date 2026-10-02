@@ -57,6 +57,17 @@ describe('portal resolution from /v1/me', () => {
     expect(canWrite(portalForPath(p, '/partner/p1'))).toBe(false);
     expect(canWrite(portalForPath(p, '/admin'))).toBe(true);
   });
+
+  it('adds the agent portal last for an approved agent only', () => {
+    const agent = (status: NonNullable<Me['agent']>['status']) =>
+      resolvePortals({ ...me({ platform_role: 'ops' }), agent: { status, code: 'PFABC123' } });
+    const p = agent('active');
+    expect(p.map((x) => x.key)).toEqual(['/admin', '/agent']);
+    expect(portalForPath(p, '/agent')?.name).toBe('Agent PFABC123');
+    expect(portalForPath(p, '/agents')).toBeNull();
+    expect(agent('suspended')[1]!.enabled).toBe(false);
+    expect(agent('applied').map((x) => x.key)).toEqual(['/admin']);
+  });
 });
 
 describe('statements', () => {
