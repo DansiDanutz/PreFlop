@@ -100,6 +100,77 @@ export interface Dilution { period: string; bought: number; sunk_preflop_fee: nu
 export interface ApiClient { id: string; name: string; created_at: string; revoked: boolean; secret?: string }
 export interface Webhook { id: string; url: string; events: string[]; active: boolean; created_at: string; secret?: string }
 export interface WebhookDelivery { id: string; webhook_id: string; event_type: string; status: 'pending' | 'delivered' | 'failed'; attempts: number; last_error: string | null; created_at: string }
+// ---------------------------------------------------------------- tournaments (docs/17)
+/**
+ * scheduled → running (starts_at) → settling (ends_at, until open bets settle) → completed; or cancelled.
+ * `status` is derived from the clock on every read, so it is exact even between worker ticks.
+ */
+export type TournamentStatus = 'scheduled' | 'running' | 'settling' | 'completed' | 'cancelled';
+/** playing: has stack and bets left · busted: stack below the minimum stake · finished: used every bet. */
+export type TournamentEntryStatus = 'playing' | 'busted' | 'finished';
+export interface Tournament {
+  id: string; name: string; description: string; owner_org: string | null; owner_name: string;
+  mode: PlayMode; currency: string;
+  /** Paid from the wallet at registration (0 = freeroll). */
+  buy_in_minor: number;
+  /** Share of the buy-ins kept by the organizer of the tournament (PreFlop or the club/organizer). */
+  fee_bps: number;
+  /** Fixed amount the owner adds to the prize pool. */
+  added_minor: number;
+  /** Tournament points: every entry starts with this stack, has no cash value, and only exists inside the tournament. */
+  starting_stack: number;
+  bets_allowed: number; min_stake: number; max_stake: number | null;
+  starts_at: string; ends_at: string; duration_minutes: number;
+  /** Registration closes at this time (starts_at + late registration). */
+  late_reg_until: string;
+  min_entries: number; max_entries: number | null; entries: number;
+  /** Buy-ins after the fee, plus the added amount. */
+  prize_pool_minor: number;
+  /** Share of the prize pool per final position, e.g. [5000, 3000, 2000]; sums to 10,000. */
+  payout_bps: number[];
+  status: TournamentStatus; registration_open: boolean; cancel_reason: string | null;
+  /** Present when signed in. */
+  you?: { registered: boolean };
+}
+export interface TournamentStanding {
+  /** Shared by tied players: same stack and same number of bets used. */
+  rank: number;
+  display_name: string;
+  /** Current stack = points accumulated. */
+  stack: number;
+  bets_used: number; bets_left: number;
+  /** Bets placed and waiting for their flop. */
+  pending_bets: number;
+  status: TournamentEntryStatus;
+  /** Projected while running (by current position), final once completed. */
+  prize_minor: number;
+  you: boolean;
+}
+export interface TournamentBet {
+  id: string; round_id: string; table_id: string; selection_id: string;
+  stake: number; odds_centi: number; status: 'accepted' | 'won' | 'lost' | 'void'; payout: number | null;
+  created_at: string; settled_at: string | null;
+}
+export interface TournamentDetail {
+  tournament: Tournament;
+  /** Everyone, best first (top 200). */
+  standings: TournamentStanding[];
+  you: (TournamentStanding & { bets: TournamentBet[] }) | null;
+  /** For the countdown: compare with ends_at / starts_at instead of trusting the device clock. */
+  server_time: string;
+}
+export interface TournamentInput {
+  name: string; description?: string; mode: PlayMode; currency: string;
+  buy_in_minor: number; fee_bps: number; added_minor?: number;
+  starting_stack: number; bets_allowed: number; min_stake: number; max_stake?: number | null;
+  starts_at: string; duration_minutes: number; late_reg_minutes?: number;
+  min_entries?: number; max_entries?: number | null; payout_bps: number[];
+}
+export interface TournamentBetInput {
+  round_id: string; selection_id: string; stake: number; odds_centi: number;
+  accept_price_change?: boolean; idempotency_key: string;
+}
+
 /** A single-use link that makes whoever redeems it (signed in) an owner of the organization. */
 export interface OwnerClaim { token: string; expires_at: string }
 
@@ -231,6 +302,12 @@ export function createClient(o: ClientOptions) {
     joinRoom: (code: string) => post<Room>('/v1/rooms/join', { code }),
     leaderboards: (mode?: PlayMode) => get<{ leaderboards: Leaderboard[] }>(`/v1/leaderboards${mode ? `?mode=${mode}` : ''}`),
     leaderboard: (id: string) => get<LeaderboardDetail>(`/v1/leaderboards/${encodeURIComponent(id)}`),
+    // tournaments (docs/17). Live updates: WS /v1/stream, subscribe to `tournament:<id>` → `tournament.standings`.
+    tournaments: (status?: 'upcoming' | 'running' | 'finished') => get<{ tournaments: Tournament[] }>(`/v1/tournaments${q({ status })}`),
+    tournament: (id: string) => get<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}`),
+    registerTournament: (id: string) => post<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}/register`),
+    unregisterTournament: (id: string) => del<{ ok: true; refunded_minor: number }>(`/v1/tournaments/${encodeURIComponent(id)}/register`),
+    tournamentBet: (id: string, b: TournamentBetInput) => post<TournamentBet>(`/v1/tournaments/${encodeURIComponent(id)}/bets`, b),
     myAgent: () => get<MyAgent>('/v1/me/agent'),
     applyAgent: (note?: string) => post<Agent>('/v1/me/agent/apply', note ? { note } : {}),
     myBadges: () => get<{ badges: Badge[] }>('/v1/me/badges'),
@@ -263,6 +340,9 @@ export function createClient(o: ClientOptions) {
     // organizer & club rooms / currencies
     orgRooms: (id: string) => get<{ rooms: Room[] }>(`${org(id)}/rooms`),
     orgLeaderboards: (id: string) => get<{ leaderboards: Leaderboard[] }>(`${org(id)}/leaderboards`),
+    orgTournaments: (id: string) => get<{ tournaments: Tournament[] }>(`${org(id)}/tournaments`),
+    orgCreateTournament: (id: string, b: TournamentInput) => post<Tournament>(`${org(id)}/tournaments`, b),
+    orgCancelTournament: (id: string, t: string, reason: string) => post<{ ok: true }>(`${org(id)}/tournaments/${encodeURIComponent(t)}/cancel`, { reason }),
     orgCreateLeaderboard: (id: string, b: LeaderboardInput) => post<Leaderboard>(`${org(id)}/leaderboards`, b),
     orgFundLeaderboard: (id: string, lb: string, amount_minor: number) => post<Leaderboard>(`${org(id)}/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
     orgPromotions: (id: string) => get<{ promotions: Promotion[] }>(`${org(id)}/promotions`),
@@ -313,6 +393,11 @@ export function createClient(o: ClientOptions) {
     adminApproveStatement: (id: string) => post<{ ok: true }>(`/v1/admin/agents/statements/${encodeURIComponent(id)}/approve`),
     adminPayStatement: (id: string) => post<{ ok: true }>(`/v1/admin/agents/statements/${encodeURIComponent(id)}/pay`),
     adminLeaderboards: () => get<{ leaderboards: Leaderboard[] }>('/v1/admin/leaderboards'),
+    adminTournaments: () => get<{ tournaments: Tournament[] }>('/v1/admin/tournaments'),
+    adminCreateTournament: (b: TournamentInput) => post<Tournament>('/v1/admin/tournaments', b),
+    adminCancelTournament: (t: string, reason: string) => post<{ ok: true }>(`/v1/admin/tournaments/${encodeURIComponent(t)}/cancel`, { reason }),
+    /** Full standings for the team (same shape as the public detail). */
+    adminTournament: (t: string) => get<TournamentDetail>(`/v1/admin/tournaments/${encodeURIComponent(t)}`),
     adminCreateLeaderboard: (b: LeaderboardInput) => post<Leaderboard>('/v1/admin/leaderboards', b),
     adminFundLeaderboard: (lb: string, amount_minor: number) => post<Leaderboard>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
     adminSettleLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/settle`),
