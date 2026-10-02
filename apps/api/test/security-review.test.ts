@@ -78,6 +78,14 @@ describe('authorization review', () => {
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
   });
 
+  it('reissuing owner links concurrently leaves exactly one live link', async () => {
+    const owner = await user('links');
+    const id = await ownedOrg(h, admin, { kind: 'club', name: 'Link Club' }, owner);
+    await Promise.all([1, 2, 3].map(() => h.api('POST', `/v1/admin/orgs/${id}/owner-claim`, admin, {})));
+    const live = (await h.db.query('select count(*)::int as n from org_owner_claims where org_id = $1 and claimed_at is null and revoked_at is null', [id])).rows[0].n;
+    expect(live).toBe(1);
+  });
+
   it('partner placeholder addresses cannot be registered', async () => {
     const r = await h.api('POST', '/v1/auth/register', undefined, { email: 'p_abc@ptn1.partner.preflop', password: 'correct horse', display_name: 'X' });
     expect(r.status).toBe(400);
@@ -89,6 +97,7 @@ describe('authorization review', () => {
       const r = await prod.api('POST', '/v1/auth/register', undefined, { email: 'p@prod.dev', password: 'correct horse', display_name: 'P' });
       expect((await prod.api('POST', '/v1/me/kyc', r.body.token, {})).body.type).toBe('provider_not_configured');
       expect((await prod.api('POST', '/v1/me/deposits', r.body.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 1000, method: 'card' })).body.type).toBe('provider_not_configured');
+      expect((await prod.api('POST', '/v1/me/chips/purchases', r.body.token, { chips: 100, pay_with: 'EUR' })).body.type).toBe('provider_not_configured');
     } finally { await prod.close(); }
   });
 });

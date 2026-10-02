@@ -15,6 +15,8 @@ export interface OwnerClaim { token: string; expires_at: string }
 
 /** Issues a fresh claim for an organization, revoking any earlier unclaimed ones. */
 export async function issueOwnerClaim(c: Tx, orgId: string, email: string | null, by: string, now = new Date()): Promise<OwnerClaim> {
+  // One issuer at a time per organization, so a replacement always revokes every earlier link.
+  await c.query('select 1 from organizations where id = $1 for update', [orgId]);
   await c.query('update org_owner_claims set revoked_at = now() where org_id = $1 and claimed_at is null and revoked_at is null', [orgId]);
   const token = randomBytes(32).toString('base64url');
   const expires = new Date(now.getTime() + CLAIM_TTL_MS);

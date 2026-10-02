@@ -199,6 +199,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send(await tx(ctx.db, (c) => withdraw(c, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination)));
   });
   app.post('/v1/me/chips/purchases', async (req, reply) => {
+    sandboxOnly();
     const u = await ctx.user(req);
     const b = z.object({ chips: z.number().int(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     assertPositive(b.chips, 'chips');

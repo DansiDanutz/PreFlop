@@ -59,8 +59,13 @@ function scopeSql(lb: LeaderboardRow, until: Date): { where: string; params: unk
     const i = params.length;
     scope = `and (t.club_id = $${i} or b.room_id in (select id from rooms where org_id = $${i}))`;
   }
-  // Chips and diamonds stay in the owner's closed loop: only bets in its own rooms count.
-  if (CLOSED_LOOP_MODES.has(lb.mode)) { params.push(lb.owner_org); scope += ` and b.room_id in (select id from rooms where org_id = $${params.length})`; }
+  // Chips and diamonds stay in the owner's closed loop: bets in its own rooms, or direct bets at its own
+  // tables. Another organizer's room running on a club's table is not the club's.
+  if (CLOSED_LOOP_MODES.has(lb.mode)) {
+    params.push(lb.owner_org);
+    const o = params.length;
+    scope += ` and (b.room_id in (select id from rooms where org_id = $${o}) or (b.room_id is null and t.club_id = $${o}))`;
+  }
   return {
     where: `b.mode = $1 and b.currency = $2 and b.status in ('won','lost') and b.settled_at >= $3 and b.settled_at < $4 ${scope}`,
     params,

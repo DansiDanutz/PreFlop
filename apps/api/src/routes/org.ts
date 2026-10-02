@@ -318,12 +318,16 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     return { packs: diamondPacks() };
   });
   app.post(`${P}/diamonds/purchases`, async (req, reply) => {
+    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
+    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const b = z.object({ diamonds: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     if (!(await ctx.modeEnabled('diamonds'))) throw conflict('mode_disabled', 'diamonds are not enabled');
     return reply.code(201).send(await tx(ctx.db, (c) => buyDiamonds(c, org.id, b.diamonds, b.pay_with)));
   });
   app.post(`${P}/chips/purchases`, async (req, reply) => {
+    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
+    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     // Partners buy chips too: their treasury funds transfer-wallet deposits to their players.
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
     const b = z.object({ chips: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);

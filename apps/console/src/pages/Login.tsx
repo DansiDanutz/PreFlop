@@ -5,6 +5,7 @@ import { Button, Card, Flop, Spinner, Wordmark } from '@preflop/ui';
 import { useAuth } from '../lib/auth.tsx';
 import { isEmail } from '../lib/rules.ts';
 import { errorMessage } from '../lib/format.ts';
+import { WEB_URL } from '../lib/api.ts';
 import { Field, TextInput } from '../components/ui.tsx';
 import { EnvBadge } from '../components/Shell.tsx';
 
@@ -12,6 +13,8 @@ export function LoginPage() {
   const { token, login } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  // Arriving from an owner link (/claim/:token): the recipient may not have an account yet.
+  const claiming = ((loc.state as { from?: string } | null)?.from ?? '').startsWith('/claim/');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [touched, setTouched] = useState(false);
@@ -66,6 +69,12 @@ export function LoginPage() {
             {err && <p role="alert" className="rounded-[10px] border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-ink">{err}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{busy && <Spinner className="h-4 w-4" />}Sign in</Button>
           </form>
+          {claiming && (
+            <p className="mt-5 rounded-[10px] border border-accent/40 bg-accent-soft px-4 py-3 text-sm text-ink/90">
+              You were sent an owner link. No PreFlop account yet?{' '}
+              <a className="font-semibold text-accent underline" href={`${WEB_URL}/register`} target="_blank" rel="noreferrer">Create one</a>, then sign in here: the link waits for you.
+            </p>
+          )}
         </Card>
         <p className="mt-6 max-w-sm text-center text-xs text-faint">Clubs, partners and organizers get access once PreFlop approves their application.</p>
       </div>
