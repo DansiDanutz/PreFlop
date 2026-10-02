@@ -1,5 +1,6 @@
 import { type Db, tx } from '../lib/db.ts';
 import { type LeaderboardRow, accrue, lockBoard, settle } from './leaderboards.ts';
+import { tournamentTick } from './tournaments.ts';
 
 /**
  * Leaderboard upkeep (docs/16 §2): opens scheduled boards, accrues margin and contribution into
@@ -29,12 +30,18 @@ export async function growthTick(db: Db, now = new Date()): Promise<{ opened: nu
   return { opened, accrued, settled };
 }
 
-export function startGrowthWorker(db: Db, everyMs = 60_000): () => void {
-  let running = false;
+export function startGrowthWorker(db: Db, everyMs = 60_000, tournamentsEveryMs = 10_000): () => void {
+  let running = false, runningT = false;
   const timer = setInterval(async () => {
     if (running) return;
     running = true;
     try { await growthTick(db); } catch (e) { console.error('growth worker', e); } finally { running = false; }
   }, everyMs);
-  return () => clearInterval(timer);
+  // Tournaments finish on a clock players watch: complete them within seconds of the last flop.
+  const tTimer = setInterval(async () => {
+    if (runningT) return;
+    runningT = true;
+    try { await tournamentTick(db); } catch (e) { console.error('tournament worker', e); } finally { runningT = false; }
+  }, tournamentsEveryMs);
+  return () => { clearInterval(timer); clearInterval(tTimer); };
 }

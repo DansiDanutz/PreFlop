@@ -6,6 +6,8 @@ export interface DomainEvent {
   tableId?: string;
   roundId?: string;
   userId?: string;
+  /** A named stream topic (e.g. `tournament:<id>`) for events that belong to neither a table nor a user. */
+  topic?: string;
   data: Record<string, unknown>;
 }
 

@@ -213,3 +213,21 @@ The ledger kinds are:
 | `POST /v1/admin/agents/statements/close?month=YYYY-MM` | Build the statements for a month that has ended, once (admin, ops). `422 month_not_ended` before one hour after month end; a closed month returns `created: 0` |
 | `POST /v1/admin/agents/statements/:id/approve` | Draft → approved (admin, ops) |
 | `POST /v1/admin/agents/statements/:id/pay` | Approved → paid (admin only). `403 mode_disabled` while that real-money mode is off; `422 agent_not_active` while the agent is suspended |
+
+## Tournaments (docs/17)
+
+| Endpoint | What it does |
+|---|---|
+| `GET /v1/tournaments?status=upcoming\|running\|finished` | Tournaments with entries, the prize pool, and whether registration is open. Signed in, each also has `you.registered` |
+| `GET /v1/tournaments/:id` | The dashboard: the tournament, standings (rank with ties, stack, bets used and left, pending, status, prize), `you` with your bets, and `server_time` |
+| `POST`, `DELETE /v1/tournaments/:id/register` | Join (the buy-in is paid), or leave before the start (refunded) |
+| `POST /v1/tournaments/:id/bets` | A bet of tournament points on an open flop, at the current PreFlop odds. One per flop |
+| `GET/POST /v1/admin/tournaments` · `GET …/:id` · `POST …/:id/cancel` | Team management (admin, ops). Free-chip and real-money tournaments |
+| `GET/POST /v1/org/:id/tournaments` · `POST …/:t/cancel` | Clubs and organizers: chip and diamond tournaments in their closed loop |
+
+WebSocket: subscribe to `tournament:<id>` for `tournament.standings` (refetch the dashboard). A signed-in socket also receives `tournament.bet_settled` for its own bets.
+
+The ledger kinds are:
+- `tournament.buyin`, `tournament.refund` (ref: the buy-in);
+- `tournament.added`, `tournament.added_return`, `tournament.fee` (ref: the tournament);
+- `tournament.payout` (ref `<tournament>:<user>`).

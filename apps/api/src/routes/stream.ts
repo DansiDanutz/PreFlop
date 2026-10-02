@@ -4,7 +4,7 @@ import { userFromToken } from '../auth/players.ts';
 import { type DomainEvent, bus } from '../lib/events.ts';
 
 /**
- * WS /v1/stream — subscribe with {"subscribe": ["table:<id>", "lobby"]}. Pass ?token=<session>
+ * WS /v1/stream — subscribe with {"subscribe": ["table:<id>", "lobby", "tournament:<id>"]}. Pass ?token=<session>
  * to also receive your own bet events. Round and price events are public; bet events go only
  * to their owner.
  */
@@ -22,7 +22,8 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
     if (socket.readyState !== socket.OPEN) return; // closed during the lookup: never subscribe it
     const onEvent = (e: DomainEvent) => {
       const forUser = e.userId !== undefined;
-      if (forUser ? e.userId === userId : topics.has('lobby') || (e.tableId && topics.has(`table:${e.tableId}`))) {
+      const forTopic = e.topic !== undefined && topics.has(e.topic);
+      if (forTopic || (forUser ? e.userId === userId : e.topic === undefined && (topics.has('lobby') || (e.tableId && topics.has(`table:${e.tableId}`))))) {
         socket.send(JSON.stringify({ type: e.type, table_id: e.tableId, round_id: e.roundId, data: e.data, at: Date.now() }));
       }
     };

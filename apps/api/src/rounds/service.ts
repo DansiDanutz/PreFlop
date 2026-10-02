@@ -13,6 +13,7 @@ import { acct, post, reverse, walletPurpose } from '../lib/ledger.ts';
 import { emit } from '../lib/webhooks.ts';
 import { updateMonitor } from './monitor.ts';
 import { type TableRow, tableReadiness } from './readiness.ts';
+import { settleTournamentBets, voidTournamentBets } from '../growth/tournaments.ts';
 
 /**
  * The round state machine (docs/13 §4).
@@ -478,6 +479,8 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
       await record(b, pay > 0 ? 'won' : 'lost', pay);
     }
   }
+  // Tournament bets play for points, not money: same flop, same lock, same transaction (docs/17).
+  await settleTournamentBets(c, r.id, flop, ev);
   await audit(c, { type: 'round.settled', roundId: r.id, cards, by, bets: bets.length, stakedMinor: staked, paidMinor: paid });
 
   // Outcome monitoring: a stacked deck trips the CUSUM and pauses the table (docs/12 §2a).
@@ -512,6 +515,7 @@ export async function voidRound(c: Tx, r: RoundRow, reason: string, by: string, 
     await c.query(`update bets set status = 'void', payout_minor = stake_minor, settled_at = clock_timestamp() where id = $1 and status = 'accepted'`, [b.id]);
     await emit(c, ev, { type: 'bet.voided', userId: b.user_id, roundId: r.id, tableId: r.table_id, data: { betId: b.id, refundMinor: b.stake_minor, partnerId: b.partner_id, tableId: r.table_id, roomId: b.room_id } });
   }
+  await voidTournamentBets(c, r.id, ev);
   await audit(c, { type: 'round.voided', roundId: r.id, reason, by, refunds: bets.length });
   await emit(c, ev, { type: 'round.voided', tableId: r.table_id, roundId: r.id, data: { handNo: r.hand_no, reason } });
   return true;
