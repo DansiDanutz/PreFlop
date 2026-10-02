@@ -127,18 +127,22 @@ export function Select({ label, className, children, ...p }: SelectHTMLAttribute
 /** Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. */
 export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // The latest onClose, so a parent passing a new function each render does not re-run the
+  // open effect (which would pull focus out of an input on every keystroke).
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
-    // Focus the dialog itself; Tab then moves into its controls.
+    // Focus the dialog itself once on open; Tab then moves into its controls.
     ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
       prev?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

@@ -1,7 +1,7 @@
-import type { Limits } from '@preflop/client';
+import type { Limits, Wallet } from '@preflop/client';
 import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney } from '@preflop/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Briefcase, ChevronDown, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet } from 'lucide-react';
+import { Briefcase, ChevronDown, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { PageHeader, initials } from '../../components/AppShell.tsx';
@@ -48,7 +48,9 @@ export function ProfilePage() {
 
   const u = me.data;
   const play = u?.wallets.find((w) => w.mode === 'play');
-  const others = u?.wallets.filter((w) => w.mode !== 'play') ?? [];
+  // Real money and organizer play currencies are shown apart: only the latter have no cash value.
+  const money = u?.wallets.filter((w) => w.mode === 'real-fiat' || w.mode === 'real-crypto') ?? [];
+  const organizer = u?.wallets.filter((w) => w.mode === 'virtual-chips' || w.mode === 'diamonds') ?? [];
   return (
     <div>
       <PageHeader eyebrow="Make yourself at home" title="Your profile." subtitle="A little personalization. A clear view of your practice account." />
@@ -95,22 +97,11 @@ export function ProfilePage() {
         <FavoritesCard />
       </div>
 
-      {others.length > 0 && (
-        <Card className="mt-6 p-6">
-          <h2 className="flex items-center gap-2 text-[17px] font-bold"><Wallet className="h-5 w-5 text-accent" aria-hidden /> Organizer wallets</h2>
-          <ul className="mt-3 divide-y divide-line">
-            {others.map((w) => (
-              <li key={`${w.mode}:${w.currency}:${w.org_name ?? ''}`} className="flex items-center gap-3 py-3">
-                <span className="grid h-[30px] w-[30px] place-items-center rounded-full border border-line text-xs">{w.currency === 'DIAMOND' ? '◆' : w.currency[0]}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-lg font-semibold leading-tight">{formatMoney(w.balance_minor, w.currency)}</div>
-                  <div className="text-xs text-muted">{currencyLabel(w.currency)}{w.org_name ? ` · ${w.org_name}` : ''}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs text-faint">Chips and diamonds from organizers have no cash value.</p>
-        </Card>
+      {money.length > 0 && (
+        <WalletCard title="Money wallets" wallets={money} note="Real-money balance. Play responsibly; deposits and withdrawals are under Identity & payments." />
+      )}
+      {organizer.length > 0 && (
+        <WalletCard title="Organizer wallets" wallets={organizer} note="Chips and diamonds from organizers have no cash value." />
       )}
 
       <div className="mt-6 space-y-4">
@@ -136,6 +127,26 @@ export function ProfilePage() {
         </div>
       </Sheet>
     </div>
+  );
+}
+
+function WalletCard({ title, wallets, note }: { title: string; wallets: readonly Wallet[]; note: string }) {
+  return (
+    <Card className="mt-6 p-6">
+      <h2 className="flex items-center gap-2 text-[17px] font-bold"><WalletIcon className="h-5 w-5 text-accent" aria-hidden /> {title}</h2>
+      <ul className="mt-3 divide-y divide-line">
+        {wallets.map((w) => (
+          <li key={`${w.mode}:${w.currency}:${w.org_id ?? ''}`} className="flex items-center gap-3 py-3">
+            <span className="grid h-[30px] w-[30px] place-items-center rounded-full border border-line text-xs">{w.currency === 'DIAMOND' ? '◆' : w.currency[0]}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-lg font-semibold leading-tight">{formatMoney(w.balance_minor, w.currency)}</div>
+              <div className="text-xs text-muted">{currencyLabel(w.currency)}{w.org_name ? ` · ${w.org_name}` : ''}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-faint">{note}</p>
+    </Card>
   );
 }
 
