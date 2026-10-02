@@ -231,13 +231,22 @@ export function assertOrganizerBet(c: OrganizerHouseConfig, stats: Pick<Selectio
  * betPostings() move the money, and this class is told the current ledger balance with
  * syncBalance(). It never changes the balance itself, so results are never counted twice.
  *
- * Every open round reserves its worst case: the lowest house result over all 22,100 flops,
- * including certain costs such as PreFlop's platform fee. A bet is refused if the total
- * reserved would exceed the balance, so the organizer can always pay its winners and fees
- * and PreFlop never carries an organizer's risk.
+ * Every open round reserves its worst-case OUTGO: the largest total payout over all 22,100
+ * flops plus certain costs such as PreFlop's platform fee (= stakes + costs − minNet). The
+ * ledger balance already contains the round's stakes once they are posted, so reserving only
+ * the net loss (−minNet) would under-reserve by the stakes (found while wiring the backend:
+ * €850 + a €100 stake could have accepted a bet paying €1,000). A bet is refused if the total
+ * reserved would exceed the balance, so the organizer can always pay its winners and fees and
+ * PreFlop never carries an organizer's risk. Before the stake is posted and synced the check is
+ * conservative by that stake, never optimistic.
  */
 export class OrganizerCollateral {
   private readonly rounds = new Map<string, { exposure: RoundExposure; certainCostsMinor: number }>();
+
+  /** Worst-case outgo of one round: max payout over all flops + certain costs (stakes − minNet + costs). */
+  private static reserveOf(exposure: RoundExposure, certainCosts: number, minNet = exposure.minNet().netMinor, stakes = exposure.totalStakesMinor): number {
+    return Math.max(0, stakes - minNet + certainCosts);
+  }
 
   constructor(private balanceMinor: number) {
     if (!(balanceMinor >= 0)) throw new RangeError('collateral must be >= 0');
@@ -253,14 +262,10 @@ export class OrganizerCollateral {
     this.balanceMinor = ledgerBalanceMinor;
   }
 
-  private static reserveFor(minNet: number, certainCosts: number): number {
-    return Math.max(0, certainCosts - minNet);
-  }
-
   /** Total reserved over all open rounds (independent tables can all lose). */
   reservedMinor(): number {
     let r = 0;
-    for (const x of this.rounds.values()) r += OrganizerCollateral.reserveFor(x.exposure.minNet().netMinor, x.certainCostsMinor);
+    for (const x of this.rounds.values()) r += OrganizerCollateral.reserveOf(x.exposure, x.certainCostsMinor);
     return r;
   }
 
@@ -278,8 +283,9 @@ export class OrganizerCollateral {
       r = { exposure: new RoundExposure(Number.MAX_SAFE_INTEGER), certainCostsMinor: 0 };
       this.rounds.set(roundId, r);
     }
-    const own = OrganizerCollateral.reserveFor(r.exposure.minNet().netMinor, r.certainCostsMinor);
-    const ownAfter = OrganizerCollateral.reserveFor(r.exposure.minNetIfAdded(stats, stakeMinor, oddsCenti), r.certainCostsMinor + certainCostMinor);
+    const own = OrganizerCollateral.reserveOf(r.exposure, r.certainCostsMinor);
+    const ownAfter = OrganizerCollateral.reserveOf(r.exposure, r.certainCostsMinor + certainCostMinor,
+      r.exposure.minNetIfAdded(stats, stakeMinor, oddsCenti), r.exposure.totalStakesMinor + stakeMinor);
     if (this.reservedMinor() - own + ownAfter > this.balanceMinor) return false;
     r.exposure.tryAdd(stats, stakeMinor, oddsCenti);
     r.certainCostsMinor += certainCostMinor;

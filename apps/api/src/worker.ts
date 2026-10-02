@@ -1,4 +1,5 @@
 import { type Db, tx } from './lib/db.ts';
+import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
 
@@ -78,6 +79,7 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000): () => void {
     try {
       await runOutboxOnce(db, t);
       await sweepOnce(db, t);
+      await deliverDue(db);
     } catch (e) {
       console.error('worker error', e);
     } finally {

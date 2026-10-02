@@ -53,3 +53,24 @@ export async function post(c: Tx, kind: string, ref: string, transfers: readonly
   }
   return true;
 }
+
+/**
+ * Reverses every entry of an earlier transaction (kind, ref) as a new transaction
+ * (newKind, ref). Balanced by construction. Returns false if the reversal was already posted
+ * or the original does not exist.
+ */
+export async function reverse(c: Tx, kind: string, ref: string, newKind: string): Promise<boolean> {
+  const orig = (await c.query<{ account_id: string; amount_minor: number; currency: string }>(
+    `select e.account_id, e.amount_minor, e.currency from ledger_entries e join ledger_tx t on t.id = e.tx_id
+      where t.kind = $1 and t.ref = $2 order by e.id`, [kind, ref])).rows;
+  if (!orig.length) return false;
+  const ins = await c.query<{ id: number }>('insert into ledger_tx (kind, ref) values ($1, $2) on conflict (kind, ref) do nothing returning id', [newKind, ref]);
+  const txId = ins.rows[0]?.id;
+  if (txId === undefined) return false;
+  for (const e of orig)
+    await c.query('insert into ledger_entries (tx_id, account_id, amount_minor, currency) values ($1, $2, $3, $4)', [txId, e.account_id, -e.amount_minor, e.currency]);
+  return true;
+}
+
+/** Wallet purpose of a bet or transfer: PreFlop-issued balances use 'wallet'; an org's closed-loop economy uses 'wallet-<orgId>'. */
+export const walletPurpose = (orgId: string | null | undefined) => (orgId ? `wallet-${orgId}` : 'wallet');

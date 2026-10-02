@@ -61,9 +61,9 @@ describe('who pays the winnings', () => {
     const c = new OrganizerCollateral(100_000);
     const trips = st('rank-pattern:trips');
     const o = price(trips, 'direct').oddsCenti; // 361.00
-    expect(c.tryBet('r1', trips, 200, o)).toBe(true); // worst case 200·361 − 200 = 72,000
-    expect(c.tryBet('r2', trips, 100, o)).toBe(false); // another 36,000 on a second table would exceed 100,000
-    expect(c.availableMinor()).toBe(100_000 - 72_000);
+    expect(c.tryBet('r1', trips, 200, o)).toBe(true); // worst-case outgo: pays 200·361 = 72,200
+    expect(c.tryBet('r2', trips, 100, o)).toBe(false); // another 36,100 on a second table would exceed 100,000
+    expect(c.availableMinor()).toBe(100_000 - 72_200);
     const net = c.settleRound('r1', 0); // flop index 0 = 2s 2h 2d → trips
     expect(net).toBe(200 - payoutMinor(200, o));
     // the ledger is the balance authority: settlement releases the reservation but never moves money
@@ -75,9 +75,21 @@ describe('who pays the winnings', () => {
   it('collateral reserves the platform fee too (fee owed whatever the flop)', () => {
     const trips = st('rank-pattern:trips');
     const o = price(trips, 'direct').oddsCenti;
-    const worst = payoutMinor(100, o) - 100; // 36,000
-    expect(new OrganizerCollateral(worst).tryBet('r', trips, 100, o, 2)).toBe(false);
-    expect(new OrganizerCollateral(worst + 2).tryBet('r', trips, 100, o, 2)).toBe(true);
+    const outgo = payoutMinor(100, o); // 36,100 paid out on the worst flop
+    expect(new OrganizerCollateral(outgo + 1).tryBet('r', trips, 100, o, 2)).toBe(false);
+    expect(new OrganizerCollateral(outgo + 2).tryBet('r', trips, 100, o, 2)).toBe(true);
+  });
+
+  it('the balance includes posted stakes, so the reserve covers the full payout (regression)', () => {
+    // An organizer with 850 posts a 100 stake on a bet paying 1,000 on its worst flop: the ledger
+    // balance is then 950, which cannot pay 1,000. The reservation must refuse that bet.
+    const allRed = st('colour:all-red');
+    const c = new OrganizerCollateral(850);
+    expect(c.tryBet('r', allRed, 100, 1000)).toBe(false);
+    const ok = new OrganizerCollateral(1000);
+    expect(ok.tryBet('r', allRed, 100, 1000)).toBe(true);
+    ok.syncBalance(1000 + 100); // the stake is now in the ledger balance
+    expect(ok.availableMinor()).toBe(100); // 1,100 − 1,000 worst-case payout
   });
 
   it('settling with an invalid flop index throws and keeps the round reserved', () => {

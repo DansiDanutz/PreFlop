@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { bearer, createSession, endSession, hashPassword, verifyPassword } from '../auth/players.ts';
+import { placeRoomBet } from '../bets/rooms.ts';
 import { placeBet, resetPlay } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
@@ -24,6 +25,7 @@ const Bet = z.object({
   stake_minor: z.number().int().positive(),
   odds_centi: z.number().int().min(100),
   accept_price_change: z.boolean().optional(),
+  room_id: z.string().optional(),
 });
 
 export async function memberships(ctx: AppContext, userId: string) {
@@ -32,13 +34,29 @@ export async function memberships(ctx: AppContext, userId: string) {
 }
 
 export async function wallets(ctx: AppContext, userId: string) {
-  return (await ctx.db.query<{ account_id: string; balance_minor: number }>(
+  const rows = (await ctx.db.query<{ account_id: string; balance_minor: number }>(
     `select a.id as account_id, coalesce(sum(e.amount_minor), 0)::bigint as balance_minor
        from ledger_accounts a left join ledger_entries e on e.account_id = a.id
-      where a.id like $1 group by a.id order by a.id`, [`${userId}:wallet:%`])).rows.map((w) => {
-    const [, , mode, currency] = w.account_id.split(':');
-    return { mode, currency, balance_minor: Number(w.balance_minor) };
+      where a.id like $1 group by a.id order by a.id`, [`${userId}:wallet%`])).rows;
+  const orgIds = [...new Set(rows.map((w) => w.account_id.split(':')[1]!).filter((p) => p.startsWith('wallet-')).map((p) => p.slice(7)))];
+  const names = new Map((await ctx.db.query<{ id: string; name: string }>('select id, name from organizations where id = any($1::text[])', [orgIds])).rows.map((o) => [o.id, o.name]));
+  return rows.map((w) => {
+    const [, purpose, mode, currency] = w.account_id.split(':');
+    const orgId = purpose!.startsWith('wallet-') ? purpose!.slice(7) : null;
+    return { mode, currency, balance_minor: Number(w.balance_minor), org_id: orgId, org_name: orgId ? names.get(orgId) ?? null : null };
   });
+}
+
+/** Responsible gaming on real-money bets: daily loss limit (docs/02 §3). */
+async function assertRgAllows(ctx: AppContext, userId: string, roundId: string, stake: number) {
+  const r = (await ctx.db.query<{ mode: string }>('select mode from rounds where id = $1', [roundId])).rows[0];
+  if (!r || (r.mode !== 'real-fiat' && r.mode !== 'real-crypto')) return;
+  const l = (await ctx.db.query<{ loss_day_minor: number | null }>('select loss_day_minor from rg_limits where user_id = $1', [userId])).rows[0];
+  if (l?.loss_day_minor == null) return;
+  const lost = (await ctx.db.query<{ n: number }>(
+    `select coalesce(sum(stake_minor - coalesce(payout_minor, 0)), 0)::bigint as n from bets
+      where user_id = $1 and mode = $2 and placed_at > now() - interval '24 hours' and status <> 'void'`, [userId, r.mode])).rows[0]!.n;
+  if (lost + stake > l.loss_day_minor) throw new ApiError(403, 'limit_reached', 'your daily loss limit would be exceeded');
 }
 
 export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -52,6 +70,8 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       await c.query('insert into users (id, email, password_hash, display_name, country) values ($1, $2, $3, $4, $5)', [id, b.email, hash, b.display_name, b.country ?? null]);
       // Every account starts with free play money (no cash value, no fees).
       await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: ctx.config.playStartMinor }]);
+      // Organizations approved for this email before the account existed get their owner now.
+      await c.query(`insert into memberships (user_id, org_id, role) select $1, id, 'owner' from organizations where settings->>'owner_email' = $2 on conflict do nothing`, [id, b.email]);
       await audit(c, { type: 'user.registered', userId: id });
       return createSession(c, id);
     });
@@ -60,8 +80,10 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/v1/auth/login', async (req) => {
     const b = Login.parse(req.body);
-    const u = (await ctx.db.query<{ id: string; password_hash: string; status: string }>('select id, password_hash, status from users where email = $1', [b.email])).rows[0];
+    const u = (await ctx.db.query<{ id: string; password_hash: string; status: string }>('select id, password_hash, status from users where email = $1 and partner_id is null', [b.email])).rows[0];
     if (!u || !(await verifyPassword(b.password, u.password_hash))) throw unauthorized('invalid_credentials', 'wrong email or password');
+    // A self-exclusion lifts itself only once its period has ended.
+    await ctx.db.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
     if (u.status === 'closed' || u.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${u.status}`);
     return { token: await createSession(ctx.db, u.id) };
   });
@@ -90,6 +112,15 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
     const b = Bet.parse(req.body);
     const ev = new EventBatch();
+    if (b.room_id) {
+      const rb = await placeRoomBet(ctx.db, {
+        userId: u.id, idempotencyKey: key, roomId: b.room_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi,
+        ...(b.accept_price_change !== undefined ? { acceptPriceChange: b.accept_price_change } : {}),
+      }, ev, ctx.modeEnabled);
+      publish(ev);
+      return reply.code(201).send(rb);
+    }
+    await assertRgAllows(ctx, u.id, b.round_id, b.stake_minor);
     const out = await placeBet(ctx.db, {
       userId: u.id, idempotencyKey: key, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi,
       ...(b.accept_price_change !== undefined ? { acceptPriceChange: b.accept_price_change } : {}),

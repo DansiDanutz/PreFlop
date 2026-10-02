@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { type Principal, assertTableScope, requireDevice, requireStaff, verifySignedRequest } from '../auth/envelope.ts';
 import { audit } from '../lib/audit.ts';
+import { evidenceOf } from './admin.ts';
 import { type Tx, tx } from '../lib/db.ts';
 import { badRequest, notFound } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
@@ -144,6 +145,16 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     if (ok) await ensureOpenRound(c, r.table_id, ev);
     return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state' } };
   }));
+
+  /** Evidence for the floor manager's review on the club tablet (same data the PreFlop team sees). */
+  app.get('/v1/provider/rounds/:id/evidence', async (req) => {
+    const p = requireStaff(await auth(req), 'floor_manager');
+    const { id } = req.params as H;
+    const t = (await ctx.db.query<{ table_id: string }>('select table_id from rounds where id = $1', [id])).rows[0];
+    if (!t) throw notFound('round');
+    assertTableScope(p, t.table_id);
+    return evidenceOf(ctx, id!);
+  });
 
   app.post('/v1/provider/rounds/:id/review', async (req, reply) => {
     const p = await auth(req);
