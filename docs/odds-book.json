@@ -1,0 +1,7170 @@
+{
+  "flopCount": 22100,
+  "netTargetMargin": 0.025,
+  "channels": [
+    {
+      "channel": "direct",
+      "label": "PreFlop app (direct players)",
+      "planModel": "Direct — PreFlop + provider club",
+      "houseRisk": true,
+      "paidAwayShare": 0.3,
+      "turnoverCostRate": 0.01125,
+      "requiredGrossMargin": 0.051786
+    },
+    {
+      "channel": "club",
+      "label": "Club's own players",
+      "planModel": "Model A — club is provider and distributor",
+      "houseRisk": true,
+      "paidAwayShare": 0.55,
+      "turnoverCostRate": 0.01125,
+      "requiredGrossMargin": 0.080556
+    },
+    {
+      "channel": "partner",
+      "label": "Third-party betting platform",
+      "planModel": "Model B — partner distributes, PreFlop is the house",
+      "houseRisk": true,
+      "paidAwayShare": 0.5,
+      "turnoverCostRate": 0.003,
+      "requiredGrossMargin": 0.056
+    },
+    {
+      "channel": "contest-user",
+      "label": "User-organized tournament / challenge",
+      "planModel": "Model C — organizer gets the largest single share",
+      "houseRisk": false,
+      "paidAwayShare": 0.65,
+      "turnoverCostRate": 0.03,
+      "requiredGrossMargin": 0.157143
+    },
+    {
+      "channel": "contest-club",
+      "label": "Club-organized event",
+      "planModel": "Model D — club is organizer and provider (shares combined)",
+      "houseRisk": false,
+      "paidAwayShare": 0.5,
+      "turnoverCostRate": 0.03,
+      "requiredGrossMargin": 0.11
+    }
+  ],
+  "markets": [
+    {
+      "id": "rank-pattern",
+      "family": "rank-patterns",
+      "name": "Rank pattern",
+      "description": "How many distinct ranks the flop has.",
+      "catalogueRefs": [
+        1,
+        2,
+        3
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "rank-pattern:no-pair",
+          "label": "Three different ranks",
+          "wins": 18304,
+          "probability": 0.828235,
+          "fairOdds": 1.207386,
+          "prices": {
+            "direct": {
+              "odds": 1.14,
+              "marginBps": 518,
+              "grossEdge": 0.055812,
+              "netEdge": 0.027818
+            },
+            "club": {
+              "odds": 1.11,
+              "marginBps": 806,
+              "grossEdge": 0.080659,
+              "netEdge": 0.025046
+            },
+            "partner": {
+              "odds": 1.13,
+              "marginBps": 560,
+              "grossEdge": 0.064094,
+              "netEdge": 0.029047
+            }
+          }
+        },
+        {
+          "id": "rank-pattern:pair",
+          "label": "Exactly one pair",
+          "wins": 3744,
+          "probability": 0.169412,
+          "fairOdds": 5.902778,
+          "prices": {
+            "direct": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.068235,
+              "netEdge": 0.036515
+            },
+            "club": {
+              "odds": 5.4,
+              "marginBps": 806,
+              "grossEdge": 0.085176,
+              "netEdge": 0.027079
+            },
+            "partner": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.068235,
+              "netEdge": 0.031118
+            }
+          }
+        },
+        {
+          "id": "rank-pattern:trips",
+          "label": "Three of a kind",
+          "wins": 52,
+          "probability": 0.002353,
+          "fairOdds": 425,
+          "prices": {
+            "direct": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.094162
+            },
+            "club": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.056515
+            },
+            "partner": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.072294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "paired-board",
+      "family": "rank-patterns",
+      "name": "Paired board",
+      "description": "Whether any rank appears at least twice (a pair or trips).",
+      "catalogueRefs": [
+        1,
+        2
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "paired-board:yes",
+          "label": "Board is paired (pair or trips)",
+          "wins": 3796,
+          "probability": 0.171765,
+          "fairOdds": 5.821918,
+          "prices": {
+            "direct": {
+              "odds": 5.45,
+              "marginBps": 600,
+              "grossEdge": 0.063882,
+              "netEdge": 0.033468
+            },
+            "club": {
+              "odds": 5.35,
+              "marginBps": 806,
+              "grossEdge": 0.081059,
+              "netEdge": 0.025226
+            },
+            "partner": {
+              "odds": 5.45,
+              "marginBps": 600,
+              "grossEdge": 0.063882,
+              "netEdge": 0.028941
+            }
+          }
+        },
+        {
+          "id": "paired-board:no",
+          "label": "Board is unpaired",
+          "wins": 18304,
+          "probability": 0.828235,
+          "fairOdds": 1.207386,
+          "prices": {
+            "direct": {
+              "odds": 1.14,
+              "marginBps": 518,
+              "grossEdge": 0.055812,
+              "netEdge": 0.027818
+            },
+            "club": {
+              "odds": 1.11,
+              "marginBps": 806,
+              "grossEdge": 0.080659,
+              "netEdge": 0.025046
+            },
+            "partner": {
+              "odds": 1.13,
+              "marginBps": 560,
+              "grossEdge": 0.064094,
+              "netEdge": 0.029047
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pair-of-rank",
+      "family": "rank-patterns",
+      "name": "Pair of a named rank",
+      "description": "Exactly two cards of the chosen rank (trips do not count).",
+      "catalogueRefs": [
+        4
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "pair-of-rank:2",
+          "label": "Pair of 2s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:3",
+          "label": "Pair of 3s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:4",
+          "label": "Pair of 4s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:5",
+          "label": "Pair of 5s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:6",
+          "label": "Pair of 6s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:7",
+          "label": "Pair of 7s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:8",
+          "label": "Pair of 8s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:9",
+          "label": "Pair of 9s",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:T",
+          "label": "Pair of Ts",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:J",
+          "label": "Pair of Js",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:Q",
+          "label": "Pair of Qs",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:K",
+          "label": "Pair of Ks",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "pair-of-rank:A",
+          "label": "Pair of As",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pair-height",
+      "family": "rank-patterns",
+      "name": "Paired rank low / high",
+      "description": "Exactly one pair, with the paired rank in the chosen band.",
+      "catalogueRefs": [
+        5
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "pair-height:low",
+          "label": "Pair of 2s to 7s",
+          "wins": 1728,
+          "probability": 0.07819,
+          "fairOdds": 12.789352,
+          "prices": {
+            "direct": {
+              "odds": 11.7,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.048374
+            },
+            "club": {
+              "odds": 11.7,
+              "marginBps": 806,
+              "grossEdge": 0.085176,
+              "netEdge": 0.027079
+            },
+            "partner": {
+              "odds": 11.7,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.039588
+            }
+          }
+        },
+        {
+          "id": "pair-height:mid",
+          "label": "Pair of 8s to 10s",
+          "wins": 864,
+          "probability": 0.039095,
+          "fairOdds": 25.578704,
+          "prices": {
+            "direct": {
+              "odds": 23.5,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.045637
+            },
+            "club": {
+              "odds": 23.5,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 23.5,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.037633
+            }
+          }
+        },
+        {
+          "id": "pair-height:high",
+          "label": "Pair of Js to As",
+          "wins": 1152,
+          "probability": 0.052127,
+          "fairOdds": 19.184028,
+          "prices": {
+            "direct": {
+              "odds": 17.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.046549
+            },
+            "club": {
+              "odds": 17.6,
+              "marginBps": 806,
+              "grossEdge": 0.08257,
+              "netEdge": 0.025907
+            },
+            "partner": {
+              "odds": 17.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.038285
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pair-face-kicker",
+      "family": "rank-patterns",
+      "name": "Pair with a face-card kicker",
+      "description": "Exactly one pair and the unpaired card is J, Q or K.",
+      "catalogueRefs": [
+        6
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "pair-face-kicker:yes",
+          "label": "Pair + face kicker",
+          "wins": 864,
+          "probability": 0.039095,
+          "fairOdds": 25.578704,
+          "prices": {
+            "direct": {
+              "odds": 23.5,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.045637
+            },
+            "club": {
+              "odds": 23.5,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 23.5,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.037633
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "suit-pattern",
+      "family": "suits-colours",
+      "name": "Suit pattern",
+      "description": "Number of distinct suits on the flop.",
+      "catalogueRefs": [
+        7,
+        8,
+        9
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "suit-pattern:rainbow",
+          "label": "Rainbow (three suits)",
+          "wins": 8788,
+          "probability": 0.397647,
+          "fairOdds": 2.514793,
+          "prices": {
+            "direct": {
+              "odds": 2.38,
+              "marginBps": 518,
+              "grossEdge": 0.0536,
+              "netEdge": 0.02627
+            },
+            "club": {
+              "odds": 2.31,
+              "marginBps": 806,
+              "grossEdge": 0.081435,
+              "netEdge": 0.025396
+            },
+            "partner": {
+              "odds": 2.37,
+              "marginBps": 560,
+              "grossEdge": 0.057576,
+              "netEdge": 0.025788
+            }
+          }
+        },
+        {
+          "id": "suit-pattern:two-tone",
+          "label": "Two-tone (exactly two suits)",
+          "wins": 12168,
+          "probability": 0.550588,
+          "fairOdds": 1.816239,
+          "prices": {
+            "direct": {
+              "odds": 1.72,
+              "marginBps": 518,
+              "grossEdge": 0.052988,
+              "netEdge": 0.025842
+            },
+            "club": {
+              "odds": 1.66,
+              "marginBps": 806,
+              "grossEdge": 0.086024,
+              "netEdge": 0.027461
+            },
+            "partner": {
+              "odds": 1.71,
+              "marginBps": 560,
+              "grossEdge": 0.058494,
+              "netEdge": 0.026247
+            }
+          }
+        },
+        {
+          "id": "suit-pattern:monotone",
+          "label": "Monotone (one suit)",
+          "wins": 1144,
+          "probability": 0.051765,
+          "fairOdds": 19.318182,
+          "prices": {
+            "direct": {
+              "odds": 17.7,
+              "marginBps": 800,
+              "grossEdge": 0.083765,
+              "netEdge": 0.047385
+            },
+            "club": {
+              "odds": 17.7,
+              "marginBps": 806,
+              "grossEdge": 0.083765,
+              "netEdge": 0.026444
+            },
+            "partner": {
+              "odds": 17.7,
+              "marginBps": 800,
+              "grossEdge": 0.083765,
+              "netEdge": 0.038882
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "monotone-suit",
+      "family": "suits-colours",
+      "name": "All one named suit",
+      "description": "All three cards are of the chosen suit.",
+      "catalogueRefs": [
+        10
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "monotone-suit:s",
+          "label": "All spades",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        },
+        {
+          "id": "monotone-suit:h",
+          "label": "All hearts",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        },
+        {
+          "id": "monotone-suit:d",
+          "label": "All diamonds",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        },
+        {
+          "id": "monotone-suit:c",
+          "label": "All clubs",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "colour",
+      "family": "suits-colours",
+      "name": "Card colour",
+      "description": "Red = hearts and diamonds, black = spades and clubs.",
+      "catalogueRefs": [
+        11
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "colour:all-red",
+          "label": "All red",
+          "wins": 2600,
+          "probability": 0.117647,
+          "fairOdds": 8.5,
+          "prices": {
+            "direct": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.034044
+            },
+            "club": {
+              "odds": 7.8,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.029353
+            }
+          }
+        },
+        {
+          "id": "colour:all-black",
+          "label": "All black",
+          "wins": 2600,
+          "probability": 0.117647,
+          "fairOdds": 8.5,
+          "prices": {
+            "direct": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.034044
+            },
+            "club": {
+              "odds": 7.8,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.029353
+            }
+          }
+        },
+        {
+          "id": "colour:mixed",
+          "label": "Mixed colours",
+          "wins": 16900,
+          "probability": 0.764706,
+          "fairOdds": 1.307692,
+          "prices": {
+            "direct": {
+              "odds": 1.23,
+              "marginBps": 518,
+              "grossEdge": 0.059412,
+              "netEdge": 0.030338
+            },
+            "club": {
+              "odds": 1.2,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 1.23,
+              "marginBps": 560,
+              "grossEdge": 0.059412,
+              "netEdge": 0.026706
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "red-count",
+      "family": "suits-colours",
+      "name": "Number of red cards",
+      "description": "Exactly N red cards (hearts or diamonds).",
+      "catalogueRefs": [
+        12
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "red-count:0",
+          "label": "Exactly 0 red",
+          "wins": 2600,
+          "probability": 0.117647,
+          "fairOdds": 8.5,
+          "prices": {
+            "direct": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.034044
+            },
+            "club": {
+              "odds": 7.8,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.029353
+            }
+          }
+        },
+        {
+          "id": "red-count:1",
+          "label": "Exactly 1 red",
+          "wins": 8450,
+          "probability": 0.382353,
+          "fairOdds": 2.615385,
+          "prices": {
+            "direct": {
+              "odds": 2.47,
+              "marginBps": 518,
+              "grossEdge": 0.055588,
+              "netEdge": 0.027662
+            },
+            "club": {
+              "odds": 2.4,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 2.46,
+              "marginBps": 560,
+              "grossEdge": 0.059412,
+              "netEdge": 0.026706
+            }
+          }
+        },
+        {
+          "id": "red-count:2",
+          "label": "Exactly 2 red",
+          "wins": 8450,
+          "probability": 0.382353,
+          "fairOdds": 2.615385,
+          "prices": {
+            "direct": {
+              "odds": 2.47,
+              "marginBps": 518,
+              "grossEdge": 0.055588,
+              "netEdge": 0.027662
+            },
+            "club": {
+              "odds": 2.4,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 2.46,
+              "marginBps": 560,
+              "grossEdge": 0.059412,
+              "netEdge": 0.026706
+            }
+          }
+        },
+        {
+          "id": "red-count:3",
+          "label": "Exactly 3 red",
+          "wins": 2600,
+          "probability": 0.117647,
+          "fairOdds": 8.5,
+          "prices": {
+            "direct": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.034044
+            },
+            "club": {
+              "odds": 7.8,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 7.95,
+              "marginBps": 600,
+              "grossEdge": 0.064706,
+              "netEdge": 0.029353
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "suit-count-s",
+      "family": "suits-colours",
+      "name": "Number of spades",
+      "description": "Exactly N spades on the flop.",
+      "catalogueRefs": [
+        13
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "suit-count-s:0",
+          "label": "Exactly 0 spades",
+          "wins": 9139,
+          "probability": 0.413529,
+          "fairOdds": 2.418208,
+          "prices": {
+            "direct": {
+              "odds": 2.29,
+              "marginBps": 518,
+              "grossEdge": 0.053018,
+              "netEdge": 0.025862
+            },
+            "club": {
+              "odds": 2.22,
+              "marginBps": 806,
+              "grossEdge": 0.081965,
+              "netEdge": 0.025634
+            },
+            "partner": {
+              "odds": 2.28,
+              "marginBps": 560,
+              "grossEdge": 0.057153,
+              "netEdge": 0.025576
+            }
+          }
+        },
+        {
+          "id": "suit-count-s:1",
+          "label": "Exactly 1 spade",
+          "wins": 9633,
+          "probability": 0.435882,
+          "fairOdds": 2.294197,
+          "prices": {
+            "direct": {
+              "odds": 2.17,
+              "marginBps": 518,
+              "grossEdge": 0.054135,
+              "netEdge": 0.026645
+            },
+            "club": {
+              "odds": 2.1,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 2.16,
+              "marginBps": 560,
+              "grossEdge": 0.058494,
+              "netEdge": 0.026247
+            }
+          }
+        },
+        {
+          "id": "suit-count-s:2",
+          "label": "Exactly 2 spades",
+          "wins": 3042,
+          "probability": 0.137647,
+          "fairOdds": 7.264957,
+          "prices": {
+            "direct": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.03355
+            },
+            "club": {
+              "odds": 6.65,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.029
+            }
+          }
+        },
+        {
+          "id": "suit-count-s:3",
+          "label": "Exactly 3 spades",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "suit-count-h",
+      "family": "suits-colours",
+      "name": "Number of hearts",
+      "description": "Exactly N hearts on the flop.",
+      "catalogueRefs": [
+        13
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "suit-count-h:0",
+          "label": "Exactly 0 hearts",
+          "wins": 9139,
+          "probability": 0.413529,
+          "fairOdds": 2.418208,
+          "prices": {
+            "direct": {
+              "odds": 2.29,
+              "marginBps": 518,
+              "grossEdge": 0.053018,
+              "netEdge": 0.025862
+            },
+            "club": {
+              "odds": 2.22,
+              "marginBps": 806,
+              "grossEdge": 0.081965,
+              "netEdge": 0.025634
+            },
+            "partner": {
+              "odds": 2.28,
+              "marginBps": 560,
+              "grossEdge": 0.057153,
+              "netEdge": 0.025576
+            }
+          }
+        },
+        {
+          "id": "suit-count-h:1",
+          "label": "Exactly 1 heart",
+          "wins": 9633,
+          "probability": 0.435882,
+          "fairOdds": 2.294197,
+          "prices": {
+            "direct": {
+              "odds": 2.17,
+              "marginBps": 518,
+              "grossEdge": 0.054135,
+              "netEdge": 0.026645
+            },
+            "club": {
+              "odds": 2.1,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 2.16,
+              "marginBps": 560,
+              "grossEdge": 0.058494,
+              "netEdge": 0.026247
+            }
+          }
+        },
+        {
+          "id": "suit-count-h:2",
+          "label": "Exactly 2 hearts",
+          "wins": 3042,
+          "probability": 0.137647,
+          "fairOdds": 7.264957,
+          "prices": {
+            "direct": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.03355
+            },
+            "club": {
+              "odds": 6.65,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.029
+            }
+          }
+        },
+        {
+          "id": "suit-count-h:3",
+          "label": "Exactly 3 hearts",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "suit-count-d",
+      "family": "suits-colours",
+      "name": "Number of diamonds",
+      "description": "Exactly N diamonds on the flop.",
+      "catalogueRefs": [
+        13
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "suit-count-d:0",
+          "label": "Exactly 0 diamonds",
+          "wins": 9139,
+          "probability": 0.413529,
+          "fairOdds": 2.418208,
+          "prices": {
+            "direct": {
+              "odds": 2.29,
+              "marginBps": 518,
+              "grossEdge": 0.053018,
+              "netEdge": 0.025862
+            },
+            "club": {
+              "odds": 2.22,
+              "marginBps": 806,
+              "grossEdge": 0.081965,
+              "netEdge": 0.025634
+            },
+            "partner": {
+              "odds": 2.28,
+              "marginBps": 560,
+              "grossEdge": 0.057153,
+              "netEdge": 0.025576
+            }
+          }
+        },
+        {
+          "id": "suit-count-d:1",
+          "label": "Exactly 1 diamond",
+          "wins": 9633,
+          "probability": 0.435882,
+          "fairOdds": 2.294197,
+          "prices": {
+            "direct": {
+              "odds": 2.17,
+              "marginBps": 518,
+              "grossEdge": 0.054135,
+              "netEdge": 0.026645
+            },
+            "club": {
+              "odds": 2.1,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 2.16,
+              "marginBps": 560,
+              "grossEdge": 0.058494,
+              "netEdge": 0.026247
+            }
+          }
+        },
+        {
+          "id": "suit-count-d:2",
+          "label": "Exactly 2 diamonds",
+          "wins": 3042,
+          "probability": 0.137647,
+          "fairOdds": 7.264957,
+          "prices": {
+            "direct": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.03355
+            },
+            "club": {
+              "odds": 6.65,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.029
+            }
+          }
+        },
+        {
+          "id": "suit-count-d:3",
+          "label": "Exactly 3 diamonds",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "suit-count-c",
+      "family": "suits-colours",
+      "name": "Number of clubs",
+      "description": "Exactly N clubs on the flop.",
+      "catalogueRefs": [
+        13
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "suit-count-c:0",
+          "label": "Exactly 0 clubs",
+          "wins": 9139,
+          "probability": 0.413529,
+          "fairOdds": 2.418208,
+          "prices": {
+            "direct": {
+              "odds": 2.29,
+              "marginBps": 518,
+              "grossEdge": 0.053018,
+              "netEdge": 0.025862
+            },
+            "club": {
+              "odds": 2.22,
+              "marginBps": 806,
+              "grossEdge": 0.081965,
+              "netEdge": 0.025634
+            },
+            "partner": {
+              "odds": 2.28,
+              "marginBps": 560,
+              "grossEdge": 0.057153,
+              "netEdge": 0.025576
+            }
+          }
+        },
+        {
+          "id": "suit-count-c:1",
+          "label": "Exactly 1 club",
+          "wins": 9633,
+          "probability": 0.435882,
+          "fairOdds": 2.294197,
+          "prices": {
+            "direct": {
+              "odds": 2.17,
+              "marginBps": 518,
+              "grossEdge": 0.054135,
+              "netEdge": 0.026645
+            },
+            "club": {
+              "odds": 2.1,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 2.16,
+              "marginBps": 560,
+              "grossEdge": 0.058494,
+              "netEdge": 0.026247
+            }
+          }
+        },
+        {
+          "id": "suit-count-c:2",
+          "label": "Exactly 2 clubs",
+          "wins": 3042,
+          "probability": 0.137647,
+          "fairOdds": 7.264957,
+          "prices": {
+            "direct": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.03355
+            },
+            "club": {
+              "odds": 6.65,
+              "marginBps": 806,
+              "grossEdge": 0.084647,
+              "netEdge": 0.026841
+            },
+            "partner": {
+              "odds": 6.8,
+              "marginBps": 600,
+              "grossEdge": 0.064,
+              "netEdge": 0.029
+            }
+          }
+        },
+        {
+          "id": "suit-count-c:3",
+          "label": "Exactly 3 clubs",
+          "wins": 286,
+          "probability": 0.012941,
+          "fairOdds": 77.272727,
+          "prices": {
+            "direct": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.059162
+            },
+            "club": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.034015
+            },
+            "partner": {
+              "odds": 69.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100588,
+              "netEdge": 0.047294
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "all-below",
+      "family": "high-low",
+      "name": "All cards below X",
+      "description": "Every card is strictly below the chosen rank (ace is high).",
+      "catalogueRefs": [
+        14
+      ],
+      "firstRelease": true,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "all-below:6",
+          "label": "All below 6",
+          "wins": 560,
+          "probability": 0.025339,
+          "fairOdds": 39.464286,
+          "prices": {
+            "direct": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.059067
+            },
+            "club": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.033954
+            },
+            "partner": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.047226
+            }
+          }
+        },
+        {
+          "id": "all-below:7",
+          "label": "All below 7",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        },
+        {
+          "id": "all-below:8",
+          "label": "All below 8",
+          "wins": 2024,
+          "probability": 0.091584,
+          "fairOdds": 10.918972,
+          "prices": {
+            "direct": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.047664
+            },
+            "club": {
+              "odds": 10,
+              "marginBps": 806,
+              "grossEdge": 0.084163,
+              "netEdge": 0.026623
+            },
+            "partner": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.039081
+            }
+          }
+        },
+        {
+          "id": "all-below:9",
+          "label": "All below 9",
+          "wins": 3276,
+          "probability": 0.148235,
+          "fairOdds": 6.746032,
+          "prices": {
+            "direct": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.035032
+            },
+            "club": {
+              "odds": 6.2,
+              "marginBps": 806,
+              "grossEdge": 0.080941,
+              "netEdge": 0.025174
+            },
+            "partner": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.030059
+            }
+          }
+        },
+        {
+          "id": "all-below:T",
+          "label": "All below T",
+          "wins": 4960,
+          "probability": 0.224434,
+          "fairOdds": 4.455645,
+          "prices": {
+            "direct": {
+              "odds": 4.18,
+              "marginBps": 600,
+              "grossEdge": 0.061864,
+              "netEdge": 0.032055
+            },
+            "club": {
+              "odds": 4.09,
+              "marginBps": 806,
+              "grossEdge": 0.082063,
+              "netEdge": 0.025679
+            },
+            "partner": {
+              "odds": 4.18,
+              "marginBps": 600,
+              "grossEdge": 0.061864,
+              "netEdge": 0.027932
+            }
+          }
+        },
+        {
+          "id": "all-below:J",
+          "label": "All below J",
+          "wins": 7140,
+          "probability": 0.323077,
+          "fairOdds": 3.095238,
+          "prices": {
+            "direct": {
+              "odds": 2.93,
+              "marginBps": 518,
+              "grossEdge": 0.053385,
+              "netEdge": 0.026119
+            },
+            "club": {
+              "odds": 2.84,
+              "marginBps": 806,
+              "grossEdge": 0.082462,
+              "netEdge": 0.025858
+            },
+            "partner": {
+              "odds": 2.92,
+              "marginBps": 560,
+              "grossEdge": 0.056615,
+              "netEdge": 0.025308
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "all-above",
+      "family": "high-low",
+      "name": "All cards above X",
+      "description": "Every card is strictly above the chosen rank (ace is high).",
+      "catalogueRefs": [
+        15
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "all-above:7",
+          "label": "All above 7",
+          "wins": 3276,
+          "probability": 0.148235,
+          "fairOdds": 6.746032,
+          "prices": {
+            "direct": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.035032
+            },
+            "club": {
+              "odds": 6.2,
+              "marginBps": 806,
+              "grossEdge": 0.080941,
+              "netEdge": 0.025174
+            },
+            "partner": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.030059
+            }
+          }
+        },
+        {
+          "id": "all-above:8",
+          "label": "All above 8",
+          "wins": 2024,
+          "probability": 0.091584,
+          "fairOdds": 10.918972,
+          "prices": {
+            "direct": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.047664
+            },
+            "club": {
+              "odds": 10,
+              "marginBps": 806,
+              "grossEdge": 0.084163,
+              "netEdge": 0.026623
+            },
+            "partner": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.039081
+            }
+          }
+        },
+        {
+          "id": "all-above:9",
+          "label": "All above 9",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        },
+        {
+          "id": "all-above:T",
+          "label": "All above T",
+          "wins": 560,
+          "probability": 0.025339,
+          "fairOdds": 39.464286,
+          "prices": {
+            "direct": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.059067
+            },
+            "club": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.033954
+            },
+            "partner": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.047226
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "all-in-range",
+      "family": "high-low",
+      "name": "All cards in a range",
+      "description": "Every card is within the inclusive rank interval.",
+      "catalogueRefs": [
+        16
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "all-in-range:5-9",
+          "label": "All between 5 and 9",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        },
+        {
+          "id": "all-in-range:6-T",
+          "label": "All between 6 and T",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        },
+        {
+          "id": "all-in-range:7-J",
+          "label": "All between 7 and J",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        },
+        {
+          "id": "all-in-range:8-Q",
+          "label": "All between 8 and Q",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "any-above",
+      "family": "high-low",
+      "name": "At least one card above / below X",
+      "description": "At least one card strictly above (or below) the chosen rank.",
+      "catalogueRefs": [
+        17
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "any-above:above-J",
+          "label": "At least one above J (Q, K or A)",
+          "wins": 12220,
+          "probability": 0.552941,
+          "fairOdds": 1.808511,
+          "prices": {
+            "direct": {
+              "odds": 1.71,
+              "marginBps": 518,
+              "grossEdge": 0.054471,
+              "netEdge": 0.026879
+            },
+            "club": {
+              "odds": 1.66,
+              "marginBps": 806,
+              "grossEdge": 0.082118,
+              "netEdge": 0.025703
+            },
+            "partner": {
+              "odds": 1.7,
+              "marginBps": 560,
+              "grossEdge": 0.06,
+              "netEdge": 0.027
+            }
+          }
+        },
+        {
+          "id": "any-above:below-5",
+          "label": "At least one below 5 (2, 3 or 4)",
+          "wins": 12220,
+          "probability": 0.552941,
+          "fairOdds": 1.808511,
+          "prices": {
+            "direct": {
+              "odds": 1.71,
+              "marginBps": 518,
+              "grossEdge": 0.054471,
+              "netEdge": 0.026879
+            },
+            "club": {
+              "odds": 1.66,
+              "marginBps": 806,
+              "grossEdge": 0.082118,
+              "netEdge": 0.025703
+            },
+            "partner": {
+              "odds": 1.7,
+              "marginBps": 560,
+              "grossEdge": 0.06,
+              "netEdge": 0.027
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "high-count",
+      "family": "high-low",
+      "name": "Number of high cards (J or higher)",
+      "description": "Exactly N cards ranked J, Q, K or A.",
+      "catalogueRefs": [
+        18
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "high-count:0",
+          "label": "Exactly 0 J-or-higher",
+          "wins": 7140,
+          "probability": 0.323077,
+          "fairOdds": 3.095238,
+          "prices": {
+            "direct": {
+              "odds": 2.93,
+              "marginBps": 518,
+              "grossEdge": 0.053385,
+              "netEdge": 0.026119
+            },
+            "club": {
+              "odds": 2.84,
+              "marginBps": 806,
+              "grossEdge": 0.082462,
+              "netEdge": 0.025858
+            },
+            "partner": {
+              "odds": 2.92,
+              "marginBps": 560,
+              "grossEdge": 0.056615,
+              "netEdge": 0.025308
+            }
+          }
+        },
+        {
+          "id": "high-count:1",
+          "label": "Exactly 1 J-or-higher",
+          "wins": 10080,
+          "probability": 0.456109,
+          "fairOdds": 2.19246,
+          "prices": {
+            "direct": {
+              "odds": 2.07,
+              "marginBps": 518,
+              "grossEdge": 0.055855,
+              "netEdge": 0.027849
+            },
+            "club": {
+              "odds": 2.01,
+              "marginBps": 806,
+              "grossEdge": 0.083222,
+              "netEdge": 0.0262
+            },
+            "partner": {
+              "odds": 2.06,
+              "marginBps": 560,
+              "grossEdge": 0.060416,
+              "netEdge": 0.027208
+            }
+          }
+        },
+        {
+          "id": "high-count:2",
+          "label": "Exactly 2 J-or-higher",
+          "wins": 4320,
+          "probability": 0.195475,
+          "fairOdds": 5.115741,
+          "prices": {
+            "direct": {
+              "odds": 4.8,
+              "marginBps": 600,
+              "grossEdge": 0.061719,
+              "netEdge": 0.031954
+            },
+            "club": {
+              "odds": 4.7,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 4.8,
+              "marginBps": 600,
+              "grossEdge": 0.061719,
+              "netEdge": 0.02786
+            }
+          }
+        },
+        {
+          "id": "high-count:3",
+          "label": "Exactly 3 J-or-higher",
+          "wins": 560,
+          "probability": 0.025339,
+          "fairOdds": 39.464286,
+          "prices": {
+            "direct": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.059067
+            },
+            "club": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.033954
+            },
+            "partner": {
+              "odds": 35.5,
+              "marginBps": 1000,
+              "grossEdge": 0.100452,
+              "netEdge": 0.047226
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "highest-card",
+      "family": "high-low",
+      "name": "Highest card",
+      "description": "The rank of the highest card on the flop (ace is high).",
+      "catalogueRefs": [
+        19
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "highest-card:le-8",
+          "label": "8 or lower",
+          "wins": 3276,
+          "probability": 0.148235,
+          "fairOdds": 6.746032,
+          "prices": {
+            "direct": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.035032
+            },
+            "club": {
+              "odds": 6.2,
+              "marginBps": 806,
+              "grossEdge": 0.080941,
+              "netEdge": 0.025174
+            },
+            "partner": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.030059
+            }
+          }
+        },
+        {
+          "id": "highest-card:9",
+          "label": "9 high",
+          "wins": 1684,
+          "probability": 0.076199,
+          "fairOdds": 13.123515,
+          "prices": {
+            "direct": {
+              "odds": 12,
+              "marginBps": 800,
+              "grossEdge": 0.085611,
+              "netEdge": 0.048678
+            },
+            "club": {
+              "odds": 12,
+              "marginBps": 806,
+              "grossEdge": 0.085611,
+              "netEdge": 0.027275
+            },
+            "partner": {
+              "odds": 12,
+              "marginBps": 800,
+              "grossEdge": 0.085611,
+              "netEdge": 0.039805
+            }
+          }
+        },
+        {
+          "id": "highest-card:T",
+          "label": "T high",
+          "wins": 2180,
+          "probability": 0.098643,
+          "fairOdds": 10.137615,
+          "prices": {
+            "direct": {
+              "odds": 9.3,
+              "marginBps": 800,
+              "grossEdge": 0.082624,
+              "netEdge": 0.046587
+            },
+            "club": {
+              "odds": 9.3,
+              "marginBps": 806,
+              "grossEdge": 0.082624,
+              "netEdge": 0.025931
+            },
+            "partner": {
+              "odds": 9.3,
+              "marginBps": 800,
+              "grossEdge": 0.082624,
+              "netEdge": 0.038312
+            }
+          }
+        },
+        {
+          "id": "highest-card:J",
+          "label": "J high",
+          "wins": 2740,
+          "probability": 0.123982,
+          "fairOdds": 8.065693,
+          "prices": {
+            "direct": {
+              "odds": 7.55,
+              "marginBps": 600,
+              "grossEdge": 0.063937,
+              "netEdge": 0.033506
+            },
+            "club": {
+              "odds": 7.4,
+              "marginBps": 806,
+              "grossEdge": 0.082534,
+              "netEdge": 0.02589
+            },
+            "partner": {
+              "odds": 7.55,
+              "marginBps": 600,
+              "grossEdge": 0.063937,
+              "netEdge": 0.028968
+            }
+          }
+        },
+        {
+          "id": "highest-card:Q",
+          "label": "Q high",
+          "wins": 3364,
+          "probability": 0.152217,
+          "fairOdds": 6.56956,
+          "prices": {
+            "direct": {
+              "odds": 6.15,
+              "marginBps": 600,
+              "grossEdge": 0.063864,
+              "netEdge": 0.033455
+            },
+            "club": {
+              "odds": 6,
+              "marginBps": 806,
+              "grossEdge": 0.086697,
+              "netEdge": 0.027764
+            },
+            "partner": {
+              "odds": 6.15,
+              "marginBps": 600,
+              "grossEdge": 0.063864,
+              "netEdge": 0.028932
+            }
+          }
+        },
+        {
+          "id": "highest-card:K",
+          "label": "K high",
+          "wins": 4052,
+          "probability": 0.183348,
+          "fairOdds": 5.454097,
+          "prices": {
+            "direct": {
+              "odds": 5.1,
+              "marginBps": 600,
+              "grossEdge": 0.064923,
+              "netEdge": 0.034196
+            },
+            "club": {
+              "odds": 5,
+              "marginBps": 806,
+              "grossEdge": 0.083258,
+              "netEdge": 0.026216
+            },
+            "partner": {
+              "odds": 5.1,
+              "marginBps": 600,
+              "grossEdge": 0.064923,
+              "netEdge": 0.029462
+            }
+          }
+        },
+        {
+          "id": "highest-card:A",
+          "label": "A high",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "lowest-card",
+      "family": "high-low",
+      "name": "Lowest card",
+      "description": "The rank of the lowest card on the flop (ace is high).",
+      "catalogueRefs": [
+        20
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "lowest-card:2",
+          "label": "Lowest card 2",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "lowest-card:3",
+          "label": "Lowest card 3",
+          "wins": 4052,
+          "probability": 0.183348,
+          "fairOdds": 5.454097,
+          "prices": {
+            "direct": {
+              "odds": 5.1,
+              "marginBps": 600,
+              "grossEdge": 0.064923,
+              "netEdge": 0.034196
+            },
+            "club": {
+              "odds": 5,
+              "marginBps": 806,
+              "grossEdge": 0.083258,
+              "netEdge": 0.026216
+            },
+            "partner": {
+              "odds": 5.1,
+              "marginBps": 600,
+              "grossEdge": 0.064923,
+              "netEdge": 0.029462
+            }
+          }
+        },
+        {
+          "id": "lowest-card:4",
+          "label": "Lowest card 4",
+          "wins": 3364,
+          "probability": 0.152217,
+          "fairOdds": 6.56956,
+          "prices": {
+            "direct": {
+              "odds": 6.15,
+              "marginBps": 600,
+              "grossEdge": 0.063864,
+              "netEdge": 0.033455
+            },
+            "club": {
+              "odds": 6,
+              "marginBps": 806,
+              "grossEdge": 0.086697,
+              "netEdge": 0.027764
+            },
+            "partner": {
+              "odds": 6.15,
+              "marginBps": 600,
+              "grossEdge": 0.063864,
+              "netEdge": 0.028932
+            }
+          }
+        },
+        {
+          "id": "lowest-card:5",
+          "label": "Lowest card 5",
+          "wins": 2740,
+          "probability": 0.123982,
+          "fairOdds": 8.065693,
+          "prices": {
+            "direct": {
+              "odds": 7.55,
+              "marginBps": 600,
+              "grossEdge": 0.063937,
+              "netEdge": 0.033506
+            },
+            "club": {
+              "odds": 7.4,
+              "marginBps": 806,
+              "grossEdge": 0.082534,
+              "netEdge": 0.02589
+            },
+            "partner": {
+              "odds": 7.55,
+              "marginBps": 600,
+              "grossEdge": 0.063937,
+              "netEdge": 0.028968
+            }
+          }
+        },
+        {
+          "id": "lowest-card:6",
+          "label": "Lowest card 6",
+          "wins": 2180,
+          "probability": 0.098643,
+          "fairOdds": 10.137615,
+          "prices": {
+            "direct": {
+              "odds": 9.3,
+              "marginBps": 800,
+              "grossEdge": 0.082624,
+              "netEdge": 0.046587
+            },
+            "club": {
+              "odds": 9.3,
+              "marginBps": 806,
+              "grossEdge": 0.082624,
+              "netEdge": 0.025931
+            },
+            "partner": {
+              "odds": 9.3,
+              "marginBps": 800,
+              "grossEdge": 0.082624,
+              "netEdge": 0.038312
+            }
+          }
+        },
+        {
+          "id": "lowest-card:ge-7",
+          "label": "Lowest card 7 or higher",
+          "wins": 4960,
+          "probability": 0.224434,
+          "fairOdds": 4.455645,
+          "prices": {
+            "direct": {
+              "odds": 4.18,
+              "marginBps": 600,
+              "grossEdge": 0.061864,
+              "netEdge": 0.032055
+            },
+            "club": {
+              "odds": 4.09,
+              "marginBps": 806,
+              "grossEdge": 0.082063,
+              "netEdge": 0.025679
+            },
+            "partner": {
+              "odds": 4.18,
+              "marginBps": 600,
+              "grossEdge": 0.061864,
+              "netEdge": 0.027932
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "face-count",
+      "family": "face-named",
+      "name": "Number of face cards",
+      "description": "Exactly N face cards (J, Q, K). Three = \"all images\".",
+      "catalogueRefs": [
+        21,
+        22,
+        23
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "face-count:0",
+          "label": "Exactly 0 face cards",
+          "wins": 9880,
+          "probability": 0.447059,
+          "fairOdds": 2.236842,
+          "prices": {
+            "direct": {
+              "odds": 2.12,
+              "marginBps": 518,
+              "grossEdge": 0.052235,
+              "netEdge": 0.025315
+            },
+            "club": {
+              "odds": 2.05,
+              "marginBps": 806,
+              "grossEdge": 0.083529,
+              "netEdge": 0.026338
+            },
+            "partner": {
+              "odds": 2.11,
+              "marginBps": 560,
+              "grossEdge": 0.056706,
+              "netEdge": 0.025353
+            }
+          }
+        },
+        {
+          "id": "face-count:1",
+          "label": "Exactly 1 face card",
+          "wins": 9360,
+          "probability": 0.423529,
+          "fairOdds": 2.361111,
+          "prices": {
+            "direct": {
+              "odds": 2.23,
+              "marginBps": 518,
+              "grossEdge": 0.055529,
+              "netEdge": 0.027621
+            },
+            "club": {
+              "odds": 2.17,
+              "marginBps": 806,
+              "grossEdge": 0.080941,
+              "netEdge": 0.025174
+            },
+            "partner": {
+              "odds": 2.22,
+              "marginBps": 560,
+              "grossEdge": 0.059765,
+              "netEdge": 0.026882
+            }
+          }
+        },
+        {
+          "id": "face-count:2",
+          "label": "Exactly 2 face cards",
+          "wins": 2640,
+          "probability": 0.119457,
+          "fairOdds": 8.371212,
+          "prices": {
+            "direct": {
+              "odds": 7.85,
+              "marginBps": 600,
+              "grossEdge": 0.062262,
+              "netEdge": 0.032334
+            },
+            "club": {
+              "odds": 7.65,
+              "marginBps": 806,
+              "grossEdge": 0.086154,
+              "netEdge": 0.027519
+            },
+            "partner": {
+              "odds": 7.85,
+              "marginBps": 600,
+              "grossEdge": 0.062262,
+              "netEdge": 0.028131
+            }
+          }
+        },
+        {
+          "id": "face-count:3",
+          "label": "All face cards (3)",
+          "wins": 220,
+          "probability": 0.009955,
+          "fairOdds": 100.454545,
+          "prices": {
+            "direct": {
+              "odds": 88,
+              "marginBps": 1200,
+              "grossEdge": 0.123982,
+              "netEdge": 0.075537
+            },
+            "club": {
+              "odds": 88,
+              "marginBps": 1200,
+              "grossEdge": 0.123982,
+              "netEdge": 0.044542
+            },
+            "partner": {
+              "odds": 88,
+              "marginBps": 1200,
+              "grossEdge": 0.123982,
+              "netEdge": 0.058991
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ace-count",
+      "family": "face-named",
+      "name": "Number of aces",
+      "description": "Exactly N aces on the flop.",
+      "catalogueRefs": [
+        24,
+        25,
+        26
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "ace-count:0",
+          "label": "Exactly 0 aces",
+          "wins": 17296,
+          "probability": 0.782624,
+          "fairOdds": 1.277752,
+          "prices": {
+            "direct": {
+              "odds": 1.21,
+              "marginBps": 518,
+              "grossEdge": 0.053024,
+              "netEdge": 0.025867
+            },
+            "club": {
+              "odds": 1.17,
+              "marginBps": 806,
+              "grossEdge": 0.084329,
+              "netEdge": 0.026698
+            },
+            "partner": {
+              "odds": 1.2,
+              "marginBps": 560,
+              "grossEdge": 0.060851,
+              "netEdge": 0.027425
+            }
+          }
+        },
+        {
+          "id": "ace-count:1",
+          "label": "Exactly 1 ace",
+          "wins": 4512,
+          "probability": 0.204163,
+          "fairOdds": 4.89805,
+          "prices": {
+            "direct": {
+              "odds": 4.6,
+              "marginBps": 600,
+              "grossEdge": 0.060851,
+              "netEdge": 0.031345
+            },
+            "club": {
+              "odds": 4.5,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 4.6,
+              "marginBps": 600,
+              "grossEdge": 0.060851,
+              "netEdge": 0.027425
+            }
+          }
+        },
+        {
+          "id": "ace-count:2",
+          "label": "Exactly 2 aces",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "ace-count:3",
+          "label": "Exactly 3 aces",
+          "wins": 4,
+          "probability": 0.000181,
+          "fairOdds": 5525,
+          "prices": {
+            "direct": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "club": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "partner": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "any-ace",
+      "family": "face-named",
+      "name": "Any ace",
+      "description": "At least one ace / no ace.",
+      "catalogueRefs": [
+        24,
+        25
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "any-ace:yes",
+          "label": "At least one ace",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "any-ace:no",
+          "label": "No ace",
+          "wins": 17296,
+          "probability": 0.782624,
+          "fairOdds": 1.277752,
+          "prices": {
+            "direct": {
+              "odds": 1.21,
+              "marginBps": 518,
+              "grossEdge": 0.053024,
+              "netEdge": 0.025867
+            },
+            "club": {
+              "odds": 1.17,
+              "marginBps": 806,
+              "grossEdge": 0.084329,
+              "netEdge": 0.026698
+            },
+            "partner": {
+              "odds": 1.2,
+              "marginBps": 560,
+              "grossEdge": 0.060851,
+              "netEdge": 0.027425
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "contains-rank",
+      "family": "face-named",
+      "name": "Contains a named rank",
+      "description": "At least one card of the chosen rank.",
+      "catalogueRefs": [
+        27
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "contains-rank:2",
+          "label": "Contains a 2",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:3",
+          "label": "Contains a 3",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:4",
+          "label": "Contains a 4",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:5",
+          "label": "Contains a 5",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:6",
+          "label": "Contains a 6",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:7",
+          "label": "Contains a 7",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:8",
+          "label": "Contains a 8",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:9",
+          "label": "Contains a 9",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:T",
+          "label": "Contains a T",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:J",
+          "label": "Contains a J",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:Q",
+          "label": "Contains a Q",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:K",
+          "label": "Contains a K",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        },
+        {
+          "id": "contains-rank:A",
+          "label": "Contains a A",
+          "wins": 4804,
+          "probability": 0.217376,
+          "fairOdds": 4.600333,
+          "prices": {
+            "direct": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.031406
+            },
+            "club": {
+              "odds": 4.22,
+              "marginBps": 806,
+              "grossEdge": 0.082675,
+              "netEdge": 0.025954
+            },
+            "partner": {
+              "odds": 4.32,
+              "marginBps": 600,
+              "grossEdge": 0.060938,
+              "netEdge": 0.027469
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "contains-card",
+      "family": "face-named",
+      "name": "Contains an exact card",
+      "description": "The chosen card is one of the three flop cards.",
+      "catalogueRefs": [
+        28
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "contains-card:2s",
+          "label": "Contains 2s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:2h",
+          "label": "Contains 2h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:2d",
+          "label": "Contains 2d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:2c",
+          "label": "Contains 2c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:3s",
+          "label": "Contains 3s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:3h",
+          "label": "Contains 3h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:3d",
+          "label": "Contains 3d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:3c",
+          "label": "Contains 3c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:4s",
+          "label": "Contains 4s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:4h",
+          "label": "Contains 4h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:4d",
+          "label": "Contains 4d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:4c",
+          "label": "Contains 4c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:5s",
+          "label": "Contains 5s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:5h",
+          "label": "Contains 5h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:5d",
+          "label": "Contains 5d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:5c",
+          "label": "Contains 5c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:6s",
+          "label": "Contains 6s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:6h",
+          "label": "Contains 6h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:6d",
+          "label": "Contains 6d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:6c",
+          "label": "Contains 6c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:7s",
+          "label": "Contains 7s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:7h",
+          "label": "Contains 7h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:7d",
+          "label": "Contains 7d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:7c",
+          "label": "Contains 7c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:8s",
+          "label": "Contains 8s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:8h",
+          "label": "Contains 8h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:8d",
+          "label": "Contains 8d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:8c",
+          "label": "Contains 8c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:9s",
+          "label": "Contains 9s",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:9h",
+          "label": "Contains 9h",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:9d",
+          "label": "Contains 9d",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:9c",
+          "label": "Contains 9c",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Ts",
+          "label": "Contains Ts",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Th",
+          "label": "Contains Th",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Td",
+          "label": "Contains Td",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Tc",
+          "label": "Contains Tc",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Js",
+          "label": "Contains Js",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Jh",
+          "label": "Contains Jh",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Jd",
+          "label": "Contains Jd",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Jc",
+          "label": "Contains Jc",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Qs",
+          "label": "Contains Qs",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Qh",
+          "label": "Contains Qh",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Qd",
+          "label": "Contains Qd",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Qc",
+          "label": "Contains Qc",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Ks",
+          "label": "Contains Ks",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Kh",
+          "label": "Contains Kh",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Kd",
+          "label": "Contains Kd",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Kc",
+          "label": "Contains Kc",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:As",
+          "label": "Contains As",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Ah",
+          "label": "Contains Ah",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Ad",
+          "label": "Contains Ad",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        },
+        {
+          "id": "contains-card:Ac",
+          "label": "Contains Ac",
+          "wins": 1275,
+          "probability": 0.057692,
+          "fairOdds": 17.333333,
+          "prices": {
+            "direct": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.046635
+            },
+            "club": {
+              "odds": 15.9,
+              "marginBps": 806,
+              "grossEdge": 0.082692,
+              "netEdge": 0.025962
+            },
+            "partner": {
+              "odds": 15.9,
+              "marginBps": 800,
+              "grossEdge": 0.082692,
+              "netEdge": 0.038346
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "broadway",
+      "family": "face-named",
+      "name": "All Broadway",
+      "description": "Every card is 10, J, Q, K or A.",
+      "catalogueRefs": [
+        29
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "broadway:yes",
+          "label": "All Broadway",
+          "wins": 1140,
+          "probability": 0.051584,
+          "fairOdds": 19.385965,
+          "prices": {
+            "direct": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.046017
+            },
+            "club": {
+              "odds": 17.8,
+              "marginBps": 806,
+              "grossEdge": 0.08181,
+              "netEdge": 0.025564
+            },
+            "partner": {
+              "odds": 17.8,
+              "marginBps": 800,
+              "grossEdge": 0.08181,
+              "netEdge": 0.037905
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ace-king",
+      "family": "face-named",
+      "name": "Ace and King",
+      "description": "The flop contains at least one ace and at least one king.",
+      "catalogueRefs": [
+        30
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "ace-king:yes",
+          "label": "Contains A and K",
+          "wins": 752,
+          "probability": 0.034027,
+          "fairOdds": 29.388298,
+          "prices": {
+            "direct": {
+              "odds": 27,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.045637
+            },
+            "club": {
+              "odds": 27,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 27,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.037633
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "straight",
+      "family": "sequences",
+      "name": "Three-card straight",
+      "description": "Three consecutive distinct ranks. A-2-3 and Q-K-A count; K-A-2 does not.",
+      "catalogueRefs": [
+        31
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "straight:yes",
+          "label": "Straight",
+          "wins": 768,
+          "probability": 0.034751,
+          "fairOdds": 28.776042,
+          "prices": {
+            "direct": {
+              "odds": 26.25,
+              "marginBps": 800,
+              "grossEdge": 0.087783,
+              "netEdge": 0.050198
+            },
+            "club": {
+              "odds": 26.25,
+              "marginBps": 806,
+              "grossEdge": 0.087783,
+              "netEdge": 0.028252
+            },
+            "partner": {
+              "odds": 26.25,
+              "marginBps": 800,
+              "grossEdge": 0.087783,
+              "netEdge": 0.040891
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "straight-flush",
+      "family": "sequences",
+      "name": "Three-card straight flush",
+      "description": "Three consecutive ranks, all of the same suit.",
+      "catalogueRefs": [
+        32
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "straight-flush:yes",
+          "label": "Straight flush",
+          "wins": 48,
+          "probability": 0.002172,
+          "fairOdds": 460.416667,
+          "prices": {
+            "direct": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "connected",
+      "family": "sequences",
+      "name": "Connected ranks",
+      "description": "Whether any two cards are adjacent in rank (A is adjacent to K and 2).",
+      "catalogueRefs": [
+        33,
+        34
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "connected:yes",
+          "label": "At least two adjacent ranks",
+          "wins": 8944,
+          "probability": 0.404706,
+          "fairOdds": 2.47093,
+          "prices": {
+            "direct": {
+              "odds": 2.34,
+              "marginBps": 518,
+              "grossEdge": 0.052988,
+              "netEdge": 0.025842
+            },
+            "club": {
+              "odds": 2.27,
+              "marginBps": 806,
+              "grossEdge": 0.081318,
+              "netEdge": 0.025343
+            },
+            "partner": {
+              "odds": 2.33,
+              "marginBps": 560,
+              "grossEdge": 0.057035,
+              "netEdge": 0.025518
+            }
+          }
+        },
+        {
+          "id": "connected:no",
+          "label": "No adjacent ranks",
+          "wins": 13156,
+          "probability": 0.595294,
+          "fairOdds": 1.679842,
+          "prices": {
+            "direct": {
+              "odds": 1.59,
+              "marginBps": 518,
+              "grossEdge": 0.053482,
+              "netEdge": 0.026188
+            },
+            "club": {
+              "odds": 1.54,
+              "marginBps": 806,
+              "grossEdge": 0.083247,
+              "netEdge": 0.026211
+            },
+            "partner": {
+              "odds": 1.58,
+              "marginBps": 560,
+              "grossEdge": 0.059435,
+              "netEdge": 0.026718
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "one-gapper",
+      "family": "sequences",
+      "name": "One-gap sequence",
+      "description": "Three distinct ranks spanning four ranks with one gap, e.g. 5-6-8 or 5-7-8 (ace high only).",
+      "catalogueRefs": [
+        35
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "one-gapper:yes",
+          "label": "One-gap run",
+          "wins": 1280,
+          "probability": 0.057919,
+          "fairOdds": 17.265625,
+          "prices": {
+            "direct": {
+              "odds": 15.8,
+              "marginBps": 800,
+              "grossEdge": 0.084887,
+              "netEdge": 0.048171
+            },
+            "club": {
+              "odds": 15.8,
+              "marginBps": 806,
+              "grossEdge": 0.084887,
+              "netEdge": 0.026949
+            },
+            "partner": {
+              "odds": 15.8,
+              "marginBps": 800,
+              "grossEdge": 0.084887,
+              "netEdge": 0.039443
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "exact-straight",
+      "family": "sequences",
+      "name": "Exact straight",
+      "description": "The flop ranks are exactly the chosen consecutive set, any suits.",
+      "catalogueRefs": [
+        36
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "exact-straight:A23",
+          "label": "Exactly A-2-3",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:234",
+          "label": "Exactly 2-3-4",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:345",
+          "label": "Exactly 3-4-5",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:456",
+          "label": "Exactly 4-5-6",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:567",
+          "label": "Exactly 5-6-7",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:678",
+          "label": "Exactly 6-7-8",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:789",
+          "label": "Exactly 7-8-9",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:89T",
+          "label": "Exactly 8-9-T",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:9TJ",
+          "label": "Exactly 9-T-J",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:TJQ",
+          "label": "Exactly T-J-Q",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:JQK",
+          "label": "Exactly J-Q-K",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        },
+        {
+          "id": "exact-straight:QKA",
+          "label": "Exactly Q-K-A",
+          "wins": 64,
+          "probability": 0.002896,
+          "fairOdds": 345.3125,
+          "prices": {
+            "direct": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.094795
+            },
+            "club": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.056922
+            },
+            "partner": {
+              "odds": 293,
+              "marginBps": 1500,
+              "grossEdge": 0.151493,
+              "netEdge": 0.072747
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "span",
+      "family": "sequences",
+      "name": "Rank spread (highest minus lowest)",
+      "description": "Highest rank minus lowest rank, ace high (0 = trips, maximum 12).",
+      "catalogueRefs": [
+        37
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "span:0-4",
+          "label": "Spread 0 to 4",
+          "wins": 5780,
+          "probability": 0.261538,
+          "fairOdds": 3.823529,
+          "prices": {
+            "direct": {
+              "odds": 3.62,
+              "marginBps": 518,
+              "grossEdge": 0.053231,
+              "netEdge": 0.026012
+            },
+            "club": {
+              "odds": 3.51,
+              "marginBps": 806,
+              "grossEdge": 0.082,
+              "netEdge": 0.02565
+            },
+            "partner": {
+              "odds": 3.6,
+              "marginBps": 560,
+              "grossEdge": 0.058462,
+              "netEdge": 0.026231
+            }
+          }
+        },
+        {
+          "id": "span:5-8",
+          "label": "Spread 5 to 8",
+          "wins": 10080,
+          "probability": 0.456109,
+          "fairOdds": 2.19246,
+          "prices": {
+            "direct": {
+              "odds": 2.07,
+              "marginBps": 518,
+              "grossEdge": 0.055855,
+              "netEdge": 0.027849
+            },
+            "club": {
+              "odds": 2.01,
+              "marginBps": 806,
+              "grossEdge": 0.083222,
+              "netEdge": 0.0262
+            },
+            "partner": {
+              "odds": 2.06,
+              "marginBps": 560,
+              "grossEdge": 0.060416,
+              "netEdge": 0.027208
+            }
+          }
+        },
+        {
+          "id": "span:9-12",
+          "label": "Spread 9 to 12",
+          "wins": 6240,
+          "probability": 0.282353,
+          "fairOdds": 3.541667,
+          "prices": {
+            "direct": {
+              "odds": 3.35,
+              "marginBps": 518,
+              "grossEdge": 0.054118,
+              "netEdge": 0.026632
+            },
+            "club": {
+              "odds": 3.25,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 3.34,
+              "marginBps": 560,
+              "grossEdge": 0.056941,
+              "netEdge": 0.025471
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-24",
+      "family": "totals-parity",
+      "name": "Total over / under (24 loses both)",
+      "description": "Rank total over 24 or under 24. A total of exactly 24 (5.9%) loses both sides; it can be backed separately.",
+      "catalogueRefs": [
+        38
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-24:over",
+          "label": "Over 24 (25+)",
+          "wins": 10400,
+          "probability": 0.470588,
+          "fairOdds": 2.125,
+          "prices": {
+            "direct": {
+              "odds": 2.01,
+              "marginBps": 518,
+              "grossEdge": 0.054118,
+              "netEdge": 0.026632
+            },
+            "club": {
+              "odds": 1.95,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 2,
+              "marginBps": 560,
+              "grossEdge": 0.058824,
+              "netEdge": 0.026412
+            }
+          }
+        },
+        {
+          "id": "sum-24:under",
+          "label": "Under 24 (23-)",
+          "wins": 10400,
+          "probability": 0.470588,
+          "fairOdds": 2.125,
+          "prices": {
+            "direct": {
+              "odds": 2.01,
+              "marginBps": 518,
+              "grossEdge": 0.054118,
+              "netEdge": 0.026632
+            },
+            "club": {
+              "odds": 1.95,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 2,
+              "marginBps": 560,
+              "grossEdge": 0.058824,
+              "netEdge": 0.026412
+            }
+          }
+        },
+        {
+          "id": "sum-24:exactly",
+          "label": "Exactly 24",
+          "wins": 1300,
+          "probability": 0.058824,
+          "fairOdds": 17,
+          "prices": {
+            "direct": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.046397
+            },
+            "club": {
+              "odds": 15.6,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.038176
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-20.5",
+      "family": "totals-parity",
+      "name": "Total over / under 20.5",
+      "description": "Rank total line 20.5.",
+      "catalogueRefs": [
+        38
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-20.5:over-20.5",
+          "label": "Over 20.5",
+          "wins": 15464,
+          "probability": 0.699729,
+          "fairOdds": 1.429126,
+          "prices": {
+            "direct": {
+              "odds": 1.35,
+              "marginBps": 518,
+              "grossEdge": 0.055367,
+              "netEdge": 0.027507
+            },
+            "club": {
+              "odds": 1.31,
+              "marginBps": 806,
+              "grossEdge": 0.083356,
+              "netEdge": 0.02626
+            },
+            "partner": {
+              "odds": 1.34,
+              "marginBps": 560,
+              "grossEdge": 0.062364,
+              "netEdge": 0.028182
+            }
+          }
+        },
+        {
+          "id": "sum-20.5:under-20.5",
+          "label": "Under 20.5",
+          "wins": 6636,
+          "probability": 0.300271,
+          "fairOdds": 3.330319,
+          "prices": {
+            "direct": {
+              "odds": 3.15,
+              "marginBps": 518,
+              "grossEdge": 0.054145,
+              "netEdge": 0.026651
+            },
+            "club": {
+              "odds": 3.06,
+              "marginBps": 806,
+              "grossEdge": 0.081169,
+              "netEdge": 0.025276
+            },
+            "partner": {
+              "odds": 3.14,
+              "marginBps": 560,
+              "grossEdge": 0.057148,
+              "netEdge": 0.025574
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-28.5",
+      "family": "totals-parity",
+      "name": "Total over / under 28.5",
+      "description": "Rank total line 28.5.",
+      "catalogueRefs": [
+        38
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-28.5:over-28.5",
+          "label": "Over 28.5",
+          "wins": 5508,
+          "probability": 0.249231,
+          "fairOdds": 4.012346,
+          "prices": {
+            "direct": {
+              "odds": 3.77,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.03103
+            },
+            "club": {
+              "odds": 3.68,
+              "marginBps": 806,
+              "grossEdge": 0.082831,
+              "netEdge": 0.026024
+            },
+            "partner": {
+              "odds": 3.77,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.0272
+            }
+          }
+        },
+        {
+          "id": "sum-28.5:under-28.5",
+          "label": "Under 28.5",
+          "wins": 16592,
+          "probability": 0.750769,
+          "fairOdds": 1.331967,
+          "prices": {
+            "direct": {
+              "odds": 1.26,
+              "marginBps": 518,
+              "grossEdge": 0.054031,
+              "netEdge": 0.026572
+            },
+            "club": {
+              "odds": 1.22,
+              "marginBps": 806,
+              "grossEdge": 0.084062,
+              "netEdge": 0.026578
+            },
+            "partner": {
+              "odds": 1.25,
+              "marginBps": 560,
+              "grossEdge": 0.061538,
+              "netEdge": 0.027769
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-band",
+      "family": "totals-parity",
+      "name": "Total band",
+      "description": "Rank total within the inclusive band.",
+      "catalogueRefs": [
+        39
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-band:6-15",
+          "label": "6 to 15",
+          "wins": 2112,
+          "probability": 0.095566,
+          "fairOdds": 10.464015,
+          "prices": {
+            "direct": {
+              "odds": 9.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.046549
+            },
+            "club": {
+              "odds": 9.6,
+              "marginBps": 806,
+              "grossEdge": 0.08257,
+              "netEdge": 0.025907
+            },
+            "partner": {
+              "odds": 9.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.038285
+            }
+          }
+        },
+        {
+          "id": "sum-band:16-20",
+          "label": "16 to 20",
+          "wins": 4524,
+          "probability": 0.204706,
+          "fairOdds": 4.885057,
+          "prices": {
+            "direct": {
+              "odds": 4.59,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.03103
+            },
+            "club": {
+              "odds": 4.49,
+              "marginBps": 806,
+              "grossEdge": 0.080871,
+              "netEdge": 0.025142
+            },
+            "partner": {
+              "odds": 4.59,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.0272
+            }
+          }
+        },
+        {
+          "id": "sum-band:21-23",
+          "label": "21 to 23",
+          "wins": 3764,
+          "probability": 0.170317,
+          "fairOdds": 5.871413,
+          "prices": {
+            "direct": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.063258,
+              "netEdge": 0.033031
+            },
+            "club": {
+              "odds": 5.35,
+              "marginBps": 806,
+              "grossEdge": 0.088805,
+              "netEdge": 0.028712
+            },
+            "partner": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.063258,
+              "netEdge": 0.028629
+            }
+          }
+        },
+        {
+          "id": "sum-band:24-24",
+          "label": "Exactly 24",
+          "wins": 1300,
+          "probability": 0.058824,
+          "fairOdds": 17,
+          "prices": {
+            "direct": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.046397
+            },
+            "club": {
+              "odds": 15.6,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.038176
+            }
+          }
+        },
+        {
+          "id": "sum-band:25-27",
+          "label": "25 to 27",
+          "wins": 3764,
+          "probability": 0.170317,
+          "fairOdds": 5.871413,
+          "prices": {
+            "direct": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.063258,
+              "netEdge": 0.033031
+            },
+            "club": {
+              "odds": 5.35,
+              "marginBps": 806,
+              "grossEdge": 0.088805,
+              "netEdge": 0.028712
+            },
+            "partner": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.063258,
+              "netEdge": 0.028629
+            }
+          }
+        },
+        {
+          "id": "sum-band:28-32",
+          "label": "28 to 32",
+          "wins": 4524,
+          "probability": 0.204706,
+          "fairOdds": 4.885057,
+          "prices": {
+            "direct": {
+              "odds": 4.59,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.03103
+            },
+            "club": {
+              "odds": 4.49,
+              "marginBps": 806,
+              "grossEdge": 0.080871,
+              "netEdge": 0.025142
+            },
+            "partner": {
+              "odds": 4.59,
+              "marginBps": 600,
+              "grossEdge": 0.0604,
+              "netEdge": 0.0272
+            }
+          }
+        },
+        {
+          "id": "sum-band:33-42",
+          "label": "33 to 42",
+          "wins": 2112,
+          "probability": 0.095566,
+          "fairOdds": 10.464015,
+          "prices": {
+            "direct": {
+              "odds": 9.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.046549
+            },
+            "club": {
+              "odds": 9.6,
+              "marginBps": 806,
+              "grossEdge": 0.08257,
+              "netEdge": 0.025907
+            },
+            "partner": {
+              "odds": 9.6,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.038285
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-exact",
+      "family": "totals-parity",
+      "name": "Exact total",
+      "description": "Rank total equals the chosen number (6..42). Extreme totals are too rare to offer.",
+      "catalogueRefs": [
+        40
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-exact:6",
+          "label": "Total 6",
+          "wins": 4,
+          "probability": 0.000181,
+          "fairOdds": 5525,
+          "prices": {
+            "direct": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "club": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "partner": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            }
+          }
+        },
+        {
+          "id": "sum-exact:7",
+          "label": "Total 7",
+          "wins": 24,
+          "probability": 0.001086,
+          "fairOdds": 920.833333,
+          "prices": {
+            "direct": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        },
+        {
+          "id": "sum-exact:8",
+          "label": "Total 8",
+          "wins": 48,
+          "probability": 0.002172,
+          "fairOdds": 460.416667,
+          "prices": {
+            "direct": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        },
+        {
+          "id": "sum-exact:9",
+          "label": "Total 9",
+          "wins": 92,
+          "probability": 0.004163,
+          "fairOdds": 240.217391,
+          "prices": {
+            "direct": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.07389
+            },
+            "club": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.043483
+            },
+            "partner": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.057814
+            }
+          }
+        },
+        {
+          "id": "sum-exact:10",
+          "label": "Total 10",
+          "wins": 136,
+          "probability": 0.006154,
+          "fairOdds": 162.5,
+          "prices": {
+            "direct": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.07275
+            },
+            "club": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.04275
+            },
+            "partner": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.057
+            }
+          }
+        },
+        {
+          "id": "sum-exact:11",
+          "label": "Total 11",
+          "wins": 200,
+          "probability": 0.00905,
+          "fairOdds": 110.5,
+          "prices": {
+            "direct": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.07427
+            },
+            "club": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.043727
+            },
+            "partner": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.058086
+            }
+          }
+        },
+        {
+          "id": "sum-exact:12",
+          "label": "Total 12",
+          "wins": 268,
+          "probability": 0.012127,
+          "fairOdds": 82.462687,
+          "prices": {
+            "direct": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.060587
+            },
+            "club": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.034931
+            },
+            "partner": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.048312
+            }
+          }
+        },
+        {
+          "id": "sum-exact:13",
+          "label": "Total 13",
+          "wins": 352,
+          "probability": 0.015928,
+          "fairOdds": 62.784091,
+          "prices": {
+            "direct": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.058813
+            },
+            "club": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.033791
+            },
+            "partner": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.047045
+            }
+          }
+        },
+        {
+          "id": "sum-exact:14",
+          "label": "Total 14",
+          "wins": 440,
+          "probability": 0.01991,
+          "fairOdds": 50.227273,
+          "prices": {
+            "direct": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.061601
+            },
+            "club": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.035583
+            },
+            "partner": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.049036
+            }
+          }
+        },
+        {
+          "id": "sum-exact:15",
+          "label": "Total 15",
+          "wins": 548,
+          "probability": 0.024796,
+          "fairOdds": 40.328467,
+          "prices": {
+            "direct": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.059542
+            },
+            "club": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.034259
+            },
+            "partner": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.047566
+            }
+          }
+        },
+        {
+          "id": "sum-exact:16",
+          "label": "Total 16",
+          "wins": 656,
+          "probability": 0.029683,
+          "fairOdds": 33.689024,
+          "prices": {
+            "direct": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.060207
+            },
+            "club": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.034687
+            },
+            "partner": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.048041
+            }
+          }
+        },
+        {
+          "id": "sum-exact:17",
+          "label": "Total 17",
+          "wins": 784,
+          "probability": 0.035475,
+          "fairOdds": 28.188776,
+          "prices": {
+            "direct": {
+              "odds": 25.75,
+              "marginBps": 800,
+              "grossEdge": 0.086516,
+              "netEdge": 0.049311
+            },
+            "club": {
+              "odds": 25.75,
+              "marginBps": 806,
+              "grossEdge": 0.086516,
+              "netEdge": 0.027682
+            },
+            "partner": {
+              "odds": 25.75,
+              "marginBps": 800,
+              "grossEdge": 0.086516,
+              "netEdge": 0.040258
+            }
+          }
+        },
+        {
+          "id": "sum-exact:18",
+          "label": "Total 18",
+          "wins": 916,
+          "probability": 0.041448,
+          "fairOdds": 24.126638,
+          "prices": {
+            "direct": {
+              "odds": 22,
+              "marginBps": 800,
+              "grossEdge": 0.088145,
+              "netEdge": 0.050451
+            },
+            "club": {
+              "odds": 22,
+              "marginBps": 806,
+              "grossEdge": 0.088145,
+              "netEdge": 0.028415
+            },
+            "partner": {
+              "odds": 22,
+              "marginBps": 800,
+              "grossEdge": 0.088145,
+              "netEdge": 0.041072
+            }
+          }
+        },
+        {
+          "id": "sum-exact:19",
+          "label": "Total 19",
+          "wins": 1040,
+          "probability": 0.047059,
+          "fairOdds": 21.25,
+          "prices": {
+            "direct": {
+              "odds": 19.5,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.046397
+            },
+            "club": {
+              "odds": 19.5,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 19.5,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.038176
+            }
+          }
+        },
+        {
+          "id": "sum-exact:20",
+          "label": "Total 20",
+          "wins": 1128,
+          "probability": 0.051041,
+          "fairOdds": 19.592199,
+          "prices": {
+            "direct": {
+              "odds": 18,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.045637
+            },
+            "club": {
+              "odds": 18,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 18,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.037633
+            }
+          }
+        },
+        {
+          "id": "sum-exact:21",
+          "label": "Total 21",
+          "wins": 1212,
+          "probability": 0.054842,
+          "fairOdds": 18.234323,
+          "prices": {
+            "direct": {
+              "odds": 16.7,
+              "marginBps": 800,
+              "grossEdge": 0.084145,
+              "netEdge": 0.047651
+            },
+            "club": {
+              "odds": 16.7,
+              "marginBps": 806,
+              "grossEdge": 0.084145,
+              "netEdge": 0.026615
+            },
+            "partner": {
+              "odds": 16.7,
+              "marginBps": 800,
+              "grossEdge": 0.084145,
+              "netEdge": 0.039072
+            }
+          }
+        },
+        {
+          "id": "sum-exact:22",
+          "label": "Total 22",
+          "wins": 1256,
+          "probability": 0.056833,
+          "fairOdds": 17.595541,
+          "prices": {
+            "direct": {
+              "odds": 16.1,
+              "marginBps": 800,
+              "grossEdge": 0.084995,
+              "netEdge": 0.048247
+            },
+            "club": {
+              "odds": 16.1,
+              "marginBps": 806,
+              "grossEdge": 0.084995,
+              "netEdge": 0.026998
+            },
+            "partner": {
+              "odds": 16.1,
+              "marginBps": 800,
+              "grossEdge": 0.084995,
+              "netEdge": 0.039498
+            }
+          }
+        },
+        {
+          "id": "sum-exact:23",
+          "label": "Total 23",
+          "wins": 1296,
+          "probability": 0.058643,
+          "fairOdds": 17.052469,
+          "prices": {
+            "direct": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.048374
+            },
+            "club": {
+              "odds": 15.6,
+              "marginBps": 806,
+              "grossEdge": 0.085176,
+              "netEdge": 0.027079
+            },
+            "partner": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.039588
+            }
+          }
+        },
+        {
+          "id": "sum-exact:24",
+          "label": "Total 24",
+          "wins": 1300,
+          "probability": 0.058824,
+          "fairOdds": 17,
+          "prices": {
+            "direct": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.046397
+            },
+            "club": {
+              "odds": 15.6,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.038176
+            }
+          }
+        },
+        {
+          "id": "sum-exact:25",
+          "label": "Total 25",
+          "wins": 1296,
+          "probability": 0.058643,
+          "fairOdds": 17.052469,
+          "prices": {
+            "direct": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.048374
+            },
+            "club": {
+              "odds": 15.6,
+              "marginBps": 806,
+              "grossEdge": 0.085176,
+              "netEdge": 0.027079
+            },
+            "partner": {
+              "odds": 15.6,
+              "marginBps": 800,
+              "grossEdge": 0.085176,
+              "netEdge": 0.039588
+            }
+          }
+        },
+        {
+          "id": "sum-exact:26",
+          "label": "Total 26",
+          "wins": 1256,
+          "probability": 0.056833,
+          "fairOdds": 17.595541,
+          "prices": {
+            "direct": {
+              "odds": 16.1,
+              "marginBps": 800,
+              "grossEdge": 0.084995,
+              "netEdge": 0.048247
+            },
+            "club": {
+              "odds": 16.1,
+              "marginBps": 806,
+              "grossEdge": 0.084995,
+              "netEdge": 0.026998
+            },
+            "partner": {
+              "odds": 16.1,
+              "marginBps": 800,
+              "grossEdge": 0.084995,
+              "netEdge": 0.039498
+            }
+          }
+        },
+        {
+          "id": "sum-exact:27",
+          "label": "Total 27",
+          "wins": 1212,
+          "probability": 0.054842,
+          "fairOdds": 18.234323,
+          "prices": {
+            "direct": {
+              "odds": 16.7,
+              "marginBps": 800,
+              "grossEdge": 0.084145,
+              "netEdge": 0.047651
+            },
+            "club": {
+              "odds": 16.7,
+              "marginBps": 806,
+              "grossEdge": 0.084145,
+              "netEdge": 0.026615
+            },
+            "partner": {
+              "odds": 16.7,
+              "marginBps": 800,
+              "grossEdge": 0.084145,
+              "netEdge": 0.039072
+            }
+          }
+        },
+        {
+          "id": "sum-exact:28",
+          "label": "Total 28",
+          "wins": 1128,
+          "probability": 0.051041,
+          "fairOdds": 19.592199,
+          "prices": {
+            "direct": {
+              "odds": 18,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.045637
+            },
+            "club": {
+              "odds": 18,
+              "marginBps": 806,
+              "grossEdge": 0.081267,
+              "netEdge": 0.02532
+            },
+            "partner": {
+              "odds": 18,
+              "marginBps": 800,
+              "grossEdge": 0.081267,
+              "netEdge": 0.037633
+            }
+          }
+        },
+        {
+          "id": "sum-exact:29",
+          "label": "Total 29",
+          "wins": 1040,
+          "probability": 0.047059,
+          "fairOdds": 21.25,
+          "prices": {
+            "direct": {
+              "odds": 19.5,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.046397
+            },
+            "club": {
+              "odds": 19.5,
+              "marginBps": 806,
+              "grossEdge": 0.082353,
+              "netEdge": 0.025809
+            },
+            "partner": {
+              "odds": 19.5,
+              "marginBps": 800,
+              "grossEdge": 0.082353,
+              "netEdge": 0.038176
+            }
+          }
+        },
+        {
+          "id": "sum-exact:30",
+          "label": "Total 30",
+          "wins": 916,
+          "probability": 0.041448,
+          "fairOdds": 24.126638,
+          "prices": {
+            "direct": {
+              "odds": 22,
+              "marginBps": 800,
+              "grossEdge": 0.088145,
+              "netEdge": 0.050451
+            },
+            "club": {
+              "odds": 22,
+              "marginBps": 806,
+              "grossEdge": 0.088145,
+              "netEdge": 0.028415
+            },
+            "partner": {
+              "odds": 22,
+              "marginBps": 800,
+              "grossEdge": 0.088145,
+              "netEdge": 0.041072
+            }
+          }
+        },
+        {
+          "id": "sum-exact:31",
+          "label": "Total 31",
+          "wins": 784,
+          "probability": 0.035475,
+          "fairOdds": 28.188776,
+          "prices": {
+            "direct": {
+              "odds": 25.75,
+              "marginBps": 800,
+              "grossEdge": 0.086516,
+              "netEdge": 0.049311
+            },
+            "club": {
+              "odds": 25.75,
+              "marginBps": 806,
+              "grossEdge": 0.086516,
+              "netEdge": 0.027682
+            },
+            "partner": {
+              "odds": 25.75,
+              "marginBps": 800,
+              "grossEdge": 0.086516,
+              "netEdge": 0.040258
+            }
+          }
+        },
+        {
+          "id": "sum-exact:32",
+          "label": "Total 32",
+          "wins": 656,
+          "probability": 0.029683,
+          "fairOdds": 33.689024,
+          "prices": {
+            "direct": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.060207
+            },
+            "club": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.034687
+            },
+            "partner": {
+              "odds": 30.25,
+              "marginBps": 1000,
+              "grossEdge": 0.102081,
+              "netEdge": 0.048041
+            }
+          }
+        },
+        {
+          "id": "sum-exact:33",
+          "label": "Total 33",
+          "wins": 548,
+          "probability": 0.024796,
+          "fairOdds": 40.328467,
+          "prices": {
+            "direct": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.059542
+            },
+            "club": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.034259
+            },
+            "partner": {
+              "odds": 36.25,
+              "marginBps": 1000,
+              "grossEdge": 0.101131,
+              "netEdge": 0.047566
+            }
+          }
+        },
+        {
+          "id": "sum-exact:34",
+          "label": "Total 34",
+          "wins": 440,
+          "probability": 0.01991,
+          "fairOdds": 50.227273,
+          "prices": {
+            "direct": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.061601
+            },
+            "club": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.035583
+            },
+            "partner": {
+              "odds": 45,
+              "marginBps": 1000,
+              "grossEdge": 0.104072,
+              "netEdge": 0.049036
+            }
+          }
+        },
+        {
+          "id": "sum-exact:35",
+          "label": "Total 35",
+          "wins": 352,
+          "probability": 0.015928,
+          "fairOdds": 62.784091,
+          "prices": {
+            "direct": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.058813
+            },
+            "club": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.033791
+            },
+            "partner": {
+              "odds": 56.5,
+              "marginBps": 1000,
+              "grossEdge": 0.10009,
+              "netEdge": 0.047045
+            }
+          }
+        },
+        {
+          "id": "sum-exact:36",
+          "label": "Total 36",
+          "wins": 268,
+          "probability": 0.012127,
+          "fairOdds": 82.462687,
+          "prices": {
+            "direct": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.060587
+            },
+            "club": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.034931
+            },
+            "partner": {
+              "odds": 74,
+              "marginBps": 1000,
+              "grossEdge": 0.102624,
+              "netEdge": 0.048312
+            }
+          }
+        },
+        {
+          "id": "sum-exact:37",
+          "label": "Total 37",
+          "wins": 200,
+          "probability": 0.00905,
+          "fairOdds": 110.5,
+          "prices": {
+            "direct": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.07427
+            },
+            "club": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.043727
+            },
+            "partner": {
+              "odds": 97,
+              "marginBps": 1200,
+              "grossEdge": 0.122172,
+              "netEdge": 0.058086
+            }
+          }
+        },
+        {
+          "id": "sum-exact:38",
+          "label": "Total 38",
+          "wins": 136,
+          "probability": 0.006154,
+          "fairOdds": 162.5,
+          "prices": {
+            "direct": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.07275
+            },
+            "club": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.04275
+            },
+            "partner": {
+              "odds": 143,
+              "marginBps": 1200,
+              "grossEdge": 0.12,
+              "netEdge": 0.057
+            }
+          }
+        },
+        {
+          "id": "sum-exact:39",
+          "label": "Total 39",
+          "wins": 92,
+          "probability": 0.004163,
+          "fairOdds": 240.217391,
+          "prices": {
+            "direct": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.07389
+            },
+            "club": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.043483
+            },
+            "partner": {
+              "odds": 211,
+              "marginBps": 1200,
+              "grossEdge": 0.121629,
+              "netEdge": 0.057814
+            }
+          }
+        },
+        {
+          "id": "sum-exact:40",
+          "label": "Total 40",
+          "wins": 48,
+          "probability": 0.002172,
+          "fairOdds": 460.416667,
+          "prices": {
+            "direct": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        },
+        {
+          "id": "sum-exact:41",
+          "label": "Total 41",
+          "wins": 24,
+          "probability": 0.001086,
+          "fairOdds": 920.833333,
+          "prices": {
+            "direct": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 782,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        },
+        {
+          "id": "sum-exact:42",
+          "label": "Total 42",
+          "wins": 4,
+          "probability": 0.000181,
+          "fairOdds": 5525,
+          "prices": {
+            "direct": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "club": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            },
+            "partner": {
+              "offered": false,
+              "reason": "fair odds 5525 above cap 1000"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sum-parity",
+      "family": "totals-parity",
+      "name": "Total odd / even",
+      "description": "Parity of the rank total.",
+      "catalogueRefs": [
+        41,
+        42
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "sum-parity:odd",
+          "label": "Odd total",
+          "wins": 11096,
+          "probability": 0.502081,
+          "fairOdds": 1.991709,
+          "prices": {
+            "direct": {
+              "odds": 1.88,
+              "marginBps": 518,
+              "grossEdge": 0.056087,
+              "netEdge": 0.028011
+            },
+            "club": {
+              "odds": 1.83,
+              "marginBps": 806,
+              "grossEdge": 0.081191,
+              "netEdge": 0.025286
+            },
+            "partner": {
+              "odds": 1.88,
+              "marginBps": 560,
+              "grossEdge": 0.056087,
+              "netEdge": 0.025043
+            }
+          }
+        },
+        {
+          "id": "sum-parity:even",
+          "label": "Even total",
+          "wins": 11004,
+          "probability": 0.497919,
+          "fairOdds": 2.008361,
+          "prices": {
+            "direct": {
+              "odds": 1.9,
+              "marginBps": 518,
+              "grossEdge": 0.053955,
+              "netEdge": 0.026518
+            },
+            "club": {
+              "odds": 1.84,
+              "marginBps": 806,
+              "grossEdge": 0.08383,
+              "netEdge": 0.026473
+            },
+            "partner": {
+              "odds": 1.89,
+              "marginBps": 560,
+              "grossEdge": 0.058934,
+              "netEdge": 0.026467
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "odd-count",
+      "family": "totals-parity",
+      "name": "Number of odd-ranked cards",
+      "description": "Exactly N cards with an odd rank value (3, 5, 7, 9, J=11, K=13).",
+      "catalogueRefs": [
+        43
+      ],
+      "firstRelease": false,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "odd-count:0",
+          "label": "Exactly 0 odd",
+          "wins": 3276,
+          "probability": 0.148235,
+          "fairOdds": 6.746032,
+          "prices": {
+            "direct": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.035032
+            },
+            "club": {
+              "odds": 6.2,
+              "marginBps": 806,
+              "grossEdge": 0.080941,
+              "netEdge": 0.025174
+            },
+            "partner": {
+              "odds": 6.3,
+              "marginBps": 600,
+              "grossEdge": 0.066118,
+              "netEdge": 0.030059
+            }
+          }
+        },
+        {
+          "id": "odd-count:1",
+          "label": "Exactly 1 odd",
+          "wins": 9072,
+          "probability": 0.410498,
+          "fairOdds": 2.436067,
+          "prices": {
+            "direct": {
+              "odds": 2.3,
+              "marginBps": 518,
+              "grossEdge": 0.055855,
+              "netEdge": 0.027849
+            },
+            "club": {
+              "odds": 2.23,
+              "marginBps": 806,
+              "grossEdge": 0.08459,
+              "netEdge": 0.026816
+            },
+            "partner": {
+              "odds": 2.29,
+              "marginBps": 560,
+              "grossEdge": 0.05996,
+              "netEdge": 0.02698
+            }
+          }
+        },
+        {
+          "id": "odd-count:2",
+          "label": "Exactly 2 odd",
+          "wins": 7728,
+          "probability": 0.349683,
+          "fairOdds": 2.859731,
+          "prices": {
+            "direct": {
+              "odds": 2.71,
+              "marginBps": 518,
+              "grossEdge": 0.052358,
+              "netEdge": 0.025401
+            },
+            "club": {
+              "odds": 2.62,
+              "marginBps": 806,
+              "grossEdge": 0.08383,
+              "netEdge": 0.026473
+            },
+            "partner": {
+              "odds": 2.69,
+              "marginBps": 560,
+              "grossEdge": 0.059352,
+              "netEdge": 0.026676
+            }
+          }
+        },
+        {
+          "id": "odd-count:3",
+          "label": "Exactly 3 odd",
+          "wins": 2024,
+          "probability": 0.091584,
+          "fairOdds": 10.918972,
+          "prices": {
+            "direct": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.047664
+            },
+            "club": {
+              "odds": 10,
+              "marginBps": 806,
+              "grossEdge": 0.084163,
+              "netEdge": 0.026623
+            },
+            "partner": {
+              "odds": 10,
+              "marginBps": 800,
+              "grossEdge": 0.084163,
+              "netEdge": 0.039081
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "combo",
+      "family": "combined",
+      "name": "Combined conditions",
+      "description": "Both conditions must hold. Probabilities are counted jointly over all flops.",
+      "catalogueRefs": [
+        44,
+        45,
+        46
+      ],
+      "firstRelease": false,
+      "exhaustive": false,
+      "selections": [
+        {
+          "id": "combo:pair-all-red",
+          "label": "Pair and all red",
+          "wins": 312,
+          "probability": 0.014118,
+          "fairOdds": 70.833333,
+          "prices": {
+            "direct": {
+              "odds": 63.5,
+              "marginBps": 1000,
+              "grossEdge": 0.103529,
+              "netEdge": 0.061221
+            },
+            "club": {
+              "odds": 63.5,
+              "marginBps": 1000,
+              "grossEdge": 0.103529,
+              "netEdge": 0.035338
+            },
+            "partner": {
+              "odds": 63.5,
+              "marginBps": 1000,
+              "grossEdge": 0.103529,
+              "netEdge": 0.048765
+            }
+          }
+        },
+        {
+          "id": "combo:rainbow-below-9",
+          "label": "Rainbow and all below 9",
+          "wins": 1372,
+          "probability": 0.062081,
+          "fairOdds": 16.107872,
+          "prices": {
+            "direct": {
+              "odds": 14.8,
+              "marginBps": 800,
+              "grossEdge": 0.081195,
+              "netEdge": 0.045586
+            },
+            "club": {
+              "odds": 14.8,
+              "marginBps": 806,
+              "grossEdge": 0.081195,
+              "netEdge": 0.025288
+            },
+            "partner": {
+              "odds": 14.8,
+              "marginBps": 800,
+              "grossEdge": 0.081195,
+              "netEdge": 0.037597
+            }
+          }
+        },
+        {
+          "id": "combo:straight-rainbow",
+          "label": "Straight and rainbow",
+          "wins": 288,
+          "probability": 0.013032,
+          "fairOdds": 76.736111,
+          "prices": {
+            "direct": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.05932
+            },
+            "club": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.034117
+            },
+            "partner": {
+              "odds": 69,
+              "marginBps": 1000,
+              "grossEdge": 0.100814,
+              "netEdge": 0.047407
+            }
+          }
+        },
+        {
+          "id": "combo:monotone-face",
+          "label": "Monotone with a face card",
+          "wins": 664,
+          "probability": 0.030045,
+          "fairOdds": 33.283133,
+          "prices": {
+            "direct": {
+              "odds": 30.5,
+              "marginBps": 800,
+              "grossEdge": 0.08362,
+              "netEdge": 0.047284
+            },
+            "club": {
+              "odds": 30.5,
+              "marginBps": 806,
+              "grossEdge": 0.08362,
+              "netEdge": 0.026379
+            },
+            "partner": {
+              "odds": 30.5,
+              "marginBps": 800,
+              "grossEdge": 0.08362,
+              "netEdge": 0.03881
+            }
+          }
+        },
+        {
+          "id": "combo:pair-face",
+          "label": "Pair and at least one face card",
+          "wins": 1584,
+          "probability": 0.071674,
+          "fairOdds": 13.95202,
+          "prices": {
+            "direct": {
+              "odds": 12.8,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.046549
+            },
+            "club": {
+              "odds": 12.8,
+              "marginBps": 806,
+              "grossEdge": 0.08257,
+              "netEdge": 0.025907
+            },
+            "partner": {
+              "odds": 12.8,
+              "marginBps": 800,
+              "grossEdge": 0.08257,
+              "netEdge": 0.038285
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

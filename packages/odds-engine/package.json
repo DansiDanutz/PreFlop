@@ -1,0 +1,31 @@
+{
+  "name": "@preflop/odds-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Exact flop probabilities, house-edge pricing, net-EV economics, exposure and settlement for PreFlop",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "book": "tsx scripts/generate-book.ts",
+    "smoke": "node -e \"import('@preflop/odds-engine').then(m => { if (m.FLOP_COUNT !== 22100) process.exit(1); console.log('import ok'); })\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ]
+}
