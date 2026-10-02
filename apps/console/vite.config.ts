@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), cspMetaPlugin('console')],
   server: { port: 5174 },
   build: {
+    // Fonts stay files (never data: URIs), so the CSP's font-src 'self' needs no data:.
+    assetsInlineLimit: (file: string) => (/\.woff2?$/.test(file) ? false : undefined),
     rollupOptions: {
       output: {
         manualChunks: {
