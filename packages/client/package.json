@@ -1,0 +1,10 @@
+{
+  "name": "@preflop/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed browser/Node client for the PreFlop API (REST + WebSocket stream)",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "devDependencies": { "typescript": "^5.7.0" }
+}

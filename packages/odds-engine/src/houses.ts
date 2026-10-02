@@ -46,13 +46,10 @@ export function platformFeeMinor(mode: PlayMode, stakeMinor: number, fee: Platfo
   return Math.min(stakeMinor, Math.max(fee.minPerBetMinor, (fee.fixedPerBetMinor ?? 0) + pct));
 }
 
-export interface BetFlowInput {
+interface BetFlowBase {
   readonly mode: PlayMode;
   /** Settlement currency; must belong to the mode (e.g. USDT or USDC in real-crypto). */
   readonly currency: string;
-  readonly house: Exclude<HouseKind, 'pool'>;
-  /** The organizer's id when house = organizer. */
-  readonly organizerId?: string;
   readonly playerId: string;
   readonly stakeMinor: number;
   readonly oddsCenti: number;
@@ -60,6 +57,18 @@ export interface BetFlowInput {
   readonly platformFee?: PlatformFee;
   /** Required in diamonds mode: the room's rules (rake and its predefined shares). */
   readonly diamondRules?: DiamondRules;
+}
+
+/** Who pays the winnings. An organizer house must always name its organizer — there is no shared default. */
+export type BetFlowInput =
+  | (BetFlowBase & { readonly house: 'preflop' })
+  | (BetFlowBase & { readonly house: 'organizer'; readonly organizerId: string });
+
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+/** Account owners are non-empty ids without the ':' separator; 'PreFlop' is reserved. */
+export function assertOwnerId(id: unknown, what: string): asserts id is string {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new RangeError(`${what} must be a non-empty id (letters, digits, _ . -), got ${JSON.stringify(id)}`);
+  if (id === 'PreFlop') throw new RangeError(`${what} cannot be the reserved id 'PreFlop'`);
 }
 
 /**
@@ -71,9 +80,11 @@ export interface BetFlowInput {
  */
 export function betPostings(b: BetFlowInput): Posting[] {
   assertHouseAllowed(b.mode, b.house);
+  assertOwnerId(b.playerId, 'playerId');
+  if (b.house === 'organizer') assertOwnerId(b.organizerId, 'organizerId');
   const acct = (owner: string, purpose: string) => account(owner, purpose, b.mode, b.currency);
   const player = acct(b.playerId, 'wallet');
-  const house = b.house === 'preflop' ? acct('PreFlop', 'bankroll') : acct(b.organizerId ?? 'organizer', 'collateral');
+  const house = b.house === 'preflop' ? acct('PreFlop', 'bankroll') : acct(b.organizerId, 'collateral');
   const out: Posting[] = [{ from: player, to: house, amountMinor: b.stakeMinor, memo: 'stake' }];
 
   if (b.mode === 'diamonds') {
@@ -113,33 +124,104 @@ export interface OrganizerHouseConfig {
   readonly platformFee: PlatformFee;
   /** Share of the organizer's GGR owed to the provider club (bps). */
   readonly providerShareBps: number;
-  /** Typical stake, used to evaluate fixed / minimum fees per bet. */
-  readonly typicalStakeMinor: number;
+  /**
+   * Smallest stake the room accepts. PreFlop's fee has a fixed minimum per bet, so the fee
+   * RATE is highest at the smallest stake: the organizer's edge is validated at this stake,
+   * which makes it hold for every accepted stake. Bets below it must be refused (assertOrganizerStake).
+   */
+  readonly minStakeMinor: number;
+  /** Typical stake — reported as a forecast only, never used to admit a configuration. */
+  readonly typicalStakeMinor?: number;
 }
 
 export interface OrganizerHouseCheck {
   readonly ok: boolean;
-  /** Organizer's expected value per unit staked after PreFlop's fee and the provider share. */
+  /**
+   * Organizer's guaranteed EV per unit staked: the margin after the provider share, minus a
+   * PROVEN upper bound on PreFlop's fee rate over every stake the room accepts.
+   */
   readonly organizerEv: number;
+  /** Proven upper bound of fee / stake for every stake >= minStakeMinor (see feeRateUpperBound). */
   readonly platformFeeRate: number;
+  /** Forecast at the typical stake, if one was given (never used to admit a configuration). */
+  readonly typicalEv?: number;
   readonly problems: readonly string[];
 }
 
 /**
+ * Upper bound of platformFeeMinor(stake) / stake over ALL stakes >= minStake.
+ *
+ * Integer flooring makes the fee rate discontinuous (e.g. 150 bps with a 2-unit minimum: the fee
+ * is 2 at 199 but 3 at 200), so one sample at the minimum stake is not the maximum (audit F10,
+ * re-audit of 8cb639b). For s >= minStake:
+ *   fee(s) <= max(minPerBet, fixed + s·bps/10000)
+ *   fee(s)/s <= max(minPerBet/minStake, fixed/minStake + bps/10000)
+ * and the fee never exceeds the stake, so the bound is also capped at 1.
+ */
+export function feeRateUpperBound(mode: PlayMode, minStakeMinor: number, fee: PlatformFee): number {
+  if (!MODES[mode].feesApply) return 0;
+  const fixed = fee.fixedPerBetMinor ?? 0;
+  return Math.min(1, Math.max(fee.minPerBetMinor / minStakeMinor, fixed / minStakeMinor + fee.turnoverBps / 10000));
+}
+
+/**
  * An organizer may only be the house if its own book has the edge after paying
- * PreFlop and the provider club. Rejects configurations that would lose money on average.
+ * PreFlop and the provider club, for EVERY stake the room accepts. Rejects configurations
+ * that could lose money on average at some admissible stake.
  */
 export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseCheck {
   const problems: string[] = [];
   if (!MODES[c.mode].houses.includes('organizer')) problems.push(`mode ${c.mode} does not allow an organizer house`);
   if (c.marginBps < GLOBAL_RULES.organizerMinMarginBps)
     problems.push(`margin ${c.marginBps} bps is below the global minimum ${GLOBAL_RULES.organizerMinMarginBps} bps`);
-  const margin = c.marginBps / 10000;
-  const feeRate = c.typicalStakeMinor > 0 ? platformFeeMinor(c.mode, c.typicalStakeMinor, c.platformFee) / c.typicalStakeMinor : 0;
-  const organizerEv = margin * (1 - c.providerShareBps / 10000) - feeRate;
-  if (organizerEv * 10000 < GLOBAL_RULES.organizerMinEvBps)
-    problems.push(`organizer EV ${(organizerEv * 100).toFixed(2)}% is below the minimum ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}%`);
-  return { ok: problems.length === 0, organizerEv, platformFeeRate: feeRate, problems };
+  if (!Number.isSafeInteger(c.minStakeMinor) || c.minStakeMinor <= 0) problems.push('minStakeMinor must be a positive integer');
+  if (!Number.isInteger(c.providerShareBps) || c.providerShareBps < 0 || c.providerShareBps > 10000) problems.push('providerShareBps must be 0–10000');
+  const kept = (c.marginBps / 10000) * (1 - c.providerShareBps / 10000);
+  const minStake = Number.isSafeInteger(c.minStakeMinor) && c.minStakeMinor > 0 ? c.minStakeMinor : 1;
+  const feeRate = feeRateUpperBound(c.mode, minStake, c.platformFee);
+  const ev = kept - feeRate;
+  if (ev * 10000 < GLOBAL_RULES.organizerMinEvBps)
+    problems.push(`organizer EV is guaranteed only down to ${(ev * 100).toFixed(4)}% over stakes >= ${minStake} (fee rate up to ${(feeRate * 100).toFixed(4)}%), below the required ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% — raise the margin or the minimum stake`);
+  const typical = c.typicalStakeMinor && c.typicalStakeMinor > 0
+    ? kept - platformFeeMinor(c.mode, c.typicalStakeMinor, c.platformFee) / c.typicalStakeMinor
+    : undefined;
+  return { ok: problems.length === 0, organizerEv: ev, platformFeeRate: feeRate, ...(typical !== undefined ? { typicalEv: typical } : {}), problems };
+}
+
+/** Refuses a bet below the room's validated minimum stake. */
+export function assertOrganizerStake(c: Pick<OrganizerHouseConfig, 'minStakeMinor'>, stakeMinor: number): void {
+  if (!Number.isSafeInteger(stakeMinor) || stakeMinor < c.minStakeMinor) throw new RangeError(`stake ${stakeMinor} is below the room's minimum ${c.minStakeMinor}`);
+}
+
+/**
+ * Exact organizer EV of ONE bet, in minor units, using the exact win count over 22,100 flops,
+ * the integer payout and the integer fee actually charged:
+ *   EV = (1 − providerShare)·(stake − p·payout) − fee
+ * Returned as a rational (numerator / 22100) to avoid rounding.
+ */
+export function organizerBetEvNumerator(
+  c: Pick<OrganizerHouseConfig, 'mode' | 'platformFee' | 'providerShareBps'>,
+  stats: Pick<SelectionStats, 'wins'>, stakeMinor: number, oddsCenti: number,
+): { numerator: bigint; denominator: bigint } {
+  const payout = BigInt(payoutMinor(stakeMinor, oddsCenti));
+  const fee = BigInt(platformFeeMinor(c.mode, stakeMinor, c.platformFee));
+  const N = 22100n;
+  // GGR·N = stake·N − wins·payout; organizer keeps (10000 − share)/10000 of it.
+  const ggrN = BigInt(stakeMinor) * N - BigInt(stats.wins) * payout;
+  return { numerator: ggrN * BigInt(10000 - c.providerShareBps) - fee * N * 10000n, denominator: N * 10000n };
+}
+
+/**
+ * Admission check for one organizer-house bet: the stake is at least the room minimum AND the
+ * exact EV of this bet (actual odds, payout rounding and fee) meets the global minimum EV rate.
+ * The configuration bound makes this pass for well-formed rooms; this check is the backstop.
+ */
+export function assertOrganizerBet(c: OrganizerHouseConfig, stats: Pick<SelectionStats, 'wins'>, stakeMinor: number, oddsCenti: number): void {
+  assertOrganizerStake(c, stakeMinor);
+  const { numerator, denominator } = organizerBetEvNumerator(c, stats, stakeMinor, oddsCenti);
+  // numerator/denominator >= stake · minEvBps / 10000
+  if (numerator * 10000n < BigInt(stakeMinor) * BigInt(GLOBAL_RULES.organizerMinEvBps) * denominator)
+    throw new RangeError(`organizer EV of this bet is below ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% of the stake`);
 }
 
 /**
@@ -149,13 +231,22 @@ export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseC
  * betPostings() move the money, and this class is told the current ledger balance with
  * syncBalance(). It never changes the balance itself, so results are never counted twice.
  *
- * Every open round reserves its worst case: the lowest house result over all 22,100 flops,
- * including certain costs such as PreFlop's platform fee. A bet is refused if the total
- * reserved would exceed the balance, so the organizer can always pay its winners and fees
- * and PreFlop never carries an organizer's risk.
+ * Every open round reserves its worst-case OUTGO: the largest total payout over all 22,100
+ * flops plus certain costs such as PreFlop's platform fee (= stakes + costs − minNet). The
+ * ledger balance already contains the round's stakes once they are posted, so reserving only
+ * the net loss (−minNet) would under-reserve by the stakes (found while wiring the backend:
+ * €850 + a €100 stake could have accepted a bet paying €1,000). A bet is refused if the total
+ * reserved would exceed the balance, so the organizer can always pay its winners and fees and
+ * PreFlop never carries an organizer's risk. Before the stake is posted and synced the check is
+ * conservative by that stake, never optimistic.
  */
 export class OrganizerCollateral {
   private readonly rounds = new Map<string, { exposure: RoundExposure; certainCostsMinor: number }>();
+
+  /** Worst-case outgo of one round: max payout over all flops + certain costs (stakes − minNet + costs). */
+  private static reserveOf(exposure: RoundExposure, certainCosts: number, minNet = exposure.minNet().netMinor, stakes = exposure.totalStakesMinor): number {
+    return Math.max(0, stakes - minNet + certainCosts);
+  }
 
   constructor(private balanceMinor: number) {
     if (!(balanceMinor >= 0)) throw new RangeError('collateral must be >= 0');
@@ -171,14 +262,10 @@ export class OrganizerCollateral {
     this.balanceMinor = ledgerBalanceMinor;
   }
 
-  private static reserveFor(minNet: number, certainCosts: number): number {
-    return Math.max(0, certainCosts - minNet);
-  }
-
   /** Total reserved over all open rounds (independent tables can all lose). */
   reservedMinor(): number {
     let r = 0;
-    for (const x of this.rounds.values()) r += OrganizerCollateral.reserveFor(x.exposure.minNet().netMinor, x.certainCostsMinor);
+    for (const x of this.rounds.values()) r += OrganizerCollateral.reserveOf(x.exposure, x.certainCostsMinor);
     return r;
   }
 
@@ -196,8 +283,9 @@ export class OrganizerCollateral {
       r = { exposure: new RoundExposure(Number.MAX_SAFE_INTEGER), certainCostsMinor: 0 };
       this.rounds.set(roundId, r);
     }
-    const own = OrganizerCollateral.reserveFor(r.exposure.minNet().netMinor, r.certainCostsMinor);
-    const ownAfter = OrganizerCollateral.reserveFor(r.exposure.minNetIfAdded(stats, stakeMinor, oddsCenti), r.certainCostsMinor + certainCostMinor);
+    const own = OrganizerCollateral.reserveOf(r.exposure, r.certainCostsMinor);
+    const ownAfter = OrganizerCollateral.reserveOf(r.exposure, r.certainCostsMinor + certainCostMinor,
+      r.exposure.minNetIfAdded(stats, stakeMinor, oddsCenti), r.exposure.totalStakesMinor + stakeMinor);
     if (this.reservedMinor() - own + ownAfter > this.balanceMinor) return false;
     r.exposure.tryAdd(stats, stakeMinor, oddsCenti);
     r.certainCostsMinor += certainCostMinor;

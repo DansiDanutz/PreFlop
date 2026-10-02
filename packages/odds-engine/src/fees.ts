@@ -34,6 +34,7 @@ export function mergeRoles(roles: readonly RoleShare[]): Map<string, number> {
 /** Splits an integer amount by integer weights; the result sums exactly to `amount`. */
 export function allocateLargestRemainder<K>(amount: number, weights: ReadonlyMap<K, number>): Map<K, number> {
   if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError('amount must be a non-negative integer');
+  for (const w of weights.values()) if (!Number.isSafeInteger(w) || w < 0) throw new RangeError(`weights must be non-negative safe integers, got ${w}`);
   const totalW = [...weights.values()].reduce((a, b) => a + b, 0);
   const out = new Map<K, number>();
   if (totalW === 0) {
@@ -58,6 +59,15 @@ export function allocateLargestRemainder<K>(amount: number, weights: ReadonlyMap
   return out;
 }
 
+function assertMinorAmount(v: number, what: string): void {
+  if (!Number.isSafeInteger(v) || v < 0) throw new RangeError(`${what} must be a non-negative safe integer, got ${v}`);
+}
+
+/** A fee is a fraction of the pool: 0 ≤ feeBps ≤ 10,000 (never more than the whole pool). */
+function assertFeeBps(feeBps: number): void {
+  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10000) throw new RangeError(`fee must be an integer between 0 and 10000 bps, got ${feeBps}`);
+}
+
 export interface PoolBreakdown {
   readonly buyInsMinor: number;
   readonly feeMinor: number;
@@ -67,6 +77,8 @@ export interface PoolBreakdown {
 
 /** Applies a percentage fee (basis points of buy-ins) and allocates it by role. */
 export function poolBreakdown(buyInsMinor: number, feeBps: number, roles: readonly RoleShare[]): PoolBreakdown {
+  assertMinorAmount(buyInsMinor, 'buy-ins');
+  assertFeeBps(feeBps);
   const feeMinor = Number((BigInt(buyInsMinor) * BigInt(feeBps)) / 10000n);
   const feeByParty = allocateLargestRemainder(feeMinor, mergeRoles(roles));
   return { buyInsMinor, feeMinor, netPrizePoolMinor: buyInsMinor - feeMinor, feeByParty };
@@ -91,7 +103,16 @@ export interface ParimutuelResult {
  * to their stakes.
  */
 export function settleParimutuel(bets: readonly PoolBet[], winningSelectionIds: ReadonlySet<string>, feeBps: number): ParimutuelResult {
-  const total = bets.reduce((a, b) => a + b.stakeMinor, 0);
+  assertFeeBps(feeBps);
+  const ids = new Set<string>();
+  let total = 0;
+  for (const b of bets) {
+    if (ids.has(b.betId)) throw new RangeError(`duplicate bet id ${b.betId}`);
+    ids.add(b.betId);
+    assertMinorAmount(b.stakeMinor, 'stake');
+    total += b.stakeMinor;
+    if (!Number.isSafeInteger(total)) throw new RangeError('pool total exceeds the safe integer range');
+  }
   const winners = bets.filter((b) => winningSelectionIds.has(b.selectionId));
   if (winners.length === 0) {
     return { feeMinor: 0, payouts: new Map(bets.map((b) => [b.betId, b.stakeMinor])), refunded: true };

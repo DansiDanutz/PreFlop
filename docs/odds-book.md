@@ -53,6 +53,12 @@ Fixed costs €85,000/month − subscriptions €15,000/month (10 clubs × €1,
 | Three different ranks | 18,304 | 82.82% | 1.21 | **1.14** | 1.11 | 1.13 | 2.78% |
 | Exactly one pair | 3,744 | 16.94% | 5.90 | **5.50** | 5.40 | 5.50 | 3.65% |
 | Three of a kind | 52 | 0.24% | 425 | **361.00** | 361.00 | 361.00 | 9.42% |
+| High card: no pair, flush or straight | 16,440 | 74.39% | 1.34 | **1.27** | 1.23 | 1.26 | 2.74% |
+| Pair: two of a kind | 3,744 | 16.94% | 5.90 | **5.50** | 5.40 | 5.50 | 3.65% |
+| Flush: three of the same suit, not in sequence | 1,096 | 4.96% | 20.16 | **18.50** | 18.50 | 18.50 | 4.65% |
+| Straight: three in sequence, not all one suit | 720 | 3.26% | 30.69 | **28.00** | 28.00 | 28.00 | 5.02% |
+| Three of a kind | 52 | 0.24% | 425 | **361.00** | 361.00 | 361.00 | 9.42% |
+| Straight flush | 48 | 0.22% | 460 | **391.00** | 391.00 | 391.00 | 9.43% |
 | Rainbow (three suits) | 8,788 | 39.76% | 2.51 | **2.38** | 2.31 | 2.37 | 2.63% |
 | Two-tone (exactly two suits) | 12,168 | 55.06% | 1.82 | **1.72** | 1.66 | 1.71 | 2.58% |
 | Monotone (one suit) | 1,144 | 5.18% | 19.32 | **17.70** | 17.70 | 17.70 | 4.74% |
@@ -90,6 +96,21 @@ How many distinct ranks the flop has. _Catalogue items: 1, 2, 3._
 | Three of a kind | 52 | 0.235% | 425 | 15.00% | **361.00** | 15.06% | 9.42% |
 
 Book overround (Σ 1/odds): **106.18%**
+
+#### Flop hand — `hand-class`
+
+The best three-card poker hand the flop makes (the app's main prediction grid). Every flop is exactly one of these. _Catalogue items: 1, 2, 3, 31, 32._
+
+| Selection | Wins | Probability | Fair | Margin | Odds | Gross edge | Net EV |
+|---|---|---|---|---|---|---|---|
+| High card: no pair, flush or straight | 16440 | 74.389% | 1.34 | 5.18% | **1.27** | 5.53% | 2.74% |
+| Pair: two of a kind | 3744 | 16.941% | 5.90 | 6.00% | **5.50** | 6.82% | 3.65% |
+| Flush: three of the same suit, not in sequence | 1096 | 4.959% | 20.16 | 8.00% | **18.50** | 8.25% | 4.65% |
+| Straight: three in sequence, not all one suit | 720 | 3.258% | 30.69 | 8.00% | **28.00** | 8.78% | 5.02% |
+| Three of a kind | 52 | 0.235% | 425 | 15.00% | **361.00** | 15.06% | 9.42% |
+| Straight flush | 48 | 0.217% | 460 | 15.00% | **391.00** | 15.08% | 9.43% |
+
+Book overround (Σ 1/odds): **106.43%**
 
 #### Paired board — `paired-board`
 

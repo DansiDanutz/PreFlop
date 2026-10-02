@@ -64,27 +64,38 @@ export interface RegisteredDevice {
   readonly revoked: boolean;
 }
 
-export interface VerifyContext {
+/** What the server knows when a capture ARRIVES (authenticity is checked once, on receipt). */
+export interface AuthenticityContext {
   readonly device: RegisteredDevice | undefined;
   readonly expectedTableId: string;
   readonly expectedRoundId: string;
   readonly expectedHandNo: number;
-  /** Server-stamped times of the round's lock and deal-start. */
-  readonly lockedAt: number;
-  readonly dealStartAt: number;
-  /** Last accepted record for this device (chain continuity). */
+  /** The device checkpoint BEFORE this capture: the last authentic record's seq and hash. */
   readonly lastSeq: number;
   readonly lastHash: string;
-  /** Image bytes as uploaded, to check against the signed hash. Required: no image, no settlement. */
-  readonly image: Uint8Array | undefined;
-  /** Independent manual entries of the same flop. Both are required before settlement. */
-  readonly dealerEntry: readonly string[] | undefined;
-  readonly floorEntry: readonly string[] | undefined;
+}
+
+/** Server-stamped hand timing, used for admission and content checks. */
+export interface TimingContext {
+  readonly lockedAt: number;
+  /** Undefined while deal-start has not been recorded — a capture is never admitted before it. */
+  readonly dealStartAt: number | undefined;
   /** Largest allowed gap between deal-start and capture (ms). */
   readonly maxCaptureDelayMs?: number;
   /** Allowed clock skew between Table Box and server (ms). */
   readonly maxSkewMs?: number;
 }
+
+/** What the server knows at RESOLUTION time (after the checkpoint has already advanced). */
+export interface ContentContext extends TimingContext {
+  /** Image bytes as uploaded, to check against the signed hash. Required: no image, no settlement. */
+  readonly image: Uint8Array | undefined;
+  /** Independent manual entries of the same flop. Both are required before settlement. */
+  readonly dealerEntry: readonly string[] | undefined;
+  readonly floorEntry: readonly string[] | undefined;
+}
+
+export type VerifyContext = AuthenticityContext & ContentContext;
 
 export interface VerifyResult {
   /** 'settle' = verified and confirmed; 'review' = authentic but readings disagree; 'reject' = not trustworthy. */
@@ -102,35 +113,64 @@ const sameCards = (a: readonly string[], b: readonly string[]): boolean => {
   }
 };
 
-export function verifyCapture(s: SignedCapture, ctx: VerifyContext): VerifyResult {
+/**
+ * Stage 1 — on receipt. Is this record really from the registered Table Box, for this
+ * round, and the next link in its chain? Run ONCE, against the checkpoint before the capture.
+ */
+export function verifyCaptureAuthenticity(s: SignedCapture, ctx: AuthenticityContext): { authentic: boolean; problems: string[] } {
   const c = s.capture;
-  const reject: string[] = [];
+  const problems: string[] = [];
   const d = ctx.device;
-  if (!d) reject.push('unknown device');
+  if (!d) problems.push('unknown device');
   else {
-    if (d.revoked) reject.push('device key revoked');
-    if (d.deviceId !== c.deviceId) reject.push('device id mismatch');
-    if (d.tableId !== c.tableId) reject.push('device is not bound to this table');
+    if (d.revoked) problems.push('device key revoked');
+    if (d.deviceId !== c.deviceId) problems.push('device id mismatch');
+    if (d.tableId !== c.tableId) problems.push('device is not bound to this table');
     let sigOk = false;
     try { sigOk = verify(null, Buffer.from(canonical(c)), d.publicKey, Buffer.from(s.signature, 'base64')); } catch { sigOk = false; }
-    if (!sigOk) reject.push('invalid signature');
+    if (!sigOk) problems.push('invalid signature');
   }
-  if (c.tableId !== ctx.expectedTableId || c.roundId !== ctx.expectedRoundId || c.handNo !== ctx.expectedHandNo) reject.push('capture is for a different table, round or hand');
-  if (c.seq !== ctx.lastSeq + 1) reject.push(`sequence gap or replay (got ${c.seq}, expected ${ctx.lastSeq + 1})`);
-  if (c.prevHash !== ctx.lastHash) reject.push('hash chain broken');
-  const skew = ctx.maxSkewMs ?? 2000;
-  if (c.capturedAt + skew < ctx.dealStartAt || c.capturedAt + skew < ctx.lockedAt) reject.push('captured before the round locked / deal started');
-  if (c.capturedAt > ctx.dealStartAt + (ctx.maxCaptureDelayMs ?? 180_000) + skew) reject.push('captured too long after deal-start');
+  if (c.tableId !== ctx.expectedTableId || c.roundId !== ctx.expectedRoundId || c.handNo !== ctx.expectedHandNo) problems.push('capture is for a different table, round or hand');
+  if (c.seq !== ctx.lastSeq + 1) problems.push(`sequence gap or replay (got ${c.seq}, expected ${ctx.lastSeq + 1})`);
+  if (c.prevHash !== ctx.lastHash) problems.push('hash chain broken');
+  return { authentic: problems.length === 0, problems };
+}
+
+/**
+ * Admission — checks on the signed record itself that must pass BEFORE an authentic capture may
+ * move the round to DEALT or open betting on the next hand: deal-start recorded, capture timed
+ * after the lock and deal-start and within the deadline, and three valid, distinct cards.
+ */
+export function captureAdmissionProblems(c: FlopCapture, t: TimingContext): { problems: string[]; cards?: [Card, Card, Card] } {
+  const problems: string[] = [];
+  const skew = t.maxSkewMs ?? 2000;
+  if (t.dealStartAt === undefined) problems.push('deal-start not recorded');
+  else {
+    if (c.capturedAt + skew < t.dealStartAt || c.capturedAt + skew < t.lockedAt) problems.push('captured before the round locked / deal started');
+    if (c.capturedAt > t.dealStartAt + (t.maxCaptureDelayMs ?? 180_000) + skew) problems.push('captured too long after deal-start');
+  }
+  let cards: Card[] | undefined;
+  try {
+    if (!Array.isArray(c.cards) || c.cards.length !== 3) throw new Error('count');
+    cards = c.cards.map(parseCard);
+    if (new Set(cards.map((x) => x.id)).size !== 3) problems.push('duplicate cards in capture');
+  } catch {
+    problems.push('unreadable cards in capture');
+    cards = undefined;
+  }
+  return problems.length || !cards ? { problems } : { problems, cards: cards as [Card, Card, Card] };
+}
+
+/**
+ * Stage 2 — at resolution. Content only: admission, image hash, 3-way match. It never
+ * re-checks sequence or chain, because the device checkpoint has already moved past this record.
+ */
+export function verifyCaptureContent(c: FlopCapture, ctx: ContentContext): VerifyResult {
+  const adm = captureAdmissionProblems(c, ctx);
+  const reject = [...adm.problems];
   if (!ctx.image) reject.push('evidence image missing');
   else if (sha256Hex(ctx.image) !== c.imageSha256) reject.push('image does not match the signed hash');
-  let cards: Card[] = [];
-  try {
-    cards = c.cards.map(parseCard);
-    if (new Set(cards.map((x) => x.id)).size !== 3) reject.push('duplicate cards in capture');
-  } catch {
-    reject.push('unreadable cards in capture');
-  }
-  if (reject.length) return { decision: 'reject', problems: reject };
+  if (reject.length || !adm.cards) return { decision: 'reject', problems: reject };
 
   const review: string[] = [];
   if (!ctx.dealerEntry) review.push('dealer entry missing');
@@ -138,5 +178,13 @@ export function verifyCapture(s: SignedCapture, ctx: VerifyContext): VerifyResul
   if (!ctx.floorEntry) review.push('floor entry missing');
   else if (!sameCards(c.cards, ctx.floorEntry)) review.push('camera reading differs from floor entry');
   if (review.length) return { decision: 'review', problems: review };
-  return { decision: 'settle', problems: [], flop: flopFromCards(cards as [Card, Card, Card]) };
+  return { decision: 'settle', problems: [], flop: flopFromCards(adm.cards) };
+}
+
+/** Both stages in one call, for standalone use (e.g. audits re-verifying an archived capture). */
+export function verifyCapture(s: SignedCapture, ctx: VerifyContext): VerifyResult {
+  const a = verifyCaptureAuthenticity(s, ctx);
+  const content = verifyCaptureContent(s.capture, ctx);
+  if (!a.authentic) return { decision: 'reject', problems: [...a.problems, ...(content.decision === 'reject' ? content.problems : [])] };
+  return content;
 }

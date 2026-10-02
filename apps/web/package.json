@@ -1,0 +1,34 @@
+{
+  "name": "@preflop/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PreFlop public website and player app (one mobile-first Vite SPA)",
+  "scripts": {
+    "dev": "vite --port 5173 --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5173 --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@preflop/client": "workspace:*",
+    "@preflop/ui": "workspace:*",
+    "@tanstack/react-query": "^5.62.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "playwright": "1.56.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.4"
+  }
+}

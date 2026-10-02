@@ -1,0 +1,20 @@
+@import "tailwindcss";
+@import "@preflop/ui/tokens.css";
+@source "../../../packages/ui/src";
+
+html, body, #root { height: 100%; }
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+input, textarea, .selectable { user-select: text; -webkit-user-select: text; }
+
+/* press-and-hold fill */
+.hold-fill { transform-origin: left center; transform: scaleX(0); }
+.hold-fill.holding { transform: scaleX(1); transition: transform var(--hold-ms, 600ms) linear; }
+
+@keyframes pf-pop { from { transform: scale(0.92); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+.pf-pop { animation: pf-pop 180ms ease-out both; }

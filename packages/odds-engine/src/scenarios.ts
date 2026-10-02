@@ -52,7 +52,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: 'partner-organizer-house', title: 'Same betting company as the house (EUR) — PreFlop takes a platform fee', kind: 'organizer-house',
     mode: 'real-fiat', organizer: 'Betting company', provider: 'Provider clubs (10)',
-    marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 1000, organizerCostRate: 0.012,
+    marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 1000, minStakeMinor: 100, organizerCostRate: 0.012,
     story: 'The betting company holds the licence and the bankroll: it is the house and pays the winnings from collateral locked on PreFlop. PreFlop earns a risk-free platform fee per bet; the company pays the provider clubs a share of its GGR.',
     activity: bigPartnerActivity,
   },
@@ -132,7 +132,7 @@ export function renderProfitabilityMarkdown(results: readonly ScenarioResult[]):
         L.push(`- ${p.party}: ${Object.entries(sh.components).map(([k, v]) => `${k} ${(v / 100).toFixed(2)}%`).join(' + ')} → **${(sh.bps / 100).toFixed(2)}%** (floor ${p.policy.floorBps / 100}%, cap ${p.policy.capBps / 100}%)`);
       }
     } else if (s.kind === 'organizer-house') {
-      L.push(`Organizer book edge: ${pct(x.edge as number)} · platform fee ${pct(x.platformFeeRate as number)} of stake · organizer EV per unit staked ${pct(x.organizerEvPerUnit as number)}.`);
+      L.push(`Organizer book edge: ${pct(x.edge as number)}. Admission is validated at the room's minimum stake (${((x.minStakeMinor as number) / 100).toFixed(2)} EUR), where PreFlop's minimum fee weighs most: platform fee ${pct(x.platformFeeRate as number)} of stake, organizer EV ${pct(x.organizerEvPerUnit as number)} per unit staked. At the typical stake (forecast only): ${pct(x.typicalEv as number)}.`);
     } else if (s.kind === 'diamonds' && r.dilution) {
       const d = r.dilution;
       L.push(`Diamond flows / month: ${n0(x.diamondsSunk as number)} ◆ sunk to PreFlop (fixed ${GLOBAL_RULES.diamonds.preflopFeePerBet} ◆ per bet) · organizer rebuys ${n0(x.diamondsRebuy as number)} ◆ at ${((x.eurPerDiamond as number) * 100).toFixed(2)} cents each · players' diamond cost ${n0(x.playersDiamondCost as number)} ◆ (fee + rake + house edge), most of it recirculating to the organizer.`);

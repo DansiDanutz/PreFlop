@@ -1,0 +1,99 @@
+/*
+ * PreFlop design tokens — the approved charcoal, emerald and ivory design (Codex concepts and the
+ * practice app): charcoal-green surfaces, mint accent, felt tables, ivory cards, Georgia serif
+ * headings, hairline borders.
+ * Import AFTER `@import "tailwindcss";` so the theme variables become utilities
+ * (bg-surface, text-muted, border-line, text-accent, font-serif, …).
+ */
+@theme {
+  --color-bg: #0e1311;
+  --color-surface: #151c18;
+  --color-surface-2: #1b241f;
+  --color-surface-3: #223029;
+  --color-line: #2a352f;
+  --color-line-strong: #3a4a41;
+  --color-ink: #f2f4ed;
+  --color-muted: #a5b2a9;
+  --color-faint: #74827a;
+  --color-accent: #53e6a7;
+  --color-accent-strong: #74f0bb;
+  --color-accent-ink: #06170f;
+  --color-accent-soft: rgba(83, 230, 167, 0.12);
+  --color-accent-deep: #173b2a;
+  --color-felt: #153d2b;
+  --color-card: #f5f3e9;
+  --color-card-red: #b23237;
+  --color-card-black: #171e1a;
+  --color-info: #3b82f6;
+  --color-warn: #f5a524;
+  --color-danger: #ef4444;
+  --color-live: #ff3b30;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-card: 12px;
+  --radius-tile: 10px;
+  --radius-pill: 999px;
+  --shadow-glow: 0 0 0 1px rgba(83, 230, 167, 0.55), 0 8px 30px rgba(83, 230, 167, 0.10);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Table felt. Themes: default green, .felt-blue, .felt-violet. A fine noise and an oval rail
+   make it read as cloth rather than a flat gradient. */
+.felt {
+  --felt-a: var(--color-felt);
+  --felt-b: #0c251a;
+  background: radial-gradient(ellipse at 50% 35%, var(--felt-a), var(--felt-b));
+}
+.felt-blue { --felt-a: #173c43; --felt-b: #0b222c; }
+.felt-violet { --felt-a: #3b2f46; --felt-b: #1d1a29; }
+.felt-grey { --felt-a: #2a302d; --felt-b: #161a18; }
+.felt-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.88' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23fff' opacity='.06' filter='url(%23n)' d='M0 0h180v180H0z'/%3E%3C/svg%3E");
+  mix-blend-mode: screen;
+  z-index: 4;
+}
+.felt-ring {
+  position: absolute;
+  inset: 22px -35px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 50%;
+  box-shadow: 0 0 0 10px rgba(0, 0, 0, 0.06);
+  pointer-events: none;
+}
+
+.card-back-pattern {
+  background-color: #145a3f;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 9px),
+    radial-gradient(circle at 50% 50%, #1d7a55 0 30%, #0f4a33 70%);
+}
+
+@keyframes pf-flip {
+  from { transform: rotateY(90deg); }
+  to { transform: rotateY(0deg); }
+}
+.pf-flip { animation: pf-flip 380ms ease-out both; }
+
+@keyframes pf-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pf-pulse { animation: pf-pulse 1.4s ease-in-out infinite; }

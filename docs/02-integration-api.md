@@ -22,9 +22,11 @@ A club has to do very little: run a tablet app (or a hardware bridge) that sends
 
 ```
 POST /v1/provider/tables/{tableId}/hands                 # hand N+1 is about to be shuffled → opens nothing, registers hand
-POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # from the paired automatic shuffler (mandatory)
-POST /v1/provider/tables/{tableId}/hands/{n}/start       # LOCK: dealer takes the deck for hand n → no more bets on its flop (before hole cards)
-    → 200 { "cut_depth": 27 }                          # random cut depth, drawn by PreFlop only after the lock
+POST /v1/provider/tables/{tableId}/hands/{n}/start       # LOCK: no more bets on hand n's flop (before the deck is shuffled)
+    → 200 { "shuffle_command": { "nonce": "…" } }       # single-use command for the Trusted Shuffler
+GET  /v1/provider/tables/{tableId}/hands/{n}/shuffle-command    # Table Box shuffler bridge fetches the nonce
+POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # fresh shuffle, signed by the Trusted Shuffler for the nonce (mandatory)
+    → 200 { "cut_depth": 27 }                          # random cut depth, drawn by PreFlop after the shuffle
 POST /v1/provider/tables/{tableId}/hands/{n}/cut         # dealer cut at the instructed depth (mandatory)
 POST /v1/provider/tables/{tableId}/hands/{n}/deal-start  # dealing begins
 POST /v1/provider/tables/{tableId}/hands/{n}/flop        # dealer / floor manual entry {cards:["Kh","Kd","7h"], source:"dealer|floor"}
@@ -37,7 +39,7 @@ POST /v1/provider/tables/{tableId}/heartbeat             # every 1 s: upload, RT
 POST /v1/provider/tables/{tableId}/connection-tests      # 30-min soak test result (certification)
 ```
 
-Signature header: `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC(key, t + "." + body)>`. Requests older than 30 s are rejected.
+Authentication: one Ed25519 credential **per device and per staff member and role** (dealer, floor, floor manager), each scoped to one table. Every request is signed over a canonical envelope covering the method, path, query, timestamp, single-use nonce, idempotency key and body hash. The exact format is in `docs/13` §7. Reused nonces and requests older than 30 s are rejected.
 
 Hardware bridges (automatic shuffler, RFID table) send the same calls, using `source: "rfid"`. When both a dealer entry and an RFID reading exist and they disagree, the round stays in DEALT and an exception is raised in the back office.
 

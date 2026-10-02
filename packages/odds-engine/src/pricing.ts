@@ -104,8 +104,28 @@ export function satisfiesMargin(p: Price): boolean {
   return !p.offered || p.oddsCenti * p.wins * 100 <= (10000 - p.marginBps) * FLOP_COUNT;
 }
 
-/** Payout in minor units (stake returned plus winnings), rounded down in the house's favour. */
+/** Largest decimal odds the engine will ever handle, in hundredths (10,000.00). */
+export const MAX_ODDS_CENTI = 1_000_000;
+
+/** Throws unless odds are an integer number of hundredths in [1.00, 10,000.00]. */
+export function assertOddsCenti(oddsCenti: number): void {
+  if (!Number.isSafeInteger(oddsCenti) || oddsCenti < 100 || oddsCenti > MAX_ODDS_CENTI)
+    throw new RangeError(`odds must be an integer number of hundredths between 100 and ${MAX_ODDS_CENTI}, got ${oddsCenti}`);
+}
+
+/** Throws unless the value is a non-negative safe integer (minor units). */
+export function assertMinor(value: number, what = 'amount'): void {
+  if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${what} must be a non-negative safe integer in minor units, got ${value}`);
+}
+
+/**
+ * Payout in minor units (stake returned plus winnings), rounded down in the house's favour.
+ * Exact: computed in bigint and rejected if the result is not a safe integer.
+ */
 export function payoutMinor(stakeMinor: number, oddsCenti: number): number {
-  if (!Number.isSafeInteger(stakeMinor) || stakeMinor < 0) throw new RangeError('stake must be a non-negative integer in minor units');
-  return Number((BigInt(stakeMinor) * BigInt(oddsCenti)) / 100n);
+  assertMinor(stakeMinor, 'stake');
+  assertOddsCenti(oddsCenti);
+  const p = (BigInt(stakeMinor) * BigInt(oddsCenti)) / 100n;
+  if (p > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('payout exceeds the safe integer range');
+  return Number(p);
 }

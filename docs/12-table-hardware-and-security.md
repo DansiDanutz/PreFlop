@@ -10,10 +10,10 @@ Status: proposed standard. Product names are examples to evaluate with vendors a
 
 | Threat | Real-world precedent | Main defences |
 |---|---|---|
-| **Tampered shuffler** that reads or arranges the deck order | Researchers showed in 2023 that a DeckMate 2 could be hijacked through an exposed USB port, and that its internal camera could leak the full deck order in real time ([IOActive at Black Hat, reported by Bitdefender](https://www.bitdefender.com/blog/hotforsecurity/how-to-hack-casino-card-shuffling-machines/), [Kaspersky](https://me-en.kaspersky.com/blog/hacked-card-shufflers/24971/)). In 2025 the FBI charged 31 people over rigged games that used modified DeckMate shufflers ([NBC News](https://www.nbcnews.com/business/business-news/tech-mafia-nba-rigged-poker-rcna239362?rand=14095), [WHRO/NPR](https://www.whro.org/2025-10-24/fbi-says-card-shuffling-machines-were-hacked-as-part-of-major-illegal-gambling-schemes)) | Sealed and inspected shuffler (§2) · **random cut chosen by PreFlop after betting closes** (§6) · statistical monitoring · exposure limits |
+| **Tampered shuffler** that reads or arranges the deck order | Researchers showed in 2023 that a DeckMate 2 could be hijacked through an exposed USB port, and that its internal camera could leak the full deck order in real time ([IOActive at Black Hat, reported by Bitdefender](https://www.bitdefender.com/blog/hotforsecurity/how-to-hack-casino-card-shuffling-machines/), [Kaspersky](https://me-en.kaspersky.com/blog/hacked-card-shufflers/24971/)). In 2025 the FBI charged 31 people over rigged games that used modified DeckMate shufflers ([NBC News](https://www.nbcnews.com/business/business-news/tech-mafia-nba-rigged-poker-rcna239362?rand=14095), [WHRO/NPR](https://www.whro.org/2025-10-24/fbi-says-card-shuffling-machines-were-hacked-as-part-of-major-illegal-gambling-schemes)) | **No complete defence exists at the table — see §2a.** A PreFlop-owned, certified Trusted Shuffler (§2a), sealed and inspected (§2) · sequential outcome-frequency monitoring with automatic pause · exposure and long-shot limits · payout holds. The random cut (§6) is only a minor extra control: it does **not** defeat a shuffler that controls the deck order |
 | **Forged or edited flop result** | — | PreFlop-owned, locked-down **Table Box** (§4) · **signed, hash-chained captures** checked against independent dealer and floor entries (§5) |
 | **Hole-card information leak** | A livestream's RFID hole-card data was allegedly misused by an insider ([PokerNews](https://www.pokernews.com/news/2019/10/graphics-company-mike-postle-cheating-allegations-35609.htm)) | PreFlop **never reads hole cards**. No hole-card RFID or cameras · betting closes before hole cards are dealt |
-| Dealer or staff collusion | — | Random cut, dealer rotation, camera on the dealer's hands, staff banned from betting, payout holds on anomalies |
+| Dealer or staff collusion | — | Per-person staff credentials with separated roles (`docs/13` §7), dealer rotation, camera on the dealer's hands, staff banned from betting, payout holds on anomalies, random cut |
 | Network attack or a slow stream | — | Outbound-only encrypted links, separate network segments, backup line, live health checks (`docs/11`) |
 | Power loss | — | UPS on every table component; a round is voided if its result can't be verified |
 
@@ -36,6 +36,30 @@ Status: proposed standard. Product names are examples to evaluate with vendors a
 - 100% plastic, casino-grade, poker size, **large index** (easier for the camera to read).
 - Two decks with different back colours, used in turn.
 - Opened from sealed packs, with pack numbers logged. Decks are replaced every shift, or immediately if one is damaged or marked.
+
+## 2a. Shuffle assurance: the open integrity risk
+
+**A random cut does not protect against a shuffler that controls the deck order.** This was shown by the external audit of 2026-10-02 and is reproduced in `packages/odds-engine/test/audit-2026-10-02.test.ts`.
+
+**Why the cut fails.** With 9 seats, the flop is dealt from positions 19–21 after the cut. Across every allowed cut (15–37 cards), those three positions only ever fall on 25 distinct places in the deck. A rigged shuffler can put 25 of the 26 red cards in exactly those places. Then **every** allowed cut produces an all-red flop. An accomplice does not need to know the exact cards, only that "all red" will win.
+
+**The same trick works on any rule about groups of cards:** colour, suit, high/low, "no pair". No re-shuffle by rotation (a cut of any depth, at any time) can fix this. Only randomness that changes the cards' **order relative to each other**, from a source the attacker cannot control, removes the threat.
+
+**Required before any value-bearing wagering on a physical table** (real money, crypto, and chips or diamonds bought with money):
+1. **PreFlop Trusted Shuffler.**
+   - PreFlop supplies and owns it; the club cannot open, service or configure it.
+   - It has no output of the deck order (no card-reading data path, no USB, no wireless).
+   - Firmware is signed by PreFlop, and the Table Box attests to it before every session.
+   - Its randomness comes from an internal hardware random number generator.
+   - It shuffles **one deck per hand**, **after Start hand**, on a single-use command nonce from PreFlop, and signs its completion with that nonce. So no deck order exists while bets are open, no pre-shuffled deck waits in a tray the club can reach, and a replayed or pre-arranged shuffle is detectable. The full sequence is in §6 and `docs/13` §4.
+   - The model and its shuffle algorithm are **certified by an accredited gaming test laboratory**, covering both its RNG and how well it shuffles.
+2. **Outcome monitoring.** For every table and every market family, run sequential tests (for example CUSUM or SPRT) on outcome frequencies against the exact probabilities.
+   - A stacked deck that forces "all red" (11.8% per flop) would trip the test within a few hands. Five in a row has a probability of about 2 × 10⁻⁵.
+   - When the test trips: the table pauses automatically, payouts are held, and the shuffler and table are inspected.
+3. **Limits.** Per-round, per-market and per-account stake caps, tighter on long shots and on market families an attacker could target. Linked-account clustering, and payout holds on wins that look anomalous.
+4. **Independent threat-model review** of this section, plus adversarial testing of the Trusted Shuffler, before go-live.
+
+**Physical-table play is disabled in every mode, including non-redeemable play money** (owner decision, re-audit of 2026-10-02; `docs/06`, decision 7). Having all four in place is a **prerequisite for reconsidering** that decision, not permission to enable physical play automatically. Seals, cameras and the cut lower the risk, but they do **not** make the published probabilities a guarantee. Until then PreFlop runs on the **simulated table** only; simulated practice play is a separate scope.
 
 ## 3. Cameras: what to buy and how to install them
 
@@ -174,18 +198,19 @@ Tests confirm each case: edited cards, a swapped image, a wrong key, a revoked d
 ## 6. Per-hand procedure
 
 ```
-1  shuffler: shuffle complete (machine signal, usually during the previous hand)
-2  dealer:   presses START HAND, takes the deck   ══ LOCK: bets on this flop close ══
-3  PreFlop:  draws a random cut depth (15–37 cards) and shows it on the dealer tablet
-4  dealer:   cuts at that depth with a cut card and presses CUT   (C3 records it)
-5  dealer:   deal-start → hole cards → burn → FLOP
-6  Table Box: signed capture of the board   ·   dealer and floor enter the flop on their tablets
-7  PreFlop:  verifies the signature, chain, timing and image hash, and checks the 3-way match → settle, or send to review
+1  dealer:   presses START HAND   ══ LOCK: bets on this flop close (no deck order exists yet) ══
+2  PreFlop:  issues a single-use shuffle command nonce to the Trusted Shuffler (via the Table Box)
+3  shuffler: FRESH shuffle of one deck for that command; signs completion {hand, nonce}; Table Box forwards it
+4  PreFlop:  draws a random cut depth (15–37 cards) and shows it on the dealer tablet
+5  dealer:   cuts at that depth with a cut card and presses CUT   (C3 records it)
+6  dealer:   deal-start → hole cards → burn → FLOP
+7  Table Box: signed capture of the board   ·   dealer and floor enter the flop on their tablets
+8  PreFlop:  verifies the signature, chain, timing and image hash, and checks the 3-way match → settle, or send to review
 ```
 
-Any missing or out-of-order step, or a shuffle signal that did not come from the machine, **voids the round and refunds every bet** (`handProcedureProblems`).
+The backend enforces the steps as substates with server-assigned ordinals. Any missing or out-of-order step, a shuffle signal that did not come from the machine, or a completion that does not attest this hand's nonce **voids the round and refunds every bet** (`handProcedureProblems`).
 
-Because the cut depth is chosen **after** betting closes, someone who knew the full shuffled order still could not tell which three cards would reach the flop when they placed their bet.
+The random cut makes it harder to aim at one **exact** card position. It does **not** stop a shuffler that controls the deck order from rigging rules about groups of cards (colour, suit, high/low); see §2a. Shuffle integrity rests on the Trusted Shuffler and on outcome monitoring, not on the cut.
 
 ## 7. Per-shift checklist (dealer tablet, signed by the floor manager)
 

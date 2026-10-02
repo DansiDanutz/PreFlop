@@ -28,8 +28,9 @@ describe('connection health', () => {
   });
 });
 
-describe('per-hand procedure: shuffle → lock → random cut → cut → deal-start', () => {
-  const ok = { shuffleCompleteAt: 1, shuffleSource: 'shuffler' as const, lockedAt: 2, cutInstructionAt: 3, cutAt: 4, dealStartAt: 5 };
+describe('per-hand procedure: lock → shuffle command → fresh trusted shuffle → random cut → cut → deal-start', () => {
+  const ok = { lockedAt: 1, shuffleCommandAt: 2, shuffleCommandNonce: 'n1', shuffleCompleteAt: 3, shuffleSource: 'shuffler' as const,
+    shuffleAttestedNonce: 'n1', cutInstructionAt: 4, cutAt: 5, dealStartAt: 6 };
   it('accepts the correct order', () => {
     expect(handProcedureProblems(ok)).toEqual([]);
   });
@@ -37,8 +38,20 @@ describe('per-hand procedure: shuffle → lock → random cut → cut → deal-s
     const { cutAt: _omit, ...noCut } = ok;
     expect(handProcedureProblems(noCut)).toContain('no cut recorded');
     expect(handProcedureProblems({ ...ok, shuffleSource: 'manual' })).toEqual(['shuffle not reported by the automatic shuffler']);
-    expect(handProcedureProblems({ ...ok, cutInstructionAt: 1.5 })).toContain('cut instruction happened before lock');
-    expect(handProcedureProblems({ ...ok, dealStartAt: 3.5 })).toContain('deal-start happened before cut');
+    expect(handProcedureProblems({ ...ok, cutInstructionAt: 2.5 })).toContain('cut instruction did not happen after shuffle-complete');
+    expect(handProcedureProblems({ ...ok, dealStartAt: 4.5 })).toContain('deal-start did not happen after cut');
+  });
+  it('a shuffle completed before the lock (or before the command) is not a fresh post-lock shuffle', () => {
+    expect(handProcedureProblems({ ...ok, shuffleCompleteAt: 0.5 })).toContain('shuffle-complete did not happen after shuffle command');
+    expect(handProcedureProblems({ ...ok, shuffleCommandAt: 0.5 })).toContain('shuffle command did not happen after lock');
+  });
+  it("a completion attesting another hand's nonce, or none, voids the hand", () => {
+    expect(handProcedureProblems({ ...ok, shuffleAttestedNonce: 'n0' })).toEqual(["shuffle completion is not bound to this hand's shuffle command"]);
+    const { shuffleAttestedNonce: _n, ...unbound } = ok;
+    expect(handProcedureProblems(unbound)).toEqual(["shuffle completion is not bound to this hand's shuffle command"]);
+  });
+  it('steps are ordinals and may never tie', () => {
+    expect(handProcedureProblems({ ...ok, cutAt: 4 })).toContain('cut did not happen after cut instruction');
   });
   it('an unsealed shuffler blocks the table', () => {
     expect(canOpenRound({ ...cert, shufflerSealsVerifiedThisShift: false }, good).ok).toBe(false);

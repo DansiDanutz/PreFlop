@@ -4,13 +4,13 @@
 
 | # | Decision | Recommendation | Status |
 |---|---|---|---|
-| 1 | Real money or play chips; territory; operator | Pilot with **play chips** at one club, then real money under a licensed operator in the first territory. The Partner API lets a licensed betting company act as the operator from day one | Open: founder and legal |
+| 1 | Real money or play chips; territory; operator | Physical play is disabled for now (decision 7). Once reconsidered: pilot with **play chips** at one club, then real money under a licensed operator in the first territory. The Partner API lets a licensed betting company act as the operator from day one | Open: founder and legal |
 | 2 | Permissions for online distribution | Get legal advice per territory before real money. Architecture: one deployment region per licence | Open |
 | 3 | Subscription price and tiers | Placeholder €1,500/month per club, entitlement per table. Validate in the pilot | Open |
 | 4 | Fee basis and percentages | Percentage of buy-ins, deducted when entries close. Use the minimums in `docs/07` | Structure proposed; numbers open |
 | 5 | Way bets are resolved | **All three:** fixed odds (house), parimutuel pools, contests (`docs/01` §3) | Proposed |
 | 6 | Flop settlement vs tournament prizes | Points settle each flop at fair odds; prizes are paid at the end of the event (`docs/05` §4) | Proposed |
-| 7 | Card capture and cutoff | Lock on **Start hand, before hole cards**, then a random cut depth issued by PreFlop. The flop is read by a signed board camera and confirmed by dealer and floor entries (`docs/12`) | Proposed; critical |
+| 7 | Card capture, cutoff and shuffle integrity | Lock on **Start hand, before hole cards**. The flop is read by a signed board camera and confirmed by dealer and floor entries. **Shuffle integrity needs the PreFlop Trusted Shuffler plus outcome monitoring; the random cut alone is not a defence** (`docs/12` §2a). **Owner decision (re-audit 2026-10-02): physical-table play is disabled in every mode, including play money.** Shuffler certification is a prerequisite for reconsidering, not an automatic enablement. Until then: simulated table only | Decided by the owner; critical; **blocks all physical-table play** |
 | 8 | Colour, card values, sequences | Colour = red/black; A = 14; A-2-3 and Q-K-A are straights; strict thresholds (`docs/03` §1) | Proposed |
 | 9 | Tournament scoring, ties, limits | `docs/05` §4 | Proposed |
 | 10 | Cancellations, outages, no flop | Deal a PreFlop flop anyway, otherwise VOID and refund (`docs/03` §3) | Proposed |
@@ -28,9 +28,10 @@
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 111 tests green; generated docs checked in CI |
-| **1 — Core backend** | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
-| **2 — Player app + pilot club** | Web lobby, live table with video, bet slip, history; club tablet app; dual-entry results; play chips | 4 weeks live at one table; ≥ 99.9% of rounds verified; zero settlement errors |
+| **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 122 tests green; generated docs checked in CI |
+| **0.5 — External audit** ✅ (rounds 1–2 addressed) | Codex and Kimi audit the plan, the engine and the backend spec (`AUDIT.md`); Codex prepares the app designs | Findings resolved; plan frozen |
+| **1 — Core backend** ✅ (`apps/api`, 35 integration tests) | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
+| **2 — Player app + pilot club** | Web lobby, live table with video, bet slip, history; club tablet app; dual-entry results; play chips. **The live-club part starts only if the owner re-enables physical play (decision 7)**; until then the apps run against the simulated table | 4 weeks live at one table; ≥ 99.9% of rounds verified; zero settlement errors |
 | **3 — Contests** | Pools, tournaments, heads-up, challenges, invitations, organizer reports | Fees reconcile across Models A–D; standings and ties match the rules |
 | **4 — Real money and partners** | KYC, payments, responsible gaming, Partner API + widget, seamless wallet, statements | Licence in place; first partner live in the sandbox, then in production |
 | **5 — Scale** | RFID capture, more clubs and tables, integrity analytics, more markets, leaderboards | Per-table chi-square monitoring; automated pauses on anomalies |

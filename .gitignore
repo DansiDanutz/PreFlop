@@ -3,3 +3,6 @@ dist/
 coverage/
 *.log
 .DS_Store
+.data/
+*.tmp.ts
+.claude/worktrees/

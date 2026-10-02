@@ -107,7 +107,7 @@ Activity: 50,000 players · 144,000 flops/month · 0.15% bet on each flop · 1.2
 | Payment / KYC / infra providers | Variable costs | €1,166,400 | organizer + PreFlop |
 | **Players** | Bettors | **−€5,460,928** | expected cost of play (house edge / rake, net of promotions) |
 
-Organizer book edge: 7.02% · platform fee 1.50% of stake · organizer EV per unit staked 3.90%.
+Organizer book edge: 7.02%. Admission is validated at the room's minimum stake (1.00 EUR), where PreFlop's minimum fee weighs most: platform fee 2.00% of stake, organizer EV 3.40% per unit staked. At the typical stake (forecast only): 3.90%.
 
 Checks: ✅ Organizer house config valid (has the edge after fees) · ✅ Organizer net ≥ 0 · ✅ PreFlop net ≥ 0 with zero risk
 

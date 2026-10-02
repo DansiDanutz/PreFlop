@@ -1,5 +1,5 @@
 import { FLOP_COUNT } from './flops.ts';
-import { payoutMinor } from './pricing.ts';
+import { assertMinor, payoutMinor } from './pricing.ts';
 import type { SelectionStats } from './probability.ts';
 
 /**
@@ -14,10 +14,24 @@ import type { SelectionStats } from './probability.ts';
 export class RoundExposure {
   private readonly houseNet = new Float64Array(FLOP_COUNT);
   private stakes = 0;
+  /**
+   * Σ stakes + Σ payouts of all bets added. Every |houseNet[f]| is bounded by this, so keeping
+   * it within Number.MAX_SAFE_INTEGER keeps every Float64 entry an exact integer.
+   */
+  private gross = 0;
 
   /** @param maxLossMinor largest loss the house accepts on this round, in minor units. */
   constructor(readonly maxLossMinor: number) {
-    if (!(maxLossMinor >= 0)) throw new RangeError('maxLossMinor must be >= 0');
+    assertMinor(maxLossMinor, 'maxLossMinor');
+  }
+
+  /** Validates a bet and returns its payout; throws on any input that could break exactness. */
+  private checkBet(stakeMinor: number, oddsCenti: number): number {
+    assertMinor(stakeMinor, 'stake');
+    if (stakeMinor === 0) throw new RangeError('stake must be positive');
+    const pay = payoutMinor(stakeMinor, oddsCenti); // validates odds and the payout range
+    if (this.gross + stakeMinor + pay > Number.MAX_SAFE_INTEGER) throw new RangeError('round totals would exceed the safe integer range');
+    return pay;
   }
 
   get totalStakesMinor(): number {
@@ -43,7 +57,7 @@ export class RoundExposure {
 
   /** Lowest house net result over all flops if this bet were added, without adding it. */
   minNetIfAdded(stats: SelectionStats, stakeMinor: number, oddsCenti: number): number {
-    const pay = payoutMinor(stakeMinor, oddsCenti);
+    const pay = this.checkBet(stakeMinor, oddsCenti);
     const win = new Uint8Array(FLOP_COUNT);
     for (const f of stats.winningFlops) win[f] = 1;
     let min = Number.POSITIVE_INFINITY;
@@ -82,9 +96,11 @@ export class RoundExposure {
   }
 
   private apply(stats: SelectionStats, stakeMinor: number, oddsCenti: number, sign: 1 | -1): void {
-    const pay = payoutMinor(stakeMinor, oddsCenti);
+    const pay = sign === 1 ? this.checkBet(stakeMinor, oddsCenti) : payoutMinor(stakeMinor, oddsCenti);
+    if (sign === -1 && (stakeMinor > this.stakes || stakeMinor + pay > this.gross)) throw new RangeError('cannot remove a bet that was not added');
     for (let f = 0; f < FLOP_COUNT; f++) this.houseNet[f]! += sign * stakeMinor;
     for (const f of stats.winningFlops) this.houseNet[f]! -= sign * pay;
     this.stakes += sign * stakeMinor;
+    this.gross += sign * (stakeMinor + pay);
   }
 }
