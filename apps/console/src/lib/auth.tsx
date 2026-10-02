@@ -10,7 +10,8 @@ interface AuthState {
   portals: Portal[];
   loading: boolean;
   error: unknown;
-  login: (email: string, password: string) => Promise<void>;
+  /** Rejects with ApiError 401 mfa_required when the account needs a one-time code. */
+  login: (email: string, password: string, otp?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -28,8 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     portals,
     loading: !!token && me.isPending,
     error: me.error,
-    async login(email, password) {
-      const r = await api.login({ email, password });
+    async login(email, password, otp) {
+      const r = await api.login({ email, password, ...(otp ? { otp } : {}) });
       qc.clear();
       session.set(r.token);
     },

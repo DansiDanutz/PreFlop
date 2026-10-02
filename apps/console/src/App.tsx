@@ -8,6 +8,7 @@ import { Loading, ErrorBox } from './components/ui.tsx';
 import { DesignPage } from './pages/Design.tsx';
 import { LoginPage } from './pages/Login.tsx';
 import { ClaimPage } from './pages/Claim.tsx';
+import { SecurityPage } from './pages/Security.tsx';
 import { PortalsPage, NoAccessPage, NotFoundPage } from './pages/Portals.tsx';
 import * as A from './portals/admin/index.ts';
 import * as O from './portals/org/index.ts';
@@ -25,6 +26,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
   if (!token) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
   if (loading) return <div className="grid min-h-screen place-items-center"><Loading label="Signing you in…" /></div>;
   if (!me) return <div className="mx-auto max-w-lg p-10"><ErrorBox error={error} /></div>;
+  // require_staff_mfa: a PreFlop team account without 2FA can only enrol.
+  if (me.mfa_enrollment_required && loc.pathname !== '/account/security') return <Navigate to="/account/security" replace />;
   return <>{children}</>;
 }
 
@@ -43,6 +46,7 @@ export function App() {
       <Route path="/" element={<RequireAuth><Landing /></RequireAuth>} />
       <Route path="/portals" element={<RequireAuth><PortalsPage /></RequireAuth>} />
       <Route path="/claim/:token" element={<RequireAuth><ClaimPage /></RequireAuth>} />
+      <Route path="/account/security" element={<RequireAuth><SecurityPage /></RequireAuth>} />
 
       <Route path="/admin" element={shell}>
         <Route index element={<A.Overview />} />

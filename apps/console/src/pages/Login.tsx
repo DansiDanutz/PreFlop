@@ -17,6 +17,9 @@ export function LoginPage() {
   const claiming = ((loc.state as { from?: string } | null)?.from ?? '').startsWith('/claim/');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Two-factor: shown once the API answers mfa_required.
+  const [otp, setOtp] = useState('');
+  const [needOtp, setNeedOtp] = useState(false);
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -31,12 +34,15 @@ export function LoginPage() {
     setTouched(true);
     setErr(null);
     if (emailErr || pwErr) return;
+    if (needOtp && !/^\d{6}$/.test(otp)) { setErr('Enter the 6-digit code from your authenticator app.'); return; }
     setBusy(true);
     try {
-      await login(email.trim(), password);
+      await login(email.trim(), password, needOtp ? otp : undefined);
       const from = (loc.state as { from?: string } | null)?.from;
       nav(from && from !== '/login' ? from : '/', { replace: true });
     } catch (x) {
+      if (x instanceof ApiError && x.type === 'mfa_required') { setNeedOtp(true); return; }
+      if (x instanceof ApiError && x.type === 'invalid_otp') { setErr('That code is not valid. Wait for the next code and try again.'); setOtp(''); return; }
       setErr(x instanceof ApiError && (x.status === 401 || x.status === 400) ? 'Wrong email or password.' : errorMessage(x));
     } finally {
       setBusy(false);
@@ -66,6 +72,11 @@ export function LoginPage() {
             <Field label="Password" error={touched ? pwErr : null}>
               {(p) => <TextInput {...p} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
             </Field>
+            {needOtp && (
+              <Field label="Authentication code" hint="The 6-digit code from your authenticator app.">
+                {(p) => <TextInput {...p} inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />}
+              </Field>
+            )}
             {err && <p role="alert" className="rounded-[10px] border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-ink">{err}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{busy && <Spinner className="h-4 w-4" />}Sign in</Button>
           </form>

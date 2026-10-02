@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { PlayMode } from '@preflop/client';
+import { type PlayMode, type Territories, isCountryCode } from '@preflop/client';
 import { Button, cx } from '@preflop/ui';
 import { ShieldAlert } from 'lucide-react';
 import { api } from '../../lib/api.ts';
@@ -16,17 +16,31 @@ const MODES: { mode: PlayMode; note: string }[] = [
   { mode: 'real-crypto', note: 'USDT / USDC only. Licensed territories; Travel Rule.' },
 ];
 
-/** Parses the territories editor; returns an error message or the value. */
-export function parseTerritories(text: string): { value?: Record<string, unknown>; error?: string } {
-  try {
-    const v: unknown = JSON.parse(text);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return { error: 'Territories must be a JSON object, e.g. { "RO": { "modes": ["play"] } }.' };
-    const bad = Object.keys(v).find((k) => !/^[A-Z]{2}(-[A-Z0-9]{1,3})?$/.test(k));
-    if (bad) return { error: `“${bad}” is not an ISO 3166 country (or subdivision) code like "RO" or "GB-ENG".` };
-    return { value: v as Record<string, unknown> };
-  } catch (e) {
-    return { error: `Invalid JSON: ${(e as Error).message}` };
+const TERRITORY_KEYS = ['blocked', 'real_money_allowed'] as const;
+
+/**
+ * Parses the territories editor: {"blocked": [...], "real_money_allowed": [...]} with ISO 3166-1
+ * alpha-2 codes (the API checks the same rules). Returns an error message or the normalised value.
+ */
+export function parseTerritories(text: string): { value?: Territories; error?: string } {
+  let v: unknown;
+  try { v = JSON.parse(text); } catch (e) { return { error: `Invalid JSON: ${(e as Error).message}` }; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { error: 'Territories must be a JSON object: { "blocked": ["US"], "real_money_allowed": ["MT"] }.' };
+  const o = v as Record<string, unknown>;
+  const extra = Object.keys(o).find((k) => !(TERRITORY_KEYS as readonly string[]).includes(k));
+  if (extra) return { error: `Unknown key “${extra}”. Use only "blocked" and "real_money_allowed".` };
+  const out: Territories = { blocked: [], real_money_allowed: [] };
+  for (const k of TERRITORY_KEYS) {
+    const list = o[k] ?? [];
+    if (!Array.isArray(list) || list.some((c) => typeof c !== 'string')) return { error: `"${k}" must be a list of country codes.` };
+    const codes = [...new Set((list as string[]).map((c) => c.trim().toUpperCase()))].sort();
+    const bad = codes.find((c) => !isCountryCode(c));
+    if (bad) return { error: `“${bad}” in "${k}" is not an ISO 3166-1 alpha-2 country code (e.g. "GB", not "UK").` };
+    out[k] = codes;
   }
+  const both = out.blocked.filter((c) => out.real_money_allowed.includes(c));
+  if (both.length) return { error: `${both.join(', ')} cannot be both blocked and allowed for real money.` };
+  return { value: out };
 }
 
 export function Settings() {
@@ -41,7 +55,7 @@ export function Settings() {
   const [terr, setTerr] = useState<string | null>(null);
 
   const get = (k: string) => q.data?.settings.find((s) => s.key === k);
-  const terrServer = JSON.stringify(get('territories')?.value ?? {}, null, 2);
+  const terrServer = JSON.stringify(get('territories')?.value ?? { blocked: [], real_money_allowed: [] }, null, 2);
   useEffect(() => { if (q.data && terr === null) setTerr(terrServer); }, [q.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const terrParsed = parseTerritories(terr ?? '{}');
   const meta = (k: string) => { const s = get(k); return s ? `Last changed ${fmtDateTime(s.updated_at)}${s.updated_by ? ` by ${s.updated_by}` : ''}` : ''; };
@@ -54,6 +68,7 @@ export function Settings() {
         {() => {
           const modes = (get('modes_enabled')?.value ?? {}) as Record<string, boolean>;
           const physical = get('physical_play_enabled')?.value === true;
+          const staffMfa = get('require_staff_mfa')?.value === true;
           return (
             <div className="grid gap-4 xl:grid-cols-2">
               <Section title="Play modes" subtitle={meta('modes_enabled')}>
@@ -91,7 +106,19 @@ export function Settings() {
                 </div>
               </Section>
 
-              <Section title="Territories" subtitle={meta('territories') || 'Per-territory mode availability and limits (JSON).'} className="xl:col-span-2"
+              <Section title="Staff sign-in" subtitle={meta('require_staff_mfa') || 'Two-factor authentication for the PreFlop team.'}>
+                <div className="flex items-center justify-between gap-4 rounded-[10px] border border-line px-4 py-3">
+                  <div>
+                    <div className="text-sm font-medium">Require two-factor authentication for PreFlop team accounts</div>
+                    <div className="text-xs text-muted">{staffMfa ? 'On: team accounts without 2FA can only enrol until they set it up.' : 'Off (default). Turn on once every team member has enrolled, before real money.'}</div>
+                  </div>
+                  <Toggle checked={staffMfa} label="Require staff two-factor authentication" disabled={!isAdmin || save.isPending || (!staffMfa && !me?.mfa_enabled)}
+                    onChange={(v) => save.mutate({ key: 'require_staff_mfa', value: v })} />
+                </div>
+                {!staffMfa && !me?.mfa_enabled && <p className="mt-2 text-xs text-warn">Set up two-factor authentication on your own account first (account menu → Password & two-factor).</p>}
+              </Section>
+
+              <Section title="Territories" subtitle={meta('territories') || 'Blocked countries and the countries licensed for real money (JSON).'} className="xl:col-span-2"
                 actions={<>
                   <Button size="sm" variant="ghost" onClick={() => setTerr(terrServer)} disabled={terr === terrServer}>Revert</Button>
                   <Button size="sm" disabled={!isAdmin || !!terrParsed.error || terr === terrServer || save.isPending} onClick={() => save.mutate({ key: 'territories', value: terrParsed.value })}>Save territories</Button>
@@ -100,8 +127,9 @@ export function Settings() {
                 <TextArea id="territories" spellCheck={false} rows={12} value={terr ?? ''} onChange={(e) => setTerr(e.target.value)} readOnly={!isAdmin}
                   aria-invalid={!!terrParsed.error} aria-describedby="territories-msg" className="min-h-56" />
                 <p id="territories-msg" className={cx('mt-2 text-xs', terrParsed.error ? 'text-danger' : 'text-faint')}>
-                  {terrParsed.error ?? `Valid JSON · ${Object.keys(terrParsed.value ?? {}).length} territories${terr !== terrServer ? ' · unsaved changes' : ''}`}
+                  {terrParsed.error ?? `Valid · ${terrParsed.value?.blocked.length ?? 0} blocked · ${terrParsed.value?.real_money_allowed.length ?? 0} licensed for real money${terr !== terrServer ? ' · unsaved changes' : ''}`}
                 </p>
+                <p className="mt-1 text-xs text-faint">Blocked: no registration and no play. Real money (bets, buy-ins, deposits) only in real_money_allowed; free chips everywhere not blocked. The country is self-declared at registration until a KYC or geolocation provider confirms it.</p>
               </Section>
             </div>
           );

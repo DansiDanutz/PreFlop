@@ -88,6 +88,9 @@ function UserMenu() {
             {me?.platform_role && <div className="mt-1 text-[11px] uppercase tracking-wider text-accent">PreFlop {me.platform_role}</div>}
           </div>
           <Link role="menuitem" to="/portals" onClick={() => setOpen(false)} className="block px-4 py-2.5 text-sm hover:bg-surface-3">Switch portal</Link>
+          <Link role="menuitem" to="/account/security" onClick={() => setOpen(false)} className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-surface-3">
+            Password & two-factor<span className={cx('text-[11px]', me?.mfa_enabled ? 'text-accent' : 'text-warn')}>{me?.mfa_enabled ? '2FA on' : '2FA off'}</span>
+          </Link>
           <Link role="menuitem" to="/design" onClick={() => setOpen(false)} className="block px-4 py-2.5 text-sm hover:bg-surface-3">Design system</Link>
           <button role="menuitem" type="button" onClick={async () => { await logout(); nav('/login'); }} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-danger hover:bg-surface-3">
             <LogOut size={14} aria-hidden />Sign out
