@@ -106,9 +106,32 @@ type Env = z.infer<typeof Env>;
  * Add a line here for every new secret. Today the only server-side secret is the database
  * password; partner client secrets and webhook secrets are generated and stored in the database.
  */
-const SECRETS: { name: string; get: (e: Env) => string | undefined }[] = [
-  { name: 'DATABASE_URL password', get: (e) => { try { return decodeURIComponent(new URL(e.DATABASE_URL).password) || undefined; } catch { return undefined; } } },
+const SECRETS: { name: string; get: (e: Env) => string | undefined; min?: number }[] = [
+  // Managed Postgres (e.g. Neon) generates ~16-character random passwords: strong, but shorter than 32.
+  { name: 'DATABASE_URL password', min: 16, get: (e) => { try { return decodeURIComponent(new URL(e.DATABASE_URL).password) || undefined; } catch { return undefined; } } },
 ];
+
+/**
+ * A database host on a private network (local, Docker service name, Fly private network) needs no TLS.
+ * IP literals other than loopback (e.g. a public IPv6 address) are never treated as private.
+ */
+export const isPrivateDbHost = (host: string): boolean =>
+  ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host) ||
+  (!host.includes(':') && !host.includes('[') && (!host.includes('.') || /\.(internal|flycast|local)$/.test(host)));
+
+/**
+ * One CORS_ORIGINS entry may hold a single `*` inside a host label, for per-deployment preview
+ * URLs (e.g. https://preflop-staging-web-*-team.vercel.app). The `*` matches letters and digits
+ * only, never a dash or a dot, so it cannot reach into another label or another account's names.
+ */
+const WILDCARD_ORIGIN = /^https:\/\/[a-z0-9-]*[a-z0-9]-\*-[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+$/;
+
+/** The origins as @fastify/cors expects them: `true` for "*", otherwise exact strings and anchored patterns. */
+export function corsOrigin(origins: string[]): true | (string | RegExp)[] {
+  if (origins.includes('*')) return true;
+  const literal = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return origins.map((o) => (o.includes('*') ? new RegExp(`^${o.split('*').map(literal).join('[a-z0-9]+')}$`) : o));
+}
 
 /** Production-only refusals. Returns every problem found (empty = OK). */
 export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
@@ -116,12 +139,27 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
   const cors = (raw.CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (cors.length === 0) problems.push('CORS_ORIGINS must list the allowed origins (comma-separated); it is empty');
   else if (cors.includes('*')) problems.push('CORS_ORIGINS must not be "*" in production; list the web, console and table origins');
+  for (const o of cors) {
+    if (o !== '*' && o.includes('*') && !WILDCARD_ORIGIN.test(o)) {
+      problems.push(`CORS_ORIGINS entry ${o} is too broad; a wildcard must be one "-*-" inside an https host label`);
+    }
+  }
   if (!raw.DATABASE_URL) problems.push('DATABASE_URL must be set in production (the localhost default is for development)');
+  else {
+    // A database reached over the internet (e.g. Neon) must use verified TLS.
+    try {
+      const u = new URL(e.DATABASE_URL);
+      const mode = u.searchParams.get('sslmode');
+      if (!isPrivateDbHost(u.hostname) && mode !== 'verify-full' && mode !== 'require') {
+        problems.push(`DATABASE_URL points at ${u.hostname} without TLS; add ?sslmode=verify-full`);
+      }
+    } catch { /* malformed URLs are reported by the schema */ }
+  }
   for (const s of SECRETS) {
     const v = s.get(e);
     if (v === undefined) continue;
     if (isDemoSecret(v)) problems.push(`${s.name} is a known demo/default value; generate a random one (e.g. openssl rand -base64 48)`);
-    else if (v.length < MIN_SECRET_LENGTH) problems.push(`${s.name} is ${v.length} characters; secrets must be at least ${MIN_SECRET_LENGTH}`);
+    else if (v.length < (s.min ?? MIN_SECRET_LENGTH)) problems.push(`${s.name} is ${v.length} characters; it must be at least ${s.min ?? MIN_SECRET_LENGTH}`);
   }
   if (e.ADMIN_PASSWORD !== undefined) {
     const why = passwordWeakness(e.ADMIN_PASSWORD);

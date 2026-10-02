@@ -1,0 +1,19 @@
+# Staging simulated tables on Fly.io — docs/18-staging.md. No public service.
+# Deploy from the repo root: flyctl deploy --config deploy/fly/sim.toml --dockerfile Dockerfile --remote-only
+# On a fresh machine it re-seeds its tables and rotates their keys (idempotent), so no volume is needed.
+app = "preflop-staging-sim"
+primary_region = "fra"
+
+[build]
+  build-target = "sim"
+
+[env]
+  API_URL = "https://preflop-staging-api.fly.dev"
+  BETTING_WINDOW_MS = "20000"
+  # Secrets (fly secrets set): DATABASE_URL (same Neon URL as the API),
+  # ADMIN_EMAIL and ADMIN_PASSWORD (the first console admin, seeded on first run).
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
