@@ -78,6 +78,7 @@ create table poker_tables (
 create table devices (
   id              text primary key,
   table_id        text not null references poker_tables(id),
+  kind            text not null default 'table_box' check (kind in ('table_box')),  -- the Table Box also carries the paired shuffler bridge
   public_key_pem  text not null,
   revoked         boolean not null default false,
   last_seq        bigint not null default 0,
@@ -92,7 +93,7 @@ create table rounds (
   mode                 text not null,
   currency             text not null,
   channel              text not null default 'direct',
-  state                text not null check (state in ('OPEN','LOCKED','DEALT','REVIEW','SETTLED','VOID')),
+  state                text not null check (state in ('OPEN','LOCKED','DEALT','REVIEW','EVIDENCE_REJECTED','SETTLED','VOID')),
   opened_at            timestamptz not null default now(),
   shuffle_complete_at  timestamptz,
   shuffle_source       text,
@@ -120,13 +121,15 @@ create table flop_entries (
 );
 
 create table captures (
-  round_id      text primary key references rounds(id),
+  round_id      text not null references rounds(id),
   device_id     text not null references devices(id),
   seq           bigint not null,
   capture       jsonb not null,
   signature     text not null,
   image         bytea not null,
-  received_at   timestamptz not null default now()
+  authentic     boolean not null,                  -- signature, device, seq and chain verified
+  received_at   timestamptz not null default now(),
+  primary key (round_id, seq)                      -- a rejected capture may be followed by a re-signed one
 );
 
 create table bets (
@@ -158,15 +161,18 @@ create table ledger_tx (
 
 create table ledger_accounts (
   id        text primary key,                       -- <owner>:<purpose>:<mode>:<currency>
-  currency  text not null
+  currency  text not null,
+  unique (id, currency)
 );
 
 create table ledger_entries (
   id            bigserial primary key,
   tx_id         bigint not null references ledger_tx(id),
-  account_id    text not null references ledger_accounts(id),
+  account_id    text not null,
   amount_minor  bigint not null,
-  currency      text not null
+  currency      text not null,
+  -- composite FK: an entry's currency must be its account's currency (no EUR entry on a USDT account)
+  foreign key (account_id, currency) references ledger_accounts (id, currency)
 );
 create index ledger_entries_account on ledger_entries (account_id);
 
@@ -200,30 +206,53 @@ create table audit_log (
   event      text not null                         -- exact JSON text that was hashed
 );
 create trigger audit_log_append_only before update or delete on audit_log for each row execute function forbid_change();
+
+-- Single-row head of the chain. Every append runs, in its own transaction:
+--   select seq, hash from audit_head where id = 1 for update;   -- serialises all writers
+--   insert into audit_log (prev_hash, hash, event) values (head.hash, sha256(head.hash || event), event);
+--   update audit_head set seq = <new seq>, hash = <new hash> where id = 1;
+-- so concurrent transactions can never commit two events with the same predecessor.
+create table audit_head (
+  id    smallint primary key check (id = 1),
+  seq   bigint not null,
+  hash  text not null
+);
+insert into audit_head (id, seq, hash) values (1, 0, 'genesis');
+create trigger audit_head_no_delete before delete on audit_head for each row execute function forbid_change();
 ```
 
 ## 4. Round lifecycle
 
 ```
 OPEN ──Start hand (lock + random cut)──▶ LOCKED ──flop entered / captured──▶ DEALT ──verified──▶ SETTLED
-  │                                        │                                    └─disagreement─▶ REVIEW ──floor──▶ SETTLED | VOID
+  │                                        │                                    ├─authentic, entries disagree─▶ REVIEW ──floor──▶ SETTLED | VOID
+  │                                        │                                    └─evidence rejected─▶ EVIDENCE_REJECTED ──new valid capture──▶ (resolve again)
+  │                                        │                                                                  └──────── void ──▶ VOID
   └──────────────────────── void ──────────┴────────────────────────────────────────────────────▶ VOID (refund all)
 ```
 
-- **Round ids** are `<tableId>:h<handNo>`. A round for hand N takes bets **while hand N−1 is being played**.
+- **Round ids** are `<tableId>:h<handNo>`.
+- **Betting window** (same as `docs/01` §4): the round for hand N+1 **opens when flop N is captured**, i.e. when round N first reaches DEALT. Players bet on flop N+1 while the rest of hand N is played. Betting closes at Start hand N+1.
 - **Opening a round** requires `tableReadiness()`: every certification flag is true, and the last heartbeat is less than 5 s old with a healthy link and the **stream live**. Otherwise the call fails with `409 table_not_ready`.
   - Exactly one round per table may be OPEN.
   - `ensureOpenRound()` reopens betting after a pause, once the table is healthy again.
-- **`shuffle-complete`** (OPEN): records the time and `source` (`shuffler` or `manual`). A manual shuffle is allowed to be recorded, but it later **voids** the hand.
+- **`shuffle-complete`** (OPEN): records the time and a `source` that is **derived from the credential, never sent by the caller**.
+  - Sent by the Table Box, which carries the paired shuffler bridge, with its **device signature** → `shuffler`.
+  - Sent with the table's staff HMAC secret (dealer or floor tablet) → `manual`.
+
+  A manual shuffle is recorded, but it **voids** the hand when `resolve()` runs. A staff tablet can therefore never pass off a hand shuffle as a machine shuffle.
 - **`start`** (OPEN → LOCKED), all in one transaction:
   1. Require shuffle-complete.
   2. Lock the round.
   3. `drawCutDepth()` and store `cut_depth` / `cut_instruction_at`.
   4. Audit the lock.
-  5. **Open round N+1** (skip silently if the table is not ready).
-  6. Respond with `{ cut_depth }`.
+  5. Respond with `{ cut_depth }`.
+
+  `start` does **not** open the next round. Round N+1 opens when this round reaches DEALT (see the betting window above).
 - **`cut`** and **`deal-start`** (LOCKED): record the timestamps.
-- **Dealer and floor flop entries, and the signed capture** (LOCKED or DEALT): the first one moves the round to DEALT. After each, call `resolve()`.
+- **Dealer and floor flop entries, and the signed capture** (LOCKED, DEALT, or EVIDENCE_REJECTED for a re-sent capture):
+  - The first of them moves the round from LOCKED to DEALT, and in the same transaction **opens round N+1** (skipped silently if the table is not ready).
+  - After each, call `resolve()`.
 - **`resolve()`** runs once the capture and both entries exist:
   1. `handProcedureProblems(events)`. If there are any problems → **VOID** with the reason (refund every bet).
   2. `verifyCapture(...)`, passing:
@@ -231,10 +260,18 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──flop entered / c
      - the server-stamped `locked_at` / `deal_start_at`;
      - the stored image bytes;
      - both entries.
-  3. If the decision is `settle`: advance the device's `last_seq` / `last_hash`, then **settle**.
-  4. Otherwise → **REVIEW**, with `review_reasons`.
-- **REVIEW** is resolved by a floor manager with `resolveReview(roundId, operatorId, settle(cards) | void(reason))`, which is audited.
-- **Void** is allowed from OPEN, LOCKED, DEALT or REVIEW, and refunds every accepted bet.
+     Verification has two parts. First **authenticity**: device known, not revoked and bound to the table; signature valid; `seq = last_seq + 1`; `prev_hash = last_hash`. Then **content**: round, timing, image hash, and the dealer and floor match. (Codex may expose the authenticity half as `verifyCaptureAuthenticity()` in the engine.)
+  3. **Device checkpoint:** if the capture is authentic, advance the device's `last_seq` / `last_hash` **now**, whatever happens to the round next (SETTLED, REVIEW, EVIDENCE_REJECTED for a content failure, or VOID). Then set `captures.authentic = true`. If authenticity fails, the checkpoint does not move. This keeps the Table Box chain continuous, so a hand that goes to review never blocks the next hand's capture.
+  4. Decision `settle` → **settle**.
+  5. Decision `review` (authentic capture, but the dealer or floor entry disagrees) → **REVIEW**, with `review_reasons`.
+  6. Decision `reject` (untrusted evidence: forged or edited, wrong key, revoked, chain broken, image missing or mismatched, wrong round or timing) → **EVIDENCE_REJECTED**, with the reasons, and a security alert.
+- **REVIEW** is resolved by a floor manager with `resolveReview(roundId, operatorId, settle(cards) | void(reason))`, which is audited. The floor manager decides after viewing the **verified** evidence image.
+- **EVIDENCE_REJECTED can never be settled by hand.** The only exits are:
+  - the Table Box re-sends a freshly signed capture with the next `seq`, which runs through `resolve()` again;
+  - **VOID** with a full refund, which is automatic if no valid capture arrives within the result SLA.
+
+  `resolveReview` refuses this state.
+- **Void** is allowed from OPEN, LOCKED, DEALT, REVIEW or EVIDENCE_REJECTED, and refunds every accepted bet.
 
 Server timestamps use `clock_timestamp()`, never the client's clock.
 
@@ -244,18 +281,23 @@ Server timestamps use `clock_timestamp()`, never the client's clock.
 
 1. **Replay check:** the same `(user, key)` returns the original bet.
 2. **Validate:** the stake is an integer within limits, and the selection exists.
-3. **Serialise per round** with an in-process keyed mutex. The exposure cache is per round and rebuilt from accepted bets when it's missing.
+3. **Serialise per round** with an in-process keyed mutex. The exposure cache is per round and is rebuilt from the round's accepted bets in the database whenever it is missing, or when its bet count differs from the database's.
 4. **Check the round and table:** the round must be `OPEN` (otherwise `409 round_locked`), and `tableReadiness()` must pass (otherwise `409 table_not_ready`).
 5. **Check the price:** `price(statsFor(selection), round.channel)`. It must be offered, and must equal the client's `odds_centi` (otherwise `409 price_changed` with the new odds). The payout must be ≤ the maximum payout.
-6. **Check exposure:** `RoundExposure.canAccept()` against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`.
+6. **Check exposure:** `RoundExposure.canAccept()` against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. This is a read-only check; the cache is not changed yet.
 7. **One database transaction:**
    1. `lockAccount(wallet)`;
    2. re-check that `rounds.state = 'OPEN'` (`for share`), because a lock may have landed meanwhile;
    3. check balance ≥ stake;
    4. insert the bet;
    5. post `bet.stake` (wallet → `PreFlop:bankroll`);
-   6. audit.
-8. After commit, add the bet to the exposure cache.
+   6. audit;
+   7. read the round's accepted-bet count, and compare it with the cache's count plus one.
+8. **After commit, update the cache, or evict it:**
+   - If the commit succeeded and the count matched, apply the bet to the cache (`tryAdd`).
+   - If applying throws, the commit outcome is unknown (for example a lost connection), or the counts differed, **evict the round's cache**. The next bet rebuilds it from the database before its exposure check.
+
+   The cache can therefore never under-count accepted bets, and the round-loss limit holds even after a partial failure.
 
 **Scaling note:** the in-process mutex and exposure cache assume **one API process per region**. Horizontal scaling needs a shared exposure store, for example Redis with a Lua script doing the same worst-case check, or a per-round row lock plus a persisted exposure vector.
 
@@ -271,31 +313,42 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `POST /v1/provider/tables/:t/heartbeat` | HMAC (table secret) | Link sample, including `streamLive` |
-| `POST /v1/provider/tables/:t/hands/:n/shuffle-complete` | HMAC | `{source}` |
-| `POST /v1/provider/tables/:t/hands/:n/start` | HMAC | Lock; returns `{cut_depth, next_round_id}` |
+| `POST /v1/provider/tables/:t/heartbeat` | Device signature (Table Box) | Link sample, including `streamLive` |
+| `POST /v1/provider/tables/:t/hands/:n/shuffle-complete` | **Device signature** → `shuffler`; staff HMAC → recorded as `manual` (voids the hand) | No body field for the source |
+| `POST /v1/provider/tables/:t/hands/:n/start` | Staff HMAC (dealer tablet) | Lock; returns `{cut_depth}` |
 | `POST /v1/provider/tables/:t/hands/:n/cut` · `/deal-start` | HMAC | Procedure events |
 | `POST /v1/provider/tables/:t/hands/:n/flop` | HMAC | `{source: dealer\|floor, cards}` |
-| `POST /v1/provider/tables/:t/hands/:n/capture` | HMAC | `{capture, signature, image_base64}` |
+| `POST /v1/provider/tables/:t/hands/:n/capture` | Device signature (Table Box) | `{capture, signature, image_base64}` |
 | `POST /v1/provider/tables/:t/hands/:n/void` | HMAC | `{reason}` |
 | `GET /v1/tables/:t/rounds/current` | Player | Open round, plus its prices from the book |
 | `POST /v1/bets` | Player + `Idempotency-Key` | Place a bet |
 | `GET /v1/me/bets` · `GET /v1/me/balance` | Player | History and balance |
 | `POST /v1/admin/...` | Admin token | Clubs, tables, certification, devices (public key PEM), deposits, review decisions |
 
-- **HMAC header:** `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + rawBody)>`. Reject anything older than 30 s, and compare with a constant-time check.
-- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`.
+- **Two credential types per table:**
+  - **Device signature** for the Table Box, which also carries the paired shuffler bridge. Header `X-PreFlop-Device: <deviceId>,t=<unix>,sig=<base64 Ed25519(t + "." + rawBody)>`, verified with the key registered in `devices`. The private key lives in the TPM.
+  - **Staff HMAC** for dealer and floor tablets. Header `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + rawBody)>`.
+
+  For both, reject anything older than 30 s and compare with a constant-time check. Routes marked "device signature" refuse the staff HMAC.
+- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`.
 
 ## 8. Acceptance criteria
 
-1. Ledger: every transaction balances (the trigger), and the sum of all accounts per currency is 0.
+1. Ledger:
+   - every transaction balances (the trigger), and the sum of all accounts per currency is 0;
+   - an entry whose currency differs from its account's is rejected (the composite FK).
 2. No bet is ever accepted after the lock, including under concurrent requests. Test with parallel placement racing `start`.
 3. A procedure break (manual shuffle, missing cut, events out of order) voids the hand and refunds every bet.
-4. A forged, replayed or edited capture, or a missing image, never settles. A dealer or floor mismatch goes to REVIEW.
+4. Evidence:
+   - A forged, replayed or edited capture, or a missing image, goes to EVIDENCE_REJECTED and **can never be settled by hand**. It settles only after a new valid capture arrives, otherwise it voids.
+   - A dealer or floor mismatch on an authentic capture goes to REVIEW.
+   - After a REVIEW or VOID hand, the same Table Box's next capture still verifies, because the checkpoint advanced.
+   - A shuffle-complete sent with the staff HMAC is recorded as `manual` and voids the hand.
 5. Settlement is idempotent: running it twice pays once.
 6. A round never opens while the table is uncertified, the heartbeat is stale, or the stream is off air.
-7. The audit chain verifies from genesis.
-8. **Simulated table:** 10,000 rounds, each following the real sequence:
+7. The audit chain verifies from genesis, including after 50 concurrent transactions each appending events.
+8. **Exposure survives partial failures:** inject a failure after the bet commit but before the cache update. The next bet must still be refused once the round's true worst case reaches the limit.
+9. **Simulated table:** 10,000 rounds, each following the real sequence:
    1. a crypto-random shuffle;
    2. Start hand;
    3. the cut performed at the issued depth;
