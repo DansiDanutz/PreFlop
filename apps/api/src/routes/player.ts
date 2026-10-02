@@ -12,7 +12,7 @@ import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
 import { perIp } from '../lib/rateLimit.ts';
-import { applyDueLimits, toEurCents } from '../lib/rg.ts';
+import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { bindReferral } from '../growth/agents.ts';
 import { redeemOwnerClaim } from '../lib/ownerClaims.ts';
@@ -59,17 +59,8 @@ export async function wallets(ctx: AppContext, userId: string) {
 async function assertRgAllows(ctx: AppContext, userId: string, roundId: string, stake: number) {
   const r = (await ctx.db.query<{ mode: string }>('select mode from rounds where id = $1', [roundId])).rows[0];
   if (!r || (r.mode !== 'real-fiat' && r.mode !== 'real-crypto')) return;
-  await applyDueLimits(ctx.db, userId);
-  const l = (await ctx.db.query<{ loss_day_minor: number | null }>('select loss_day_minor from rg_limits where user_id = $1', [userId])).rows[0];
-  if (l?.loss_day_minor == null) return;
-  // The limit is in EUR cents across every real-money currency (stablecoins count 1:1 with EUR).
-  const rows = (await ctx.db.query<{ currency: string; n: number }>(
-    `select currency, coalesce(sum(stake_minor - coalesce(payout_minor, 0)), 0)::bigint as n from bets
-      where user_id = $1 and mode in ('real-fiat','real-crypto') and placed_at > now() - interval '24 hours' and status <> 'void'
-      group by currency`, [userId])).rows;
-  const lostCents = rows.reduce((a, x) => a + toEurCents(x.currency, Number(x.n)), 0);
   const roundCurrency = (await ctx.db.query<{ currency: string }>('select currency from rounds where id = $1', [roundId])).rows[0]!.currency;
-  if (lostCents + toEurCents(roundCurrency, stake) > l.loss_day_minor) throw new ApiError(403, 'limit_reached', 'your daily loss limit would be exceeded');
+  await assertLossLimit(ctx.db, userId, toEurCents(roundCurrency, stake));
 }
 
 export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {

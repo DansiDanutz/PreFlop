@@ -28,6 +28,7 @@ The owner's decisions apply as everywhere else:
 
 ## 2. Playing
 - **Registering** pays the buy-in into the tournament pool account (`tournament.buyin`). The player may unregister for a full refund until the start.
+- **Responsible gaming:** a real-money buy-in counts against the player's daily loss limit (`403 limit_reached`), together with real-money bets. A tournament counts as buy-in minus prize; a cancelled or left tournament counts nothing.
 - **Betting.** Between `starts_at` and `ends_at`, an entrant bets tournament points on any open flop at the PreFlop odds of the moment (the same prices as the lobby). Each bet:
   - uses one of the entrant's bets at once, whatever the result;
   - takes the stake off the stack at once;
@@ -62,7 +63,7 @@ Every standing shows the position, the stack (the points accumulated), bets used
 
 ## 5. API
 - **Player:**
-  - `GET /v1/tournaments?status=upcoming|running|finished`;
+  - `GET /v1/tournaments?status=upcoming|running|finished`, with `server_time` for the lobby countdowns;
   - `GET /v1/tournaments/:id`: the tournament, the standings, `you` with your bets, and `server_time` for the countdown;
   - `POST /v1/tournaments/:id/register`, `DELETE /v1/tournaments/:id/register`;
   - `POST /v1/tournaments/:id/bets {round_id, selection_id, stake, odds_centi, accept_price_change?, idempotency_key}`.

@@ -28,7 +28,7 @@ export function YourBets({ bets }: { bets: readonly TournamentBet[] }) {
               <li key={b.id} className="flex items-start gap-3 py-3 text-[13px]">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-semibold">{resolveOption(book.index, b.selection_id)?.name ?? b.selection_id}</div>
-                  <div className="truncate text-ink/70">{tableName(b.table_id)} · {pts(b.stake)} at {formatOdds(b.odds_centi)}</div>
+                  <div className="truncate text-ink/70">{b.table_name ?? tableName(b.table_id)} · {pts(b.stake)} at {formatOdds(b.odds_centi)}</div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div className={cx('font-semibold', s.cls)}>{s.label}</div>

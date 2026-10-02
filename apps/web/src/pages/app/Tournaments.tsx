@@ -93,9 +93,14 @@ function TournamentCard({ t, now }: { t: Tournament; now: number }) {
 
 export function TournamentsPage() {
   const [tab, setTab] = useState<LobbyTab>('running');
-  const q = useQuery({ queryKey: ['tournaments', tab], queryFn: () => api.tournaments(tab), refetchInterval: tab === 'finished' ? false : 30_000 });
+  // The lobby list carries server_time too: countdowns follow the server, not the phone.
+  const q = useQuery({
+    queryKey: ['tournaments', tab],
+    queryFn: async () => { const d = await api.tournaments(tab); return { ...d, offset: Date.parse(d.server_time) - Date.now() }; },
+    refetchInterval: tab === 'finished' ? false : 30_000,
+  });
   // The list carries no server_time, so lobby countdowns use the device clock; the dashboard does not.
-  const now = useServerNow(0);
+  const now = useServerNow(q.data?.offset ?? 0);
   return (
     <div>
       <PageHeader eyebrow="Same stack. Same bets." title="Tournaments." subtitle="Everyone starts equal. The biggest stack when the clock runs out wins." />

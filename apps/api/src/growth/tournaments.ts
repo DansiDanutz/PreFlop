@@ -5,6 +5,7 @@ import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { CLOSED_LOOP_MODES, REAL_MODES, assertBoardModeAllowed, modeEnabled } from './leaderboards.ts';
@@ -167,6 +168,11 @@ export async function register(c: Tx, id: string, userId: string, ev: EventBatch
   if (t.max_entries != null && count >= t.max_entries) throw conflict('tournament_full', 'the tournament is full');
   const buyIn = n(t.buy_in_minor);
   const ref = newId('tbi');
+  if (buyIn > 0 && REAL_MODES.has(t.mode)) {
+    // A real-money buy-in is money at risk: it counts against the daily loss limit, serialised per player.
+    await c.query('select 1 from users where id = $1 for update', [userId]);
+    await assertLossLimit(c, userId, toEurCents(t.currency, buyIn));
+  }
   if (buyIn > 0) {
     const wallet = walletFor(t, userId);
     await lockAccount(c, wallet);

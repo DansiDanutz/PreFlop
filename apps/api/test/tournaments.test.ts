@@ -255,6 +255,37 @@ describe('tournament lifecycle', () => {
     } finally { await modes(false); }
   });
 
+  it('real-money buy-ins count against the daily loss limit; the lobby carries server time and bets carry table names', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    await modes(true);
+    try {
+      const p = await user('Limits');
+      await h.api('POST', '/v1/me/kyc', p.token, {});
+      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
+      expect((await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 })).status).toBe(200);
+      const mk = async (name: string) => (await h.api('POST', '/v1/admin/tournaments', admin, running({ name, mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body.id as string;
+      const [t1, t2] = [await mk('Limit one'), await mk('Limit two')];
+      expect((await h.api('POST', `/v1/tournaments/${t1}/register`, p.token)).status).toBe(200);
+      // 1,000 already at risk; another 1,000 would pass the 1,500 limit.
+      expect((await h.api('POST', `/v1/tournaments/${t2}/register`, p.token)).body.type).toBe('limit_reached');
+      // A cancelled (refunded) tournament no longer counts.
+      await h.api('POST', `/v1/admin/tournaments/${t1}/cancel`, admin, { reason: 'limit test' });
+      expect((await h.api('POST', `/v1/tournaments/${t2}/register`, p.token)).status).toBe(200);
+      await h.api('POST', `/v1/admin/tournaments/${t2}/cancel`, admin, { reason: 'limit test' });
+    } finally { await modes(false); }
+
+    const list = (await h.api('GET', '/v1/tournaments')).body;
+    expect(Math.abs(Date.parse(list.server_time) - Date.now())).toBeLessThan(60_000);
+    const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Names' }))).body;
+    const [a, b] = [await user('Ana'), await user('Bo')];
+    for (const x of [a, b]) await h.api('POST', `/v1/tournaments/${t.id}/register`, x.token);
+    const r = await openRound();
+    await bet(t.id, a.token, r.id, 'paired-board:no', 100);
+    const mine = (await h.api('GET', `/v1/tournaments/${t.id}`, a.token)).body.you.bets[0];
+    expect(mine.table_name).toEqual(expect.any(String));
+    await finishRound(r.n);
+  });
+
   it('refuses real money while it is off, closed-loop modes from the team, and bad settings', async () => {
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'real-fiat', currency: 'EUR' }))).body.type).toBe('mode_disabled');
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'diamonds', currency: 'DIAMOND' }))).body.type).toBe('org_required');

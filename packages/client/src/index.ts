@@ -148,6 +148,8 @@ export interface TournamentStanding {
 }
 export interface TournamentBet {
   id: string; round_id: string; table_id: string; selection_id: string;
+  /** Present on your bets in the tournament dashboard. */
+  table_name?: string;
   stake: number; odds_centi: number; status: 'accepted' | 'won' | 'lost' | 'void'; payout: number | null;
   created_at: string; settled_at: string | null;
 }
@@ -303,7 +305,7 @@ export function createClient(o: ClientOptions) {
     leaderboards: (mode?: PlayMode) => get<{ leaderboards: Leaderboard[] }>(`/v1/leaderboards${mode ? `?mode=${mode}` : ''}`),
     leaderboard: (id: string) => get<LeaderboardDetail>(`/v1/leaderboards/${encodeURIComponent(id)}`),
     // tournaments (docs/17). Live updates: WS /v1/stream, subscribe to `tournament:<id>` → `tournament.standings`.
-    tournaments: (status?: 'upcoming' | 'running' | 'finished') => get<{ tournaments: Tournament[] }>(`/v1/tournaments${q({ status })}`),
+    tournaments: (status?: 'upcoming' | 'running' | 'finished') => get<{ tournaments: Tournament[]; server_time: string }>(`/v1/tournaments${q({ status })}`),
     tournament: (id: string) => get<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}`),
     registerTournament: (id: string) => post<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}/register`),
     unregisterTournament: (id: string) => del<{ ok: true; refunded_minor: number }>(`/v1/tournaments/${encodeURIComponent(id)}/register`),

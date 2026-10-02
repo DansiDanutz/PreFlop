@@ -96,9 +96,9 @@ async function detail(ctx: AppContext, id: string, u: SessionUser | null) {
   });
   const mine = u ? ranked.find((e) => e.user_id === u.id) : undefined;
   const bets = mine
-    ? (await ctx.db.query<{ id: string; round_id: string; table_id: string; selection_id: string; stake: string; odds_centi: number; status: string; payout: string | null; created_at: Date; settled_at: Date | null }>(
-      `select b.id, b.round_id, r.table_id, b.selection_id, b.stake, b.odds_centi, b.status, b.payout, b.created_at, b.settled_at
-         from tournament_bets b join rounds r on r.id = b.round_id where b.tournament_id = $1 and b.user_id = $2 order by b.created_at desc`, [id, u!.id])).rows
+    ? (await ctx.db.query<{ id: string; round_id: string; table_id: string; table_name: string; selection_id: string; stake: string; odds_centi: number; status: string; payout: string | null; created_at: Date; settled_at: Date | null }>(
+      `select b.id, b.round_id, r.table_id, pt.name as table_name, b.selection_id, b.stake, b.odds_centi, b.status, b.payout, b.created_at, b.settled_at
+         from tournament_bets b join rounds r on r.id = b.round_id join poker_tables pt on pt.id = r.table_id where b.tournament_id = $1 and b.user_id = $2 order by b.created_at desc`, [id, u!.id])).rows
       .map((b) => ({ ...b, stake: Number(b.stake), payout: b.payout === null ? null : Number(b.payout), created_at: b.created_at.toISOString(), settled_at: b.settled_at?.toISOString() ?? null }))
     : [];
   return {
@@ -137,7 +137,7 @@ export async function tournamentRoutes(app: FastifyInstance, ctx: AppContext) {
       finished: `t.status in ('completed','cancelled') and t.completed_at > now() - interval '30 days'`,
       all: `(t.status = 'open' or t.completed_at > now() - interval '30 days')`,
     }[status ?? 'all'];
-    return { tournaments: await list(ctx, `${visible} and ${where}`, [], u) };
+    return { tournaments: await list(ctx, `${visible} and ${where}`, [], u), server_time: new Date().toISOString() };
   });
 
   app.get('/v1/tournaments/:id', async (req) => detail(ctx, (req.params as { id: string }).id, await optionalUser(ctx, req)));
