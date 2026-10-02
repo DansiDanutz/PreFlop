@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
-import { isPrivateAddress } from '../src/lib/safeUrl.ts';
+import { guardedLookup, isPrivateAddress, postWebhook } from '../src/lib/safeUrl.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
 import { type Harness, harness, ledgerSums } from './helpers.ts';
@@ -48,6 +48,24 @@ describe('Greptile review of b2c9c1e', () => {
     }
     expect(['127.0.0.1', '10.0.0.1', '172.16.5.4', '192.168.1.1', '169.254.1.1', '100.64.0.1', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1'].every(isPrivateAddress)).toBe(true);
     expect(['8.8.8.8', '1.1.1.1', '2606:4700::1111'].some(isPrivateAddress)).toBe(false);
+  });
+
+  it('2b. IPv4 embedded in IPv6 is checked in every notation (hex mapped, compatible, NAT64, 6to4)', async () => {
+    const priv = ['::ffff:7f00:1', '::ffff:7f00:0001', '0:0:0:0:0:ffff:7f00:1', '::ffff:a00:1', '::ffff:a9fe:a9fe', '::7f00:1', '::127.0.0.1',
+      '64:ff9b::7f00:1', '2002:7f00:1::1', '::', 'fec0::1', 'fe80::1%eth0', 'not-an-ip'];
+    for (const ip of priv) expect(isPrivateAddress(ip), ip).toBe(true);
+    for (const ip of ['::ffff:808:808', '64:ff9b::808:808', '2002:808:808::1', '2001:4860:4860::8888']) expect(isPrivateAddress(ip), ip).toBe(false);
+    const owner = await user('p6');
+    const id = await org('partner', owner.email);
+    const r = await h.api('POST', `/v1/org/${id}/webhooks`, owner.token, { url: 'https://[::ffff:7f00:1]/x', events: ['bet.settled'] });
+    expect(r.status).toBe(422);
+  });
+
+  it('2c. delivery pins DNS: a host that resolves to a private address is refused at connect time', async () => {
+    const seen = await new Promise<{ err: NodeJS.ErrnoException | null }>((resolve) =>
+      guardedLookup('localhost', {}, (err) => resolve({ err })));
+    expect(seen.err?.code).toBe('EPRIVATE');
+    await expect(postWebhook('https://localhost/x', {}, '{}')).rejects.toThrow();
   });
 
   it('3–4. raised limits apply after the cooling-off; concurrent deposits cannot exceed the daily limit', async () => {

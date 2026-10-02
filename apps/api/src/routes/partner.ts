@@ -10,7 +10,7 @@ import { type Db, tx } from '../lib/db.ts';
 import { badRequest, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { type DomainEvent, EventBatch, bus, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
-import { assertPublicUrl } from '../lib/safeUrl.ts';
+import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
 
@@ -250,11 +250,11 @@ export async function deliverDue(db: Db, limit = 20): Promise<number> {
     const body = JSON.stringify(d.payload);
     let error: string | null = null;
     try {
-      // Re-checked at delivery (DNS can change after registration); redirects are never followed.
-      await assertPublicUrl(d.url);
-      const res = await fetch(d.url, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', 'x-preflop-signature': signWebhook(d.secret, body) }, body, signal: AbortSignal.timeout(5000) });
-      if (res.status >= 300 && res.status < 400) error = `redirect refused (HTTP ${res.status})`;
-      else if (!res.ok) error = `HTTP ${res.status}`;
+      // Re-checked at delivery, and the socket only connects to the addresses that passed the
+      // check (no DNS rebinding in between); redirects are never followed.
+      const status = await postWebhook(d.url, { 'content-type': 'application/json', 'x-preflop-signature': signWebhook(d.secret, body) }, body);
+      if (status >= 300 && status < 400) error = `redirect refused (HTTP ${status})`;
+      else if (status < 200 || status >= 300) error = `HTTP ${status}`;
     } catch (e) {
       error = (e as Error).message;
     }
