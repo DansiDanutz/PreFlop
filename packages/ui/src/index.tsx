@@ -44,7 +44,7 @@ export function Button({ variant = 'primary', size = 'md', className, ...p }: Bu
     danger: 'bg-danger text-white hover:brightness-110',
   }[variant];
   const s = { sm: 'h-9 px-3 text-sm', md: 'h-11 px-5 text-[15px]', lg: 'h-14 px-6 text-lg' }[size];
-  return <button className={cx('inline-flex items-center justify-center gap-2 rounded-[8px] font-semibold transition-colors disabled:cursor-not-allowed', v, s, className)} {...p} />;
+  return <button className={cx('inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[8px] font-semibold transition-colors disabled:cursor-not-allowed', v, s, className)} {...p} />;
 }
 
 export function Card({ className, ...p }: HTMLAttributes<HTMLDivElement>) {

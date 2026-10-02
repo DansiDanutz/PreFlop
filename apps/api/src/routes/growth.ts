@@ -199,12 +199,13 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/promotions', async (req) => {
     const u = await optionalUser(ctx, req);
-    const rows = (await ctx.db.query<PromotionRow & { claimed: boolean; org_name: string | null }>(
-      `select p.*, o.name as org_name, exists (select 1 from promotion_claims c where c.promotion_id = p.id and c.user_id = $1) as claimed
+    const rows = (await ctx.db.query<PromotionRow & { claimed: boolean; eligible: boolean; org_name: string | null }>(
+      `select p.*, o.name as org_name, exists (select 1 from promotion_claims c where c.promotion_id = p.id and c.user_id = $1) as claimed,
+              (p.kind <> 'org-drop' or exists (select 1 from room_members m join rooms r on r.id = m.room_id where m.user_id = $1 and r.org_id = p.owner_org)) as eligible
          from promotions p left join organizations o on o.id = p.owner_org
         where p.status = 'approved' and p.starts_at <= now() and p.ends_at > now() and (p.owner_org is null or o.status = 'active')
         order by p.owner_org nulls first, p.starts_at desc limit 50`, [u?.id ?? null])).rows;
-    return { promotions: rows.map((p) => ({ ...promoView(p, u ? p.claimed : undefined), owner_name: p.org_name ?? 'PreFlop' })) };
+    return { promotions: rows.map((p) => ({ ...promoView(p, u ? p.claimed : undefined), owner_name: p.org_name ?? 'PreFlop', ...(u ? { eligible: p.eligible } : {}) })) };
   });
 
   app.post('/v1/promotions/:id/claim', async (req) => {

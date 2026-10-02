@@ -3,6 +3,8 @@ import { Route, Routes, useLocation } from 'react-router';
 import { AppLayout } from './components/AppShell.tsx';
 import { SiteLayout } from './components/site/SiteLayout.tsx';
 import { RequireAuth, useSessionGuard } from './lib/auth.tsx';
+import { LeaderboardPage, LeaderboardsPage } from './pages/app/Leaderboards.tsx';
+import { PromotionsPage } from './pages/app/Promotions.tsx';
 import { ActivityPage } from './pages/app/Activity.tsx';
 import { ClubPage } from './pages/app/Club.tsx';
 import { ClubsPage } from './pages/app/Clubs.tsx';
@@ -48,6 +50,9 @@ export function App() {
           <Route path="clubs/:id" element={<ClubPage />} />
           <Route path="table/:id" element={<TablePage />} />
           <Route path="table/:id/bets" element={<TablePage />} />
+          <Route path="leaderboards" element={<LeaderboardsPage />} />
+          <Route path="leaderboards/:id" element={<LeaderboardPage />} />
+          <Route path="promotions" element={<PromotionsPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="*" element={<NotFoundPage inApp />} />

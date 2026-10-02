@@ -13,6 +13,7 @@ import * as O from './portals/org/index.ts';
 import * as C from './portals/club/index.tsx';
 import * as P from './portals/partner/index.tsx';
 import * as G from './portals/organizer/index.tsx';
+import * as W from './portals/growth/index.tsx';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token, loading, me, error } = useAuth();
@@ -54,6 +55,8 @@ export function App() {
         <Route path="book" element={<A.Book />} />
         <Route path="payments" element={<A.Payments />} />
         <Route path="settings" element={<A.Settings />} />
+        <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="promotions" element={<W.Promotions />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 
@@ -63,6 +66,8 @@ export function App() {
         <Route path="staff" element={<C.Staff />} />
         <Route path="hands" element={<O.HandLog />} />
         <Route path="rooms" element={<O.Rooms />} />
+        <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="promotions" element={<W.Promotions />} />
         <Route path="chips" element={<O.Chips />} />
         <Route path="players" element={<O.Players />} />
         <Route path="revenue" element={<O.Statements variant="revenue" />} />
@@ -86,6 +91,8 @@ export function App() {
       <Route path="/organizer/:orgId" element={shell}>
         <Route index element={<O.OrgOverviewPage />} />
         <Route path="rooms" element={<O.Rooms />} />
+        <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="promotions" element={<W.Promotions />} />
         <Route path="diamonds" element={<G.Diamonds />} />
         <Route path="chips" element={<O.Chips />} />
         <Route path="treasury" element={<O.Treasury />} />

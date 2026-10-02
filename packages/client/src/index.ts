@@ -129,6 +129,32 @@ export interface ClientOptions {
   onUnauthorized?: () => void;
 }
 
+
+// --- leaderboards and promotions (docs/16)
+export type LeaderboardMetric = 'net' | 'volume' | 'roi' | 'points';
+export interface Leaderboard {
+  id: string; name: string; owner_org: string | null; owner_name: string; mode: PlayMode; currency: string;
+  scope: 'global' | 'org' | 'table' | 'room'; scope_ref: string | null; metric: LeaderboardMetric; min_rounds: number; prize_split_bps: number[];
+  starts_at: string; ends_at: string; status: 'scheduled' | 'active' | 'settled' | 'cancelled'; margin_bps: number; contribution_bps: number; pool_minor: number;
+}
+export interface LeaderboardEntry { rank: number | null; display_name: string; score: number; rounds: number; qualified: boolean; prize_minor: number; badge: string | null; you: boolean }
+export interface LeaderboardDetail { leaderboard: Leaderboard; standings: LeaderboardEntry[]; you: LeaderboardEntry | null }
+export interface LeaderboardInput {
+  name: string; mode: PlayMode; currency: string; scope?: Leaderboard['scope']; scope_ref?: string | null; metric: LeaderboardMetric; min_rounds?: number;
+  prize_split_bps: number[]; starts_at: string; ends_at: string; margin_bps?: number; contribution_bps?: number; fund_minor?: number;
+}
+export type PromotionKind = 'announcement' | 'leaderboard' | 'free-chips' | 'org-drop';
+export interface Promotion {
+  id: string; owner_org: string | null; owner_name?: string; kind: PromotionKind; title: string; body: string; link: string | null; leaderboard_id: string | null;
+  mode: PlayMode | null; currency: string | null; amount_minor: number | null; budget_minor: number | null; claimed_minor: number;
+  starts_at: string; ends_at: string; status: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'ended'; review_note: string | null; claimed?: boolean; eligible?: boolean; live?: boolean;
+}
+export interface PromotionInput {
+  kind: PromotionKind; title: string; body?: string; link?: string | null; leaderboard_id?: string | null; mode?: PlayMode | null; currency?: string | null;
+  amount_minor?: number | null; budget_minor?: number | null; starts_at: string; ends_at: string; draft?: boolean;
+}
+export interface Badge { id: string; kind: 'champion' | 'podium' | 'top10'; label: string; leaderboard_id: string | null; awarded_at: string }
+
 export function createClient(o: ClientOptions) {
   async function req<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     const token = o.getToken?.();
@@ -188,6 +214,11 @@ export function createClient(o: ClientOptions) {
     favorites: () => get<{ selection_ids: string[] }>('/v1/me/favorites'),
     setFavorites: (selection_ids: string[]) => put<{ selection_ids: string[] }>('/v1/me/favorites', { selection_ids }),
     joinRoom: (code: string) => post<Room>('/v1/rooms/join', { code }),
+    leaderboards: (mode?: PlayMode) => get<{ leaderboards: Leaderboard[] }>(`/v1/leaderboards${mode ? `?mode=${mode}` : ''}`),
+    leaderboard: (id: string) => get<LeaderboardDetail>(`/v1/leaderboards/${encodeURIComponent(id)}`),
+    myBadges: () => get<{ badges: Badge[] }>('/v1/me/badges'),
+    promotions: () => get<{ promotions: Promotion[] }>('/v1/promotions'),
+    claimPromotion: (id: string) => post<{ amount_minor: number; currency: string }>(`/v1/promotions/${encodeURIComponent(id)}/claim`),
     limits: () => get<Limits>('/v1/me/limits'),
     setLimits: (l: Limits) => put<Limits>('/v1/me/limits', l),
     selfExclude: (days: number) => post<{ until: string }>('/v1/me/self-exclusion', { days }),
@@ -214,6 +245,11 @@ export function createClient(o: ClientOptions) {
     clubRevokeStaff: (id: string, credId: string) => post<{ ok: true }>(`${org(id)}/staff/${encodeURIComponent(credId)}/revoke`),
     // organizer & club rooms / currencies
     orgRooms: (id: string) => get<{ rooms: Room[] }>(`${org(id)}/rooms`),
+    orgLeaderboards: (id: string) => get<{ leaderboards: Leaderboard[] }>(`${org(id)}/leaderboards`),
+    orgCreateLeaderboard: (id: string, b: LeaderboardInput) => post<Leaderboard>(`${org(id)}/leaderboards`, b),
+    orgFundLeaderboard: (id: string, lb: string, amount_minor: number) => post<Leaderboard>(`${org(id)}/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
+    orgPromotions: (id: string) => get<{ promotions: Promotion[] }>(`${org(id)}/promotions`),
+    orgCreatePromotion: (id: string, b: PromotionInput) => post<Promotion>(`${org(id)}/promotions`, b),
     orgCreateRoom: (id: string, b: { name: string; table_id: string; mode: PlayMode; house: 'organizer' | 'pool'; rules: RoomRules; visibility: 'public' | 'invite' }) => post<Room>(`${org(id)}/rooms`, b),
     orgUpdateRoom: (id: string, roomId: string, b: Partial<{ name: string; rules: RoomRules; status: Room['status']; visibility: Room['visibility'] }>) => put<Room>(`${org(id)}/rooms/${encodeURIComponent(roomId)}`, b),
     orgValidateRules: (id: string, b: { mode: PlayMode; house: 'organizer' | 'pool'; rules: RoomRules }) => post<{ ok: boolean; problems: string[]; organizer_ev?: number; fee_rate_bound?: number }>(`${org(id)}/rooms/validate`, b),
@@ -254,6 +290,15 @@ export function createClient(o: ClientOptions) {
     adminRounds: (f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number; table_name: string })[] }>(`/v1/admin/rounds${q(f)}`),
     adminUsers: (f: { q?: string; limit?: number } = {}) => get<{ users: (User & { created_at: string; bets: number })[] }>(`/v1/admin/users${q(f)}`),
     adminUpdateUser: (id: string, b: Partial<Pick<User, 'status' | 'kyc_status' | 'platform_role'>>) => put<User>(`/v1/admin/users/${encodeURIComponent(id)}`, b),
+    adminLeaderboards: () => get<{ leaderboards: Leaderboard[] }>('/v1/admin/leaderboards'),
+    adminCreateLeaderboard: (b: LeaderboardInput) => post<Leaderboard>('/v1/admin/leaderboards', b),
+    adminFundLeaderboard: (lb: string, amount_minor: number) => post<Leaderboard>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
+    adminSettleLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/settle`),
+    adminCancelLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/cancel`),
+    adminPromotions: () => get<{ promotions: Promotion[] }>('/v1/admin/promotions'),
+    adminCreatePromotion: (b: PromotionInput) => post<Promotion>('/v1/admin/promotions', b),
+    adminDecidePromotion: (id: string, decision: 'approve' | 'reject', note?: string) => post<{ id: string; status: string }>(`/v1/admin/promotions/${encodeURIComponent(id)}/decision`, { decision, ...(note ? { note } : {}) }),
+    adminEndPromotion: (id: string) => post<{ ok: true }>(`/v1/admin/promotions/${encodeURIComponent(id)}/end`),
     adminOrgs: () => get<{ orgs: (OrgOverview['org'] & { members: number; created_at: string })[] }>('/v1/admin/orgs'),
     adminCreateOrg: (b: { kind: OrgKind; name: string; owner_email: string; settings?: Record<string, unknown> }) => post<{ id: string }>('/v1/admin/orgs', b),
     adminSetOrgStatus: (id: string, status: 'active' | 'suspended') => put<{ ok: true }>(`/v1/admin/orgs/${encodeURIComponent(id)}/status`, { status }),

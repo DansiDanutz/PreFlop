@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, BadgeEuro, BookOpen, Building2, Coins, CreditCard, Diamond, FileText, Gauge, Gem, KeyRound, LayoutDashboard,
-  Landmark, ListChecks, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2,
+  Landmark, ListChecks, Trophy, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2,
   type LucideIcon,
 } from 'lucide-react';
 import type { PortalKind } from '../lib/portals.ts';
@@ -27,6 +27,10 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
       { to: 'payments', label: 'Payments', icon: CreditCard },
       { to: 'book', label: 'Odds book', icon: BookOpen },
     ] },
+    { label: 'Growth', items: [
+      { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'promotions', label: 'Promotions', icon: Gift },
+    ] },
     { label: 'Platform', items: [
       { to: 'audit', label: 'Audit', icon: ShieldCheck },
       { to: 'settings', label: 'Settings', icon: Settings },
@@ -41,6 +45,8 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
     ] },
     { label: 'Play', items: [
       { to: 'rooms', label: 'Rooms', icon: DoorOpen },
+      { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'promotions', label: 'Promotions', icon: Gift },
       { to: 'chips', label: 'Chips', icon: Coins },
       { to: 'players', label: 'Players', icon: Users },
     ] },
@@ -66,6 +72,10 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
   ],
   organizer: [
     { items: [{ to: '', label: 'Overview', icon: LayoutDashboard, end: true }, { to: 'rooms', label: 'Rooms', icon: DoorOpen }] },
+    { label: 'Growth', items: [
+      { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'promotions', label: 'Promotions', icon: Gift },
+    ] },
     { label: 'Currencies', items: [
       { to: 'diamonds', label: 'Diamonds', icon: Gem },
       { to: 'chips', label: 'Chips', icon: Coins },

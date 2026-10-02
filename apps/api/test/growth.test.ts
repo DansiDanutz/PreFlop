@@ -148,10 +148,12 @@ describe('promotions', () => {
     // Only players in the organizer's rooms are eligible.
     const outsider = await user('outsider');
     expect((await h.api('POST', `/v1/promotions/${drop.body.id}/claim`, outsider.token)).body.type).toBe('not_eligible');
+    expect((await h.api('GET', '/v1/promotions', outsider.token)).body.promotions.find((x: any) => x.id === drop.body.id).eligible).toBe(false);
     const room = (await h.api('POST', `/v1/org/${org}/rooms`, owner.token, { name: 'Drop Room', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' }));
     expect(room.status).toBe(201);
     const p1 = await user('member1'), p2 = await user('member2');
     for (const p of [p1, p2]) await h.db.query('insert into room_members (room_id, user_id) values ($1, $2)', [room.body.id, p.id]);
+    expect((await h.api('GET', '/v1/promotions', p1.token)).body.promotions.find((x: any) => x.id === drop.body.id).eligible).toBe(true);
     expect((await h.api('POST', `/v1/promotions/${drop.body.id}/claim`, p1.token)).status).toBe(200);
     // The budget (150) covers one claim of 100, not two.
     const second = await h.api('POST', `/v1/promotions/${drop.body.id}/claim`, p2.token);

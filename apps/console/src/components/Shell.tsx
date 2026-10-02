@@ -110,14 +110,18 @@ export function EnvBadge() {
 }
 
 function Sidebar({ portal, onNavigate }: { portal: Portal; onNavigate?: () => void }) {
+  const navRef = useRef<HTMLElement>(null);
+  const { pathname } = useLocation();
+  // Keep the current page visible when the menu is taller than the screen.
+  useEffect(() => { navRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' }); }, [pathname]);
   return (
-    <div className="flex h-full flex-col gap-4 px-4 py-5">
+    <div className="flex h-full flex-col gap-3.5 px-4 py-5">
       <Link to={portal.key} className="block px-2 pt-2" onClick={onNavigate}>
         <Wordmark size="lg" />
         <span className="mt-1.5 block text-[10px] font-medium uppercase tracking-[0.2em] text-muted">Console</span>
       </Link>
       <PortalMenu current={portal} />
-      <nav aria-label={`${KIND_LABEL[portal.kind]} navigation`} className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
+      <nav ref={navRef} aria-label={`${KIND_LABEL[portal.kind]} navigation`} className="-mx-1 min-h-0 flex-1 space-y-3 overflow-y-auto px-1">
         {NAV[portal.kind].map((g, i) => (
           <div key={i}>
             {g.label && <div className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-muted">{g.label}</div>}
@@ -125,7 +129,7 @@ function Sidebar({ portal, onNavigate }: { portal: Portal; onNavigate?: () => vo
               {g.items.map((it) => (
                 <li key={it.to}>
                   <NavLink to={it.to ? `${portal.key}/${it.to}` : portal.key} end={it.end ?? false} onClick={onNavigate}
-                    className={({ isActive }) => cx('flex items-center gap-3 rounded-[8px] border px-3 py-[8px] text-[14px] transition-colors',
+                    className={({ isActive }) => cx('flex items-center gap-3 rounded-[8px] border px-3 py-[6px] text-[14px] transition-colors',
                       isActive ? 'border-accent/25 bg-accent-deep text-accent' : 'border-transparent text-ink/80 hover:bg-surface-2 hover:text-ink')}>
                     <it.icon size={16} aria-hidden />{it.label}
                   </NavLink>

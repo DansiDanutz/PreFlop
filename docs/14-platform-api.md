@@ -173,3 +173,26 @@ docker compose up --build          # full stack (API, sim, web :8080, console :8
 ```
 
 For production settings (`NODE_ENV=production`), see the README.
+
+## Leaderboards and promotions (docs/16)
+
+| Endpoint | What it does |
+|---|---|
+| `GET /v1/leaderboards?mode=` | Live and scheduled boards, plus boards settled in the last 30 days, each with its prize pool |
+| `GET /v1/leaderboards/:id` | The board, its top 50 (display names only) with projected or paid prizes, and `you` when signed in |
+| `GET /v1/me/badges` | Champion, podium and top-10 badges |
+| `GET /v1/promotions` | Live promotions. When signed in, each also has `claimed` and `eligible` |
+| `POST /v1/promotions/:id/claim` | Claims a free-chip offer or an organization drop, once per player. Errors: `already_claimed`, `budget_exhausted`, `not_eligible`, `promotion_not_live` |
+| `GET/POST /v1/admin/leaderboards` | List and create boards (admin, ops). Real-money boards return `403 mode_disabled` while real money is off |
+| `POST /v1/admin/leaderboards/:id/fund·settle·cancel` | Add a PreFlop sponsorship, settle an ended board, or cancel (the pool goes back to its funders) |
+| `GET/POST /v1/admin/promotions` | Every promotion, plus the review queue. PreFlop promotions go live as soon as they are created |
+| `POST /v1/admin/promotions/:id/decision·end` | Approve, or reject with a required note; or end a promotion now |
+| `GET/POST /v1/org/:id/leaderboards` · `POST …/:lb/fund` | Chip and diamond boards on the organization's own tables or rooms, funded from its treasury |
+| `GET/POST /v1/org/:id/promotions` | Announcements, leaderboard cards and drops. They start as `pending_review` |
+
+The ledger kinds are:
+- `pool.fund.sponsor`, `pool.fund.org`: fixed amounts put into a pool;
+- `pool.accrue.margin`, `pool.accrue.contribution`: the worker's accruals;
+- `pool.payout`, ref `<board>:<rank>`: a prize;
+- `pool.return`, `pool.cancel`: money going back to the funders;
+- `promo.claim`, ref `<promotion>:<user>`: a claimed promotion.
