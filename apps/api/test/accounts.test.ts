@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ageOn } from '../src/lib/accounts.ts';
+import { COUNTRY_CODES } from '../src/lib/countries.ts';
 import { tx } from '../src/lib/db.ts';
 import { type MailTransport, deliverMail } from '../src/lib/mailer.ts';
 import { base32Decode, base32Encode, hotp, otpauthUri, stepAt, totpAt, verifyTotp } from '../src/lib/totp.ts';
@@ -88,6 +90,13 @@ describe('age', () => {
 });
 
 describe('territories', () => {
+  it('the API and the typed client list the same 250 ISO countries', () => {
+    const client = readFileSync(new URL('../../../packages/client/src/countries.ts', import.meta.url), 'utf8');
+    const codes = [...client.matchAll(/'([A-Z ]+)'/g)].map((m) => m[1]!).join('').trim().split(/\s+/);
+    expect(codes).toEqual([...COUNTRY_CODES]);
+    expect(new Set(COUNTRY_CODES).size).toBe(250);
+  });
+
   it('the setting is validated and normalised', async () => {
     expect((await setTerritories({ blocked: ['XX'] })).body.type).toBe('invalid_value');
     expect((await setTerritories({ blocked: ['US'], real_money_allowed: ['US'] })).body.type).toBe('invalid_value');

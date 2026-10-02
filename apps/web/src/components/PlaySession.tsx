@@ -52,22 +52,21 @@ export function RealityCheck({ embed = false }: { embed?: boolean }) {
   const { session, minutes, limitReached } = usePlaySession();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [ack, setAck] = useState(0);
+  // Checks already acknowledged in this session (kept per tab, so a reload does not repeat one).
+  const [acked, setAcked] = useState(0);
   const [dismissedLimit, setDismissedLimit] = useState(false);
-  useEffect(() => {
-    if (session) setAck(Number(readString(ackKey(session.started_at), 'session') ?? 0));
-  }, [session?.started_at]); // eslint-disable-line react-hooks/exhaustive-deps
   const logout = useMutation({
     mutationFn: () => api.logout().catch(() => ({ ok: true as const })),
     onSettled: () => { setToken(null); qc.clear(); if (!embed) nav('/'); },
   });
   if (!session) return null;
+  const ack = Math.max(acked, Number(readString(ackKey(session.started_at), 'session') ?? 0) || 0);
   const due = realityChecksDue(minutes, session.reality_check_minutes);
   const showLimit = limitReached && !dismissedLimit;
   const open = showLimit || due > ack;
   const cont = () => {
     writeString(ackKey(session.started_at), String(due), 'session');
-    setAck(due);
+    setAcked(due);
     if (limitReached) setDismissedLimit(true);
   };
   return (

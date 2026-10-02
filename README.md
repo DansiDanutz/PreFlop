@@ -66,7 +66,9 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `RESULT_SLA_MS` · `REVIEW_SLA_MS` · `MAX_CAPTURE_DELAY_MS` | 5 min · 30 min · 3 min | Round deadlines (`docs/13` §4) |
 | `PLAY_START` | `10000` | Starting play-money balance |
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
-| `WEB_URL` | `http://localhost:5173` | Origin used in the partner widget snippet |
+| `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
+| `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails |
+| `SMTP_URL` | unset | Reserved for a mail provider. No transport ships yet: in production, emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
 
 Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
 
