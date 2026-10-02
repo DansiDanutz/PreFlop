@@ -82,6 +82,8 @@ export type Scenario =
   | (Base & {
       readonly kind: 'organizer-house'; readonly organizer: string; readonly provider: string;
       readonly marginBps: number; readonly platformFee: PlatformFee; readonly providerShareBps: number;
+      /** Smallest stake the organizer's room accepts (minor units). */
+      readonly minStakeMinor: number;
       /** Organizer's own variable costs per unit staked (payments, KYC, support). */
       readonly organizerCostRate: number;
     })
@@ -170,7 +172,7 @@ export function evaluate(s: Scenario): ScenarioResult {
       const orgCosts = turnover * s.organizerCostRate;
       const preflopCosts = turnover * DEFAULT_COST_MODEL.channels.partner.variableOpsPerTurnover;
       const check = validateOrganizerHouse({ mode: s.mode, marginBps: s.marginBps, platformFee: s.platformFee,
-        providerShareBps: s.providerShareBps, typicalStakeMinor: Math.round(s.activity.avgStake * 100) });
+        providerShareBps: s.providerShareBps, minStakeMinor: s.minStakeMinor, typicalStakeMinor: Math.round(s.activity.avgStake * 100) });
       const lines: PnlLine[] = [
         { participant: s.organizer, role: 'House (pays the winnings from its collateral)', eur: ggr - fee - provider - orgCosts,
           note: `GGR ${eur(ggr)} − platform fee − provider share − own costs` },
@@ -182,7 +184,7 @@ export function evaluate(s: Scenario): ScenarioResult {
         { name: 'Organizer house config valid (has the edge after fees)', ok: check.ok },
         { name: 'Organizer net ≥ 0', ok: lines[0]!.eur >= 0 },
         { name: 'PreFlop net ≥ 0 with zero risk', ok: lines[1]!.eur >= 0 },
-      ], { edge, ggr, organizerEvPerUnit: check.organizerEv, platformFeeRate: check.platformFeeRate });
+      ], { edge, ggr, organizerEvPerUnit: check.organizerEv, platformFeeRate: check.platformFeeRate, typicalEv: check.typicalEv ?? check.organizerEv, minStakeMinor: s.minStakeMinor });
     }
 
     case 'diamonds': {

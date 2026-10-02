@@ -6,8 +6,8 @@ Every club table must be **certified** before it can host PreFlop rounds, and mu
 
 | Requirement | Why | How it's enforced |
 |---|---|---|
-| **Automatic shuffling machine** (approved model, serial registered, paired with the table device) | A human shuffle can be manipulated; a machine gives a random, auditable deck | The shuffler sends `shuffle-complete` for every hand. A signal typed in by staff does not count |
-| **Dealer cuts the deck before every hand, at a random depth chosen by PreFlop after betting closes** | Even someone who knew the shuffled order cannot know which cards reach the flop | The tablet shows the cut depth; the dealer cuts with a cut card and presses **Cut**. Camera C3 records it. Order is enforced: shuffle → lock → cut instruction → cut → deal |
+| **PreFlop Trusted Shuffler** (owned by PreFlop, laboratory-certified, firmware attested, paired with the Table Box; `docs/12` §2a) | A human shuffle can be manipulated; a machine gives a random, auditable deck | The shuffler sends `shuffle-complete` for every hand. A signal typed in by staff does not count |
+| **Dealer cuts the deck before every hand, at a random depth chosen by PreFlop after betting closes** | Makes aiming at one exact card position harder. It is **not** a defence against a rigged shuffler (that needs the PreFlop Trusted Shuffler, `docs/12` §2a) | The tablet shows the cut depth; the dealer cuts with a cut card and presses **Cut**. Camera C3 records it. Order is enforced: shuffle → lock → cut instruction → cut → deal |
 | **Live streaming (mandatory)** | Viewers must always see the dealer, the shuffler, the cards and the flop, and never the players | The stream must be on air for betting to open. If it drops, the table pauses (`docs/12` §3a) |
 | **Stable, tested internet with a backup line** | Players must see the table with minimal delay, and betting state must never depend on a slow stream | Connection test at onboarding, then live monitoring every few seconds |
 | **Approved cameras** | The flop area must be clearly visible; hole cards must never be exposed | Camera angles reviewed at certification |

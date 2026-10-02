@@ -49,12 +49,12 @@ describe('who pays the winnings', () => {
   });
 
   it('rejects organizer configs that would lose money after fees', () => {
-    const ok = validateOrganizerHouse({ mode: 'real-fiat', marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 1000, typicalStakeMinor: 600 });
+    const ok = validateOrganizerHouse({ mode: 'real-fiat', marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 1000, minStakeMinor: 600, typicalStakeMinor: 600 });
     expect(ok.ok).toBe(true);
     expect(ok.organizerEv).toBeCloseTo(0.06 * 0.9 - 0.015, 10);
-    const bad = validateOrganizerHouse({ mode: 'real-fiat', marginBps: 300, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 5000, typicalStakeMinor: 600 });
+    const bad = validateOrganizerHouse({ mode: 'real-fiat', marginBps: 300, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 5000, minStakeMinor: 600, typicalStakeMinor: 600 });
     expect(bad.ok).toBe(false);
-    expect(validateOrganizerHouse({ mode: 'play', marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 0, typicalStakeMinor: 100 }).ok).toBe(false);
+    expect(validateOrganizerHouse({ mode: 'play', marginBps: 600, platformFee: GLOBAL_RULES.platformFee, providerShareBps: 0, minStakeMinor: 100 }).ok).toBe(false);
   });
 
   it('collateral blocks bets the organizer could not pay', () => {
@@ -107,7 +107,7 @@ describe('who pays the winnings', () => {
     expect(b.get('PreFlop:diamond-treasury:diamonds:DIAMOND')).toBe(1);
     expect(b.get('Org:rake:diamonds:DIAMOND')).toBe(3);
     expect(b.get('u:wallet:diamonds:DIAMOND')).toBe(192 - 100); // 96 at risk × 2.00
-    expect(() => betPostings({ mode: 'diamonds', currency: 'DIAMOND', house: 'organizer', playerId: 'u', stakeMinor: 100, oddsCenti: 200, won: false })).toThrow();
+    expect(() => betPostings({ mode: 'diamonds', currency: 'DIAMOND', house: 'organizer', organizerId: 'Org', playerId: 'u', stakeMinor: 100, oddsCenti: 200, won: false })).toThrow();
   });
 });
 

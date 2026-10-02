@@ -66,7 +66,7 @@ SCHEDULED ─────────────────────► OPE
   5. *deal start*, then the hole cards and the flop.
 
   If any step is missing, out of order, or the shuffle signal was typed in rather than sent by the machine, the round is voided.
-- **Why the cut is random and comes after the lock:** even someone who knew the shuffled order, for example through a tampered shuffler, cannot know which three cards will reach the flop when they bet.
+- **What the random cut does and does not do:** it makes it harder to aim at one exact card position. It does **not** defeat a shuffler that controls the deck order, which can still rig rules about groups of cards such as colour, suit or high/low. Shuffle integrity rests on the PreFlop Trusted Shuffler and on outcome monitoring (`docs/12` §2a).
   - Locking any later leaks information. One player's own two hole cards give up to +12.8% on some markets (`docs/04` §4).
   - The lock is server time-stamped. A bet whose request arrives after the lock is rejected, whatever the client clock says.
 - **No flop in the hand:** the club agreement requires the dealer to deal the *PreFlop flop* (burn plus three) even when the hand ends preflop. If that does not happen, the round goes to VOID and every stake is refunded.

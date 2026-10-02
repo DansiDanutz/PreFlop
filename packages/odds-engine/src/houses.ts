@@ -46,13 +46,10 @@ export function platformFeeMinor(mode: PlayMode, stakeMinor: number, fee: Platfo
   return Math.min(stakeMinor, Math.max(fee.minPerBetMinor, (fee.fixedPerBetMinor ?? 0) + pct));
 }
 
-export interface BetFlowInput {
+interface BetFlowBase {
   readonly mode: PlayMode;
   /** Settlement currency; must belong to the mode (e.g. USDT or USDC in real-crypto). */
   readonly currency: string;
-  readonly house: Exclude<HouseKind, 'pool'>;
-  /** The organizer's id when house = organizer. */
-  readonly organizerId?: string;
   readonly playerId: string;
   readonly stakeMinor: number;
   readonly oddsCenti: number;
@@ -60,6 +57,18 @@ export interface BetFlowInput {
   readonly platformFee?: PlatformFee;
   /** Required in diamonds mode: the room's rules (rake and its predefined shares). */
   readonly diamondRules?: DiamondRules;
+}
+
+/** Who pays the winnings. An organizer house must always name its organizer — there is no shared default. */
+export type BetFlowInput =
+  | (BetFlowBase & { readonly house: 'preflop' })
+  | (BetFlowBase & { readonly house: 'organizer'; readonly organizerId: string });
+
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+/** Account owners are non-empty ids without the ':' separator; 'PreFlop' is reserved. */
+export function assertOwnerId(id: unknown, what: string): asserts id is string {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new RangeError(`${what} must be a non-empty id (letters, digits, _ . -), got ${JSON.stringify(id)}`);
+  if (id === 'PreFlop') throw new RangeError(`${what} cannot be the reserved id 'PreFlop'`);
 }
 
 /**
@@ -71,9 +80,11 @@ export interface BetFlowInput {
  */
 export function betPostings(b: BetFlowInput): Posting[] {
   assertHouseAllowed(b.mode, b.house);
+  assertOwnerId(b.playerId, 'playerId');
+  if (b.house === 'organizer') assertOwnerId(b.organizerId, 'organizerId');
   const acct = (owner: string, purpose: string) => account(owner, purpose, b.mode, b.currency);
   const player = acct(b.playerId, 'wallet');
-  const house = b.house === 'preflop' ? acct('PreFlop', 'bankroll') : acct(b.organizerId ?? 'organizer', 'collateral');
+  const house = b.house === 'preflop' ? acct('PreFlop', 'bankroll') : acct(b.organizerId, 'collateral');
   const out: Posting[] = [{ from: player, to: house, amountMinor: b.stakeMinor, memo: 'stake' }];
 
   if (b.mode === 'diamonds') {
@@ -113,15 +124,24 @@ export interface OrganizerHouseConfig {
   readonly platformFee: PlatformFee;
   /** Share of the organizer's GGR owed to the provider club (bps). */
   readonly providerShareBps: number;
-  /** Typical stake, used to evaluate fixed / minimum fees per bet. */
-  readonly typicalStakeMinor: number;
+  /**
+   * Smallest stake the room accepts. PreFlop's fee has a fixed minimum per bet, so the fee
+   * RATE is highest at the smallest stake: the organizer's edge is validated at this stake,
+   * which makes it hold for every accepted stake. Bets below it must be refused (assertOrganizerStake).
+   */
+  readonly minStakeMinor: number;
+  /** Typical stake — reported as a forecast only, never used to admit a configuration. */
+  readonly typicalStakeMinor?: number;
 }
 
 export interface OrganizerHouseCheck {
   readonly ok: boolean;
   /** Organizer's expected value per unit staked after PreFlop's fee and the provider share. */
+  /** Organizer's EV per unit staked at the MINIMUM stake (the worst case for fee rate). */
   readonly organizerEv: number;
   readonly platformFeeRate: number;
+  /** Forecast at the typical stake, if one was given. */
+  readonly typicalEv?: number;
   readonly problems: readonly string[];
 }
 
@@ -134,12 +154,24 @@ export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseC
   if (!MODES[c.mode].houses.includes('organizer')) problems.push(`mode ${c.mode} does not allow an organizer house`);
   if (c.marginBps < GLOBAL_RULES.organizerMinMarginBps)
     problems.push(`margin ${c.marginBps} bps is below the global minimum ${GLOBAL_RULES.organizerMinMarginBps} bps`);
+  if (!Number.isSafeInteger(c.minStakeMinor) || c.minStakeMinor <= 0) problems.push('minStakeMinor must be a positive integer');
+  if (!Number.isInteger(c.providerShareBps) || c.providerShareBps < 0 || c.providerShareBps > 10000) problems.push('providerShareBps must be 0–10000');
   const margin = c.marginBps / 10000;
-  const feeRate = c.typicalStakeMinor > 0 ? platformFeeMinor(c.mode, c.typicalStakeMinor, c.platformFee) / c.typicalStakeMinor : 0;
-  const organizerEv = margin * (1 - c.providerShareBps / 10000) - feeRate;
-  if (organizerEv * 10000 < GLOBAL_RULES.organizerMinEvBps)
-    problems.push(`organizer EV ${(organizerEv * 100).toFixed(2)}% is below the minimum ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}%`);
-  return { ok: problems.length === 0, organizerEv, platformFeeRate: feeRate, problems };
+  const evAt = (stake: number) => {
+    const feeRate = platformFeeMinor(c.mode, stake, c.platformFee) / stake;
+    return { feeRate, ev: margin * (1 - c.providerShareBps / 10000) - feeRate };
+  };
+  const minStake = Math.max(1, Math.floor(c.minStakeMinor) || 1);
+  const atMin = evAt(minStake);
+  if (atMin.ev * 10000 < GLOBAL_RULES.organizerMinEvBps)
+    problems.push(`organizer EV at the minimum stake (${minStake}) is ${(atMin.ev * 100).toFixed(2)}%, below the required ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% — raise the minimum stake or the margin`);
+  const typical = c.typicalStakeMinor && c.typicalStakeMinor > 0 ? evAt(c.typicalStakeMinor).ev : undefined;
+  return { ok: problems.length === 0, organizerEv: atMin.ev, platformFeeRate: atMin.feeRate, ...(typical !== undefined ? { typicalEv: typical } : {}), problems };
+}
+
+/** Refuses a bet below the room's validated minimum stake. */
+export function assertOrganizerStake(c: Pick<OrganizerHouseConfig, 'minStakeMinor'>, stakeMinor: number): void {
+  if (!Number.isSafeInteger(stakeMinor) || stakeMinor < c.minStakeMinor) throw new RangeError(`stake ${stakeMinor} is below the room's minimum ${c.minStakeMinor}`);
 }
 
 /**

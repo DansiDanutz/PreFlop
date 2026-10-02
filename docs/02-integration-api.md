@@ -37,7 +37,7 @@ POST /v1/provider/tables/{tableId}/heartbeat             # every 1 s: upload, RT
 POST /v1/provider/tables/{tableId}/connection-tests      # 30-min soak test result (certification)
 ```
 
-Signature header: `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC(key, t + "." + body)>`. Requests older than 30 s are rejected.
+Authentication: one Ed25519 credential **per device and per staff member and role** (dealer, floor, floor manager), each scoped to one table. Every request is signed over a canonical envelope covering the method, path, query, timestamp, single-use nonce, idempotency key and body hash. The exact format is in `docs/13` §7. Reused nonces and requests older than 30 s are rejected.
 
 Hardware bridges (automatic shuffler, RFID table) send the same calls, using `source: "rfid"`. When both a dealer entry and an RFID reading exist and they disagree, the round stays in DEALT and an exception is raised in the back office.
 

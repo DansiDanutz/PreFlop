@@ -122,9 +122,10 @@ export function canOpenRound(cert: TableCertification, link: LinkSample): { ok: 
  *   shuffle-complete (from the shuffler) → LOCK (bets on this flop close)
  *   → PreFlop draws a random cut depth → dealer cuts at that depth → deal-start
  *
- * Locking at shuffle-complete and choosing the cut depth only AFTER the lock
- * means that even someone who knew the shuffled order (e.g. a tampered shuffler)
- * cannot know which three cards will reach the flop when they place a bet.
+ * The cut depth is chosen only AFTER the lock, which makes aiming at one exact card
+ * position harder. It is NOT a defence against a shuffler that controls the deck
+ * order: a stacked deck can make every reachable flop share a property such as
+ * colour (see test/audit-2026-10-02.test.ts and docs/12 §2a).
  */
 export interface HandEvents {
   readonly shuffleCompleteAt?: number;

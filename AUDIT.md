@@ -35,7 +35,7 @@ Clubs supply tables and live video. Betting companies integrate through an API. 
 | **Phase 1 backend spec (to implement)** | `docs/13-phase1-backend-spec.md` |
 | Generated odds book (every market's probability, odds, net EV) | `docs/odds-book.md`, `docs/odds-book.json` |
 | Generated profit per participant (8 scenarios) | `docs/profitability.md` |
-| Engine code (TypeScript, 111 tests) | `packages/odds-engine/src/*` |
+| Engine code (TypeScript, 122 tests) | `packages/odds-engine/src/*` |
 
 Run it:
 
@@ -59,7 +59,7 @@ pnpm book    # regenerate odds book and profitability
 4. **Exposure is exact.** The worst-case house loss over all 22,100 flops is checked before every bet. An organizer's collateral must cover its worst case plus PreFlop's fees.
 5. **Integrity:**
    - Betting closes **before hole cards exist**.
-   - The cut depth is random and drawn **after** the lock.
+   - The cut depth is random and drawn **after** the lock. **This is not a defence against a shuffler that controls the deck order** (audit F01). Shuffle integrity needs the PreFlop Trusted Shuffler and outcome monitoring (`docs/12` §2a).
    - A broken shuffle → lock → cut → deal sequence voids the hand.
 6. **Evidence.** A flop settles only when all three hold:
    - an Ed25519-signed, hash-chained Table Box capture verifies;
@@ -74,7 +74,7 @@ pnpm book    # regenerate odds book and profitability
 | Decision | Why | Where |
 |---|---|---|
 | Lock at **Start hand**, not at the flop reveal | One player's two hole cards give up to +12.8% on some markets, which beats the margin | `docs/04` §4 |
-| Random cut issued by PreFlop **after** the lock | Defeats a tampered shuffler that knows the deck order (DeckMate 2 hacks were made public in 2023, and criminal charges followed in 2025) | `docs/12` §1, §6 |
+| Shuffle integrity rests on a **PreFlop Trusted Shuffler plus outcome monitoring**. The random cut is only a minor extra control | The 2026-10-02 audit (F01) showed that the cut does **not** defeat a shuffler that controls the deck order. Until the Trusted Shuffler is certified, physical tables run play money only | `docs/12` §2a |
 | PreFlop never reads hole cards | Leaks from hole-card data in past cheating scandals | `docs/12` §1 |
 | Ace = 14 everywhere; A-2-3 and Q-K-A count as straights; colour = red/black | Avoids rules that are open to interpretation | `docs/03` §1 |
 | Three ways to resolve bets: fixed odds, parimutuel pools, contests | Keeps house risk separate from player-vs-player play | `docs/01` §3 |
@@ -99,7 +99,7 @@ pnpm book    # regenerate odds book and profitability
    - Are the tier margins competitive yet safe?
 2. **Integrity.**
    - Can any party (dealer, floor, club, player, organizer, insider) still learn or influence the flop before the lock?
-   - Is the random cut after the lock enough against a compromised shuffler?
+   - Is the Trusted Shuffler plus monitoring plan in `docs/12` §2a sufficient? (The random cut alone was shown NOT to be: F01.)
    - What else would you require?
 3. **Evidence chain.**
    - Weaknesses in the Table Box design (TPM key, attestation, outbound-only network) or in `verifyCapture`?
@@ -126,3 +126,26 @@ For each finding, give:
 - **a concrete fix**.
 
 Where possible, add a failing test or a worked example. Proposed changes can go straight in as PRs.
+
+## 8. Audit history
+
+### Round 1: Codex, 2026-10-02 (audited `15c172f`)
+
+Verdict: *request changes*. Every finding was accepted. Where each one now stands:
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| F01 | Blocker | The random cut does not defeat a compromised shuffler | **Accepted.** The claim was removed everywhere. `docs/12` §2a adds the PreFlop Trusted Shuffler, outcome monitoring, limits and a threat-model review. **Physical tables run play money only until the shuffler is certified.** The attack is reproduced as a regression test |
+| F02 | Major | Capture retry fails after a lost success response | Fixed in the spec: identical-record replay returns the original `200` in any round state, checked before any state or sequence check |
+| F03 | Major | Invalid signed content opens betting on the next hand | Fixed in the spec and engine: chain ingestion is separate from **admission** (`captureAdmissionProblems`). Only an admitted capture moves the round to DEALT and opens N+1 |
+| F04 | Major | Resolution has no concurrency contract | Fixed in the spec: every round operation takes the round row lock, lock order is fixed, a durable outbox drives `resolve_round`, and concurrency and crash tests are added |
+| F05 | Major | Shared staff credential | Fixed in the spec: per-person, per-role credentials; the entry source comes from the role; the two entries must come from different people; void and review are `floor_manager` only |
+| F06 | Major | HMAC not bound to the route | Fixed in the spec: a canonical signed envelope (method, path, query, timestamp, nonce, idempotency key, body hash), single-use nonces, credentials scoped to one table |
+| F07 | Major | Money helpers accept invalid values and lose precision | Fixed in the engine: validated odds, stakes and fees; exact safe-integer bounds; regression tests |
+| F08 | Major | Missing organizer id selects a shared account | Fixed in the engine: `organizerId` is required by type and checked at runtime; `PreFlop` is reserved |
+| F09 | Major | Duplicate share parties overwrite each other | Fixed in the engine: duplicates and the reserved `PreFlop` id are rejected |
+| F10 | Major | Organizer EV checked only at the typical stake | Fixed in the engine: EV is validated at the room's **minimum** stake (the worst case for the fee rate); `assertOrganizerStake` refuses smaller stakes |
+| F11 | Minor | The evidence API didn't match the spec | Fixed in the engine: `verifyCaptureAuthenticity`, `captureAdmissionProblems`, `verifyCaptureContent`; `verifyCapture` composes them |
+| F12 | Minor | The checked-in ruleset isn't active protection | Template now targets `main` explicitly. **The repository owner must set `main` as the default branch and import or activate the ruleset** (a settings change the agent cannot make) |
+
+Also from the audit's answers, both now added to the spec: certification items carry provenance (who and when) and an expiry, and stacked-deck monitoring has an acceptance test.

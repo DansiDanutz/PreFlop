@@ -136,6 +136,18 @@ export interface Statement {
  * (largest remainder), PreFlop receives the remainder after external shares.
  */
 export function computeStatement(input: StatementInput): Statement {
+  for (const [v, what] of [[input.revenueMinor, 'revenueMinor'], [input.turnoverMinor, 'turnoverMinor'], [input.carriedLossMinor ?? 0, 'carriedLossMinor']] as const)
+    if (!Number.isSafeInteger(v)) throw new RangeError(`${what} must be a safe integer, got ${v}`);
+  if (input.turnoverMinor < 0 || (input.carriedLossMinor ?? 0) < 0) throw new RangeError('turnover and carried loss must be non-negative');
+  // One entry per party. A party holding several roles (e.g. provider + distributor) must be
+  // expressed as ONE policy with several components, so no entitlement is silently dropped.
+  const seen = new Set<string>();
+  for (const p of input.parties) {
+    if (p.party === 'PreFlop') throw new RangeError("'PreFlop' is reserved for PreFlop's own remainder");
+    if (!p.party) throw new RangeError('party id must be non-empty');
+    if (seen.has(p.party)) throw new RangeError(`duplicate party '${p.party}': combine its roles into one policy (multiple components)`);
+    seen.add(p.party);
+  }
   const shareable = input.revenueMinor - (input.carriedLossMinor ?? 0);
   const rates: Record<string, number> = {};
   let total = 0;
