@@ -55,7 +55,8 @@ Every standing shows the position, the stack (the points accumulated), bets used
 - The top three get badges (`champion`, `podium`).
 - **Real money:**
   - prizes go only to active, identity-verified players; anyone else keeps their position, the prize ranks close up, and the dashboard projects prizes the same way;
-  - while the mode is off, completion waits (the team can cancel to refund).
+  - while the mode is off, completion waits (the team can cancel to refund). A field below `min_entries` is still cancelled and refunded, whatever the mode;
+  - if no entrant is eligible for a prize at the end, the tournament is cancelled (`no eligible winner`): every buy-in is refunded and the added prize returned.
 
 **Cancelling** (by the team or the owner, or automatically below `min_entries`) refunds every buy-in in full and returns the added amount to whoever put it in.
 

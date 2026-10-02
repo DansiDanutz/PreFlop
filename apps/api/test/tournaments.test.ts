@@ -221,6 +221,40 @@ describe('tournament lifecycle', () => {
     } finally { await modes(false); }
   });
 
+  it('real money: no eligible winner refunds everyone; a short field is refunded even while the mode is off', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    const funded = async (name: string) => {
+      const p = await user(name);
+      await h.api('POST', '/v1/me/kyc', p.token, {});
+      expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' })).status).toBe(201);
+      return p;
+    };
+    const eur = (id: string) => balance(h.db as never, `${id}:wallet:real-fiat:EUR`);
+    await modes(true);
+    try {
+      // (a) Both entrants become ineligible before the end: nobody can be paid, so everyone is refunded.
+      const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Real paid', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body;
+      const [a, b] = [await funded('Ana'), await funded('Bo')];
+      for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
+      expect(await eur(a.id)).toBe(4_000);
+      await h.db.query(`update users set kyc_status = 'rejected' where id = any($1)`, [[a.id, b.id]]);
+      await tournamentTick(h.db, later());
+      expect((await h.api('GET', `/v1/tournaments/${t.id}`)).body.tournament).toMatchObject({ status: 'cancelled', cancel_reason: 'no eligible winner' });
+      expect([await eur(a.id), await eur(b.id)]).toEqual([5_000, 5_000]);
+      expect(await balance(h.db as never, `${t.id}:pool:real-fiat:EUR`)).toBe(0);
+
+      // (b) One entrant, late registration open to the end, mode switched off: refunded anyway.
+      const short = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Real short', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000, duration_minutes: 30, late_reg_minutes: 29 }))).body;
+      const c = await funded('Cy');
+      expect((await h.api('POST', `/v1/tournaments/${short.id}/register`, c.token)).status).toBe(200);
+      await modes(false);
+      await tournamentTick(h.db, later());
+      expect((await h.api('GET', `/v1/tournaments/${short.id}`)).body.tournament).toMatchObject({ status: 'cancelled', cancel_reason: 'not enough players' });
+      expect(await eur(c.id)).toBe(5_000);
+      for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
+    } finally { await modes(false); }
+  });
+
   it('refuses real money while it is off, closed-loop modes from the team, and bad settings', async () => {
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'real-fiat', currency: 'EUR' }))).body.type).toBe('mode_disabled');
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'diamonds', currency: 'DIAMOND' }))).body.type).toBe('org_required');

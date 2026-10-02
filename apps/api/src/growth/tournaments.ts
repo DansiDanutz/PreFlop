@@ -345,16 +345,20 @@ export function prizePoolOf(t: Pick<TournamentRow, 'fee_bps' | 'added_minor'>, b
 export async function complete(c: Tx, id: string, ev: EventBatch, now = new Date()): Promise<boolean> {
   const t = await lockTournament(c, id);
   if (t.status !== 'open' || now < t.ends_at) return false;
-  // A real-money tournament waits while its mode is off; the team can cancel it to refund everyone.
-  if (REAL_MODES.has(t.mode) && !(await modeEnabled(c, t.mode))) return false;
   if ((await c.query(`select 1 from tournament_bets where tournament_id = $1 and status = 'accepted' limit 1`, [id])).rowCount) return false;
   await c.query('select 1 from tournament_entries where tournament_id = $1 order by user_id for update', [id]);
   const entries = await entriesOf(c, id);
+  // Refunds return players' own buy-ins, so a short field is cancelled even while the mode is off.
   if (entries.length < t.min_entries) { await cancelLocked(c, t, 'not enough players', 'system', ev); return true; }
+  // Prizes wait while a real-money mode is off; the team can cancel to refund everyone.
+  if (REAL_MODES.has(t.mode) && !(await modeEnabled(c, t.mode))) return false;
   const buyIns = (await c.query<{ s: string }>('select coalesce(sum(buy_in_minor), 0) as s from tournament_entries where tournament_id = $1', [id])).rows[0]!.s;
   const { fee, pool } = prizePoolOf(t, n(buyIns));
+  const eligible = await prizeEligible(c, t, entries);
+  // Nobody may take a prize (every entrant became ineligible): refund every buy-in rather than hold the pool.
+  if (eligible.length === 0 && pool > 0) { await cancelLocked(c, t, 'no eligible winner', 'system', ev); return true; }
   const ranked = rankEntries(entries);
-  const prizes = allocatePrizes(pool, t.payout_bps, rankEntries(await prizeEligible(c, t, entries)));
+  const prizes = allocatePrizes(pool, t.payout_bps, rankEntries(eligible));
   if (fee > 0) await post(c, 'tournament.fee', id, [{ from: poolAccount(t), to: feeAccount(t), amountMinor: fee }]);
   for (const e of ranked) {
     const prize = prizes.get(e.user_id) ?? 0;
