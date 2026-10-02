@@ -10,23 +10,30 @@ import { Enrollment } from './screens/Enrollment.tsx';
 import { FloorScreen } from './screens/Floor.tsx';
 import { ManagerScreen } from './screens/Manager.tsx';
 import { SettingsSheet } from './screens/Settings.tsx';
+import { LockScreen, PinSetup } from './screens/Lock.tsx';
 import { Setup } from './screens/Setup.tsx';
+import { useTabletLock } from './lib/useLock.ts';
 
 export function App() {
   const [id, setId] = useState<Identity | null | undefined>(undefined);
+  // A PIN chosen just now does not ask for itself again; a reload starts locked.
+  const [pinJustSet, setPinJustSet] = useState(false);
   useEffect(() => {
     loadIdentity().then((x) => setId(x ?? null), () => setId(null));
   }, []);
   if (id === undefined) return <div className="grid h-full place-items-center"><Spinner className="h-10 w-10" /></div>;
   if (!id) return <Setup onDone={setId} />;
   if (!id.config.credentialId) return <Enrollment id={id} onEnrolled={setId} onReset={() => setId(null)} />;
-  return <TableShell key={id.config.credentialId} id={id} onReset={() => setId(null)} />;
+  if (!id.pin) return <PinSetup id={id} onDone={(next) => { setPinJustSet(true); setId(next); }} />;
+  return <TableShell key={id.config.credentialId} id={id} startLocked={!pinJustSet} onIdentity={setId} onReset={() => setId(null)} />;
 }
 
 const FLOP_PATH = /\/hands\/(\d+)\/flop$/;
 
-function TableShell({ id, onReset }: { id: Identity; onReset: () => void }) {
-  const api = useMemo(() => new TableApi(id), [id]);
+function TableShell({ id, startLocked, onIdentity, onReset }: { id: Identity; startLocked: boolean; onIdentity: (id: Identity) => void; onReset: () => void }) {
+  // Keyed by credential: a PIN or idle-time change must not rebuild the API client.
+  const api = useMemo(() => new TableApi(id), [id.config.credentialId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lock = useTabletLock(id, startLocked);
   const [offset, setOffset] = useState(0);
   const [settings, setSettings] = useState(false);
   useEffect(() => {
@@ -58,6 +65,7 @@ function TableShell({ id, onReset }: { id: Identity; onReset: () => void }) {
   const submitFlop = (r: Round, cards: string[]) => void runner.run(api.flop(r.hand_no, cards));
 
   const role = id.config.role;
+  if (lock.locked) return <LockScreen id={id} unlock={lock.unlock} waitMs={lock.waitMs} onReset={onReset} />;
   return (
     <div className="flex h-full flex-col">
       <Header live={live} role={role} personId={id.config.personId} tableId={id.config.tableId} clockOffsetMs={offset} onSettings={() => setSettings(true)} />
@@ -69,7 +77,7 @@ function TableShell({ id, onReset }: { id: Identity; onReset: () => void }) {
         {role === 'floor' && <FloorScreen live={live} mem={mem} runner={runner} submitFlop={submitFlop} />}
         {role === 'floor_manager' && <ManagerScreen api={api} live={live} mem={mem} runner={runner} submitFlop={submitFlop} />}
       </main>
-      {settings && <SettingsSheet id={id} clockOffsetMs={offset} onClose={() => setSettings(false)} onReset={onReset} />}
+      {settings && <SettingsSheet id={id} clockOffsetMs={offset} onClose={() => setSettings(false)} onReset={onReset} onLockNow={lock.lockNow} onIdentity={onIdentity} />}
     </div>
   );
 }

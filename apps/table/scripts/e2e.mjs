@@ -29,6 +29,7 @@ const flopsPath = join(WORK, 'flops.json');
 rmSync(flopsPath, { force: true });
 
 const PEOPLE = { dealer: 'Ana · D-117', floor: 'Bogdan · F-204', floor_manager: 'Carmen · FM-02' };
+const PIN = '402817';
 const ROLE_BUTTON = { dealer: 'Dealer', floor: 'Floor', floor_manager: 'Floor manager' };
 const TSX = resolve(here, '../node_modules/.bin/tsx');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -73,7 +74,7 @@ async function enterFlop(page, cards, screenshot) {
   if (screenshot) await shot(page, screenshot);
   await page.getByTestId('flop-review-btn').click();
   await page.getByTestId('flop-review').waitFor();
-  await page.getByTestId('flop-submit').click();
+  await hold(page, page.locator('button:has([data-testid=flop-submit])'));
   await page.getByTestId('flop-review').waitFor({ state: 'detached', timeout: 15_000 });
 }
 
@@ -112,10 +113,28 @@ try {
     await page.locator('input[name=credentialId]').fill(enrolled.credentials[role]);
     if (role === 'dealer') await shot(page, 'enrollment.png');
     await page.getByTestId('verify-cred').click();
+    // Last step of enrollment: the staff PIN (typed twice).
+    await page.getByTestId('pin-new').fill(PIN);
+    await page.getByTestId('pin-new').press('Enter');
+    await page.getByTestId('pin-confirm').fill(PIN);
+    await page.getByTestId('pin-confirm').press('Enter');
     await page.getByTestId('role-badge').waitFor({ timeout: 15_000 });
     log(role, 'verified:', await page.getByTestId('role-badge').textContent());
   }
   const { dealer, floor, floor_manager: manager } = tablets;
+
+  // ---------------------------------------------------------------- 4b. staff lock: lock now, wrong PIN, right PIN
+  await dealer.getByRole('button', { name: 'Tablet settings' }).click();
+  await dealer.getByTestId('lock-now').click();
+  await dealer.getByTestId('lock-screen').waitFor();
+  await dealer.getByTestId('unlock-pin').fill('999999');
+  await dealer.getByTestId('unlock-pin').press('Enter');
+  await dealer.getByText('Wrong PIN.').waitFor();
+  await extra(dealer, 'dealer-locked.png');
+  await dealer.getByTestId('unlock-pin').fill(PIN);
+  await dealer.getByTestId('unlock-pin').press('Enter');
+  await dealer.getByTestId('role-badge').waitFor({ timeout: 10_000 });
+  log('dealer: locked, refused a wrong PIN, unlocked with the PIN');
 
   async function playProcedure(first) {
     await dealer.getByTestId('dealer-open').waitFor({ timeout: 40_000 });
@@ -128,8 +147,8 @@ try {
     const depth = await dealer.getByTestId('cut-depth').textContent();
     if (first) await shot(dealer, 'dealer-cut.png');
     log(`hand ${n}: CUT AT ${depth}`);
-    await dealer.getByTestId('btn-cut').click();
-    await dealer.getByTestId('btn-deal-start').click();
+    await hold(dealer, dealer.locator('button:has([data-testid=btn-cut])'));
+    await hold(dealer, dealer.locator('button:has([data-testid=btn-deal-start])'));
     return n;
   }
 

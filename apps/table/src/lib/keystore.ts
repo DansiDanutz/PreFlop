@@ -3,6 +3,8 @@
  * structured-cloneable); its private key was generated with extractable: false, so it can sign
  * but its bytes can never be read back — not by this app, not by devtools export.
  */
+import type { PinRecord } from './pin.ts';
+
 export type Role = 'dealer' | 'floor' | 'floor_manager';
 
 export interface TabletConfig {
@@ -20,6 +22,10 @@ export interface TabletConfig {
 export interface Identity {
   config: TabletConfig;
   keys: CryptoKeyPair;
+  /** Staff PIN hash (lib/pin.ts); set right after enrollment. Deleted with the key on reset. */
+  pin?: PinRecord;
+  /** Auto-lock after this many idle minutes (lib/lock.ts DEFAULT_IDLE_MIN when absent). */
+  idleMinutes?: number;
 }
 
 const DB = 'preflop-table';

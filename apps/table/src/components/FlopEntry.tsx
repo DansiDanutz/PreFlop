@@ -3,11 +3,11 @@ import { ArrowLeft, Check } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { isValidFlop, prettyFlop } from '../lib/cards.ts';
 import { CardPicker, SelectedFlop } from './CardPicker.tsx';
-import { BigButton } from './controls.tsx';
+import { BigButton, HoldButton } from './controls.tsx';
 
 /**
- * Pick three cards → review them large → SUBMIT. `resetKey` clears the selection when the hand
- * changes, so a pick can never carry over to the next hand.
+ * Pick three cards → review them large → press and hold SUBMIT. `resetKey` clears the selection
+ * when the hand changes, so a pick can never carry over to the next hand.
  */
 export function FlopEntry({ title, subtitle, submitLabel = 'Submit flop', busy, onSubmit, resetKey, tone = 'accent', aside }: {
   title: ReactNode; subtitle?: ReactNode; submitLabel?: string; busy?: boolean | undefined; onSubmit: (cards: string[]) => void; resetKey: string;
@@ -31,7 +31,10 @@ export function FlopEntry({ title, subtitle, submitLabel = 'Submit flop', busy, 
         <div className="font-mono text-xl tracking-widest text-muted" aria-hidden>{prettyFlop(cards)}</div>
         <div className="flex w-full max-w-2xl gap-4">
           <BigButton tone="neutral" className="flex-1" onClick={() => setReviewing(false)} disabled={busy}><ArrowLeft className="h-5 w-5" /> Change</BigButton>
-          <BigButton tone={tone} className="flex-[2] text-xl" busy={busy} onClick={() => onSubmit(cards)} data-testid="flop-submit"><Check className="h-6 w-6" /> {submitLabel}</BigButton>
+          {/* Signing the flop is press-and-hold, like every other signed step: a stray tap never submits. */}
+          <HoldButton tone={tone} className="flex-[2] text-xl" busy={busy} onHold={() => onSubmit(cards)}>
+            <span className="inline-flex items-center gap-3" data-testid="flop-submit"><Check className="h-6 w-6" /> {submitLabel}</span>
+          </HoldButton>
         </div>
       </div>
     );

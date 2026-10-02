@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type Action, ApiProblem, type TableApi } from './api.ts';
+import { signingAllowed } from './lock.ts';
 import { isRetryable } from './problems.ts';
 import type { Round, TableState } from './types.ts';
 
@@ -20,7 +21,8 @@ export function useTableState(api: TableApi): Live {
   const [lastOkAt, setLastOkAt] = useState<number | null>(null);
   const busy = useRef(false);
   const tick = useCallback(async () => {
-    if (busy.current) return;
+    // A locked tablet signs nothing, polls included.
+    if (busy.current || !signingAllowed()) return;
     busy.current = true;
     try {
       const s = await api.state();
