@@ -18,6 +18,7 @@ This repository holds the platform's design and its mathematical core:
 | [`docs/09-dynamic-revenue-sharing.md`](docs/09-dynamic-revenue-sharing.md) | Shares that grow with hands, players, turnover and pools created, capped to protect profit |
 | [`docs/10-who-pays-the-winnings.md`](docs/10-who-pays-the-winnings.md) | PreFlop house, organizer house (collateral), or pool |
 | [`docs/11-club-requirements.md`](docs/11-club-requirements.md) | Mandatory shuffler, dealer cut before each hand, connection testing and live monitoring |
+| [`docs/12-table-hardware-and-security.md`](docs/12-table-hardware-and-security.md) | Shuffler, cameras, PreFlop Table Box, network and signed flop evidence |
 | [`docs/profitability.md`](docs/profitability.md) | **Generated** monthly P&L for every participant in 8 scenarios |
 | [`docs/odds-book.md`](docs/odds-book.md) | **Generated** odds book: every selection, its exact probability, odds and net EV |
 
@@ -33,12 +34,13 @@ A TypeScript library with no runtime dependencies. It covers:
 - **Dynamic sharing.** Tier ladders by hands dealt, players, turnover and pools created, with a guardrail that keeps PreFlop's net EV on target.
 - **Modes and houses.** Five play modes, and ledger postings that show who pays the winnings. Organizer collateral covers the worst case for every open round.
 - **Diamonds.** The per-bet split (fixed PreFlop fee + rake + at-risk amount), pack pricing and the dilution tracker.
-- **Table readiness.** Certification (shuffler, connection test, cameras, dealers), live link health, and the shuffle → cut → deal-start check for every hand.
+- **Table readiness.** Certification (shuffler, connection test, cameras, dealers), live link health, and the shuffle → lock → random cut → cut → deal check for every hand.
+- **Signed flop evidence.** Ed25519-signed, hash-chained board captures from the Table Box, checked against the dealer's and floor's entries before settlement.
 - **Profitability.** Scenario P&L for PreFlop, clubs, organizers, partners and players.
 
 ```bash
 pnpm install
-pnpm test        # 90 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness
+pnpm test        # 99 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness, signed evidence
 pnpm typecheck
 pnpm book        # regenerate docs/odds-book.{md,json} and docs/profitability.md
 ```

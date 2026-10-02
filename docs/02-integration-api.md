@@ -23,9 +23,12 @@ A club has to do very little: run a tablet app (or a hardware bridge) that sends
 ```
 POST /v1/provider/tables/{tableId}/hands                 # hand N+1 is about to be shuffled → opens nothing, registers hand
 POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # from the paired automatic shuffler (mandatory)
-POST /v1/provider/tables/{tableId}/hands/{n}/cut         # dealer cut the deck (mandatory, after shuffle)
-POST /v1/provider/tables/{tableId}/hands/{n}/deal-start  # LOCK: no more bets on flop of hand n (sent before hole cards)
-POST /v1/provider/tables/{tableId}/hands/{n}/flop        # {cards:["Kh","Kd","7h"], source:"dealer|floor|rfid", evidence?}
+POST /v1/provider/tables/{tableId}/hands/{n}/start       # LOCK: dealer takes the deck for hand n → no more bets on its flop (before hole cards)
+    → 200 { "cut_depth": 27 }                          # random cut depth, drawn by PreFlop only after the lock
+POST /v1/provider/tables/{tableId}/hands/{n}/cut         # dealer cut at the instructed depth (mandatory)
+POST /v1/provider/tables/{tableId}/hands/{n}/deal-start  # dealing begins
+POST /v1/provider/tables/{tableId}/hands/{n}/flop        # dealer / floor manual entry {cards:["Kh","Kd","7h"], source:"dealer|floor"}
+POST /v1/provider/tables/{tableId}/hands/{n}/capture     # Table Box signed capture {capture, signature} + image upload (docs/12 §5)
 POST /v1/provider/tables/{tableId}/hands/{n}/flop/confirm   # second, independent confirmation (pilot: floor supervisor)
 POST /v1/provider/tables/{tableId}/hands/{n}/void        # {reason:"misdeal|no_flop|stream_down|..."}
 POST /v1/provider/tables/{tableId}/pause | /resume

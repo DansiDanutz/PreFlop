@@ -22,7 +22,7 @@ Status: **proposed** rulebook. Every rule here is implemented in `packages/odds-
 ## 2. Betting window
 
 - **Opens:** when the flop of hand N has been captured.
-- **Closes:** on the club's *deal-start* signal for hand N+1, which comes **before any hole card is dealt** (see `docs/04` §4).
+- **Closes:** when the dealer presses *Start hand* for hand N+1. This comes **before any hole card is dealt** (see `docs/04` §4), and before PreFlop issues the random cut for that hand (`docs/12` §6).
 - Bets are accepted at the odds shown when the bet is placed. If the book version has changed, the bet is rejected with the new price, unless the player has opted in to accepting changes.
 
 ## 3. Void and refund

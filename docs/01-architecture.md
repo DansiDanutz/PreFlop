@@ -48,7 +48,7 @@ So exposure is tracked per round, house and mode, and every bet records its `mod
 ## 4. Round lifecycle (authoritative state machine)
 
 ```
-            open_next(hand N+1)            deal_start(hand N+1)          flop_captured
+            open_next(hand N+1)            start_hand(hand N+1)          flop_captured
 SCHEDULED ─────────────────────► OPEN ────────────────────────► LOCKED ─────────────────► DEALT
                                   │                               │                         │ confirm (2nd person / RFID match)
                                   │ pause                         │ hand ends pre-flop       ▼
@@ -58,13 +58,15 @@ SCHEDULED ─────────────────────► OPE
 ```
 
 - **Opening:** bets on flop N+1 open the moment flop N is captured, so players bet while hand N plays out. This matches the confirmed cycle.
-- **Before the lock, every hand needs three signals in order:**
-  1. *shuffle complete* from the club's **mandatory automatic shuffler**;
-  2. the dealer's **cut**;
-  3. *deal start*.
+- **Every hand follows this sequence** (`docs/11`, `docs/12`):
+  1. *shuffle complete* from the club's **mandatory automatic shuffler**. With two decks this usually happens while hand N is still being played;
+  2. **LOCK**: after hand N ends, the dealer presses *Start hand* to take the shuffled deck. Bets on flop N+1 close here, **before any hole card exists**;
+  3. **random cut instruction**: PreFlop's server picks a cut depth (15–37 cards) only *after* the lock and shows it on the dealer tablet;
+  4. the dealer **cuts** at that depth (recorded on camera);
+  5. *deal start*, then the hole cards and the flop.
 
-  If any is missing or out of order, the round is voided (`docs/11`).
-- **Locking:** the round locks on the dealer's *deal start* for hand N+1. That happens **before any hole card exists**.
+  If any step is missing, out of order, or the shuffle signal was typed in rather than sent by the machine, the round is voided.
+- **Why the cut is random and comes after the lock:** even someone who knew the shuffled order, for example through a tampered shuffler, cannot know which three cards will reach the flop when they bet.
   - Locking any later leaks information. One player's own two hole cards give up to +12.8% on some markets (`docs/04` §4).
   - The lock is server time-stamped. A bet whose request arrives after the lock is rejected, whatever the client clock says.
 - **No flop in the hand:** the club agreement requires the dealer to deal the *PreFlop flop* (burn plus three) even when the hand ends preflop. If that does not happen, the round goes to VOID and every stake is refunded.

@@ -17,3 +17,4 @@ export * from './diamonds.ts';
 export * from './profitability.ts';
 export * from './scenarios.ts';
 export * from './tableReadiness.ts';
+export * from './evidence.ts';
