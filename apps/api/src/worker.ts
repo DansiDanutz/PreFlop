@@ -24,7 +24,7 @@ export async function runOutboxOnce(db: Db, t: Timing, limit = 50): Promise<numb
         await voidRound(c, r, 'evidence rejected', 'system:evidence', ev, ['EVIDENCE_REJECTED']);
       } else if (job.kind === 'void_paused') {
         const r = await lockRound(c, job.ref);
-        await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev, ['OPEN', 'LOCKED']);
+        await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev, ['OPEN', 'LOCKED', 'DEALT', 'REVIEW']);
       }
       await c.query('update outbox set done_at = now() where id = $1', [job.id]);
       return true;

@@ -197,10 +197,14 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(res.status).send(res.body);
   });
 
-  app.post('/v1/provider/tables/:t/pause', write(async (c, p, req) => {
+  app.post('/v1/provider/tables/:t/pause', write(async (c, p, req, ev) => {
     requireStaff(p, 'floor_manager');
     const { t } = req.params as H;
     await getTable(c, t);
+    // Lock order: the open round first, then the table. Bets already accepted on the open flop are
+    // refunded now, in this transaction; a hand already in progress finishes or meets its deadline.
+    const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [t])).rows[0];
+    if (open) await voidRound(c, await lockRound(c, open.id), 'table paused', p.id, ev, ['OPEN']);
     await c.query(`update poker_tables set status = 'paused', pause_reason = $2 where id = $1`, [t, String((req.body as { reason?: string })?.reason ?? 'paused by floor')]);
     await audit(c, { type: 'table.paused', tableId: t, by: p.id });
     return { status: 200, body: { status: 'paused' } };

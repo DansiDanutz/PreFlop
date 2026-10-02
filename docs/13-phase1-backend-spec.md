@@ -456,7 +456,7 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 | `GET /v1/provider/devices/:id/checkpoint` | Device (that same Table Box only) | `{last_seq, last_hash, record, signature}`, used to resynchronise after the Box loses its buffer |
 | `PUT /v1/provider/tables/:t/hands/:n/capture/image` | Device (Table Box) | Raw image bytes; stored only if their SHA-256 equals the signed `imageSha256` |
 | `POST /v1/provider/tables/:t/hands/:n/void` | Staff: **`floor_manager` only** | `{reason}` |
-| `POST /v1/provider/rounds/:id/review` | Staff: **`floor_manager`**, not a person who entered the flop | `{action: settle, cards} \| {action: void, reason}` |
+| `POST /v1/provider/rounds/:id/review` · `GET /v1/provider/rounds/:id/evidence` | Staff: **`floor_manager`**, not a person who entered the flop. The path has no `:t`, so the server **compares the credential's table with the round's `table_id`** and refuses any other table (`403 forbidden_table`) before reading or deciding | `{action: settle, cards} \| {action: void, reason}` |
 | `GET /v1/tables/:t/rounds/current` | Player | Open round, plus its prices from the book |
 | `POST /v1/bets` | Player + `Idempotency-Key` | Place a bet |
 | `GET /v1/me/bets` · `GET /v1/me/balance` | Player | History and balance |

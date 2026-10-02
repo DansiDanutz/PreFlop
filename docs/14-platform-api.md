@@ -135,6 +135,6 @@ Other provider routes:
 pnpm install && pnpm -r build
 DATABASE_URL=postgres://postgres@localhost:5432/preflop pnpm --filter @preflop/api dev   # API + worker on :4000
 pnpm --filter @preflop/api sim     # 5 simulated tables
-pnpm --filter @preflop/api demo    # demo orgs: admin@preflop.local / preflop-admin
+ADMIN_PASSWORD=… pnpm --filter @preflop/api demo   # demo orgs; passwords from env or generated and printed
 docker compose up --build          # full stack (API, sim, web :8080, console :8081, table :8082)
 ```

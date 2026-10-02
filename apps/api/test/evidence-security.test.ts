@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { signRequest } from '../src/auth/envelope.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedSimTable } from '../src/seed.ts';
+import { verifyAuditChain } from '../src/lib/audit.ts';
 import { type Harness, bet, harness, ledgerSums, walletOf } from './helpers.ts';
 
 let h: Harness;
@@ -213,6 +214,47 @@ describe('request authentication (docs/13 §8.5)', () => {
     expect(after.entries.every((e: any) => Array.isArray(e.cards))).toBe(true);
     expect((await h.sim.call('floor', 'GET', '/v1/provider/whoami')).body).toMatchObject({ kind: 'staff', role: 'floor', table_id: 'sim-1' });
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'cleanup' });
+  });
+
+  it('a capture replayed to a different hand is a conflict, not an acknowledgement', async () => {
+    const n = await open();
+    const { cards } = await h.sim.procedure(n);
+    const { image, signed } = h.sim.buildCapture(n, cards);
+    expect((await h.sim.sendCapture(n, signed, image)).status).toBe(200);
+    await h.sim.enter(n, 'dealer', cards);
+    await h.sim.enter(n, 'floor', cards);
+    await h.work();
+    const m = await open();
+    await h.sim.procedure(m);
+    const res = await h.sim.call('device', 'POST', `/v1/provider/tables/sim-1/hands/${m}/capture`, { ...signed });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toBe('capture_conflict');
+    await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${m}/void`, { reason: 'cleanup' });
+  });
+
+  it('pausing a table refunds the bets on its open flop at once', async () => {
+    const p = await h.register();
+    const n = await open();
+    await bet(h, p.token, `sim-1:h${n}`, 'colour:mixed', 300);
+    expect(await walletOf(h, p.token)).toBe(9_700);
+    expect((await h.sim.call('floor_manager', 'POST', '/v1/provider/tables/sim-1/pause', { reason: 'test' })).status).toBe(200);
+    expect(await state(n)).toBe('VOID');
+    expect(await walletOf(h, p.token)).toBe(10_000);
+    expect((await h.sim.call('floor_manager', 'POST', '/v1/provider/tables/sim-1/resume', {})).status).toBe(200);
+  });
+
+  it('a truncated audit tail is detected against the stored head', async () => {
+    expect((await verifyAuditChain(h.db)).ok).toBe(true);
+    const c = await h.db.connect();
+    try {
+      await c.query('begin');
+      await c.query('alter table audit_log disable trigger audit_log_append_only');
+      await c.query('delete from audit_log where seq = (select max(seq) from audit_log)');
+      expect((await verifyAuditChain(c)).ok).toBe(false);
+    } finally {
+      await c.query('rollback');
+      c.release();
+    }
   });
 
   it('physical tables never open while physical play is disabled', async () => {

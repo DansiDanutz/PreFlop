@@ -240,6 +240,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ status: z.enum(['active', 'paused']), reason: z.string().max(200).optional() }).parse(req.body);
     const ev = new EventBatch();
     await tx(ctx.db, async (c) => {
+      if (b.status === 'paused') {
+        // Lock order: open round first, then the table; accepted bets on the open flop are refunded.
+        const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0];
+        if (open) await voidRound(c, await lockRound(c, open.id), 'table paused by PreFlop', `user:${u.id}`, ev, ['OPEN']);
+      }
       const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
       if (!r.rowCount) throw notFound('table');
       await audit(c, { type: `table.${b.status === 'paused' ? 'paused' : 'resumed'}`, tableId: id, reason: b.reason ?? null, by: u.id });

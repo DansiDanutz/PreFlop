@@ -100,6 +100,18 @@ const view = (b: { id: string; round_id: string; selection_id: string; stake_min
   potential_payout_minor: payoutMinor(b.stake_minor, b.odds_centi), mode: b.mode, currency: b.currency, status: b.status,
 });
 
+/**
+ * Re-checks, inside the bet transaction, what may have changed since the pre-checks: the account
+ * status (row shared-locked, so a suspension or self-exclusion commits strictly before or after)
+ * and the table status (a pause takes the table row lock). Lock order: round → user → table → wallet.
+ */
+export async function assertEligibleInTx(c: Tx, userId: string, tableId: string): Promise<void> {
+  const u = (await c.query<{ status: string }>('select status from users where id = $1 for share', [userId])).rows[0];
+  if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot bet');
+  const t = (await c.query<{ status: string }>('select status from poker_tables where id = $1 for share', [tableId])).rows[0];
+  if (!t || t.status !== 'active') throw conflict('table_not_ready', `table is ${t?.status ?? 'missing'}`);
+}
+
 export const BET_LIMITS = { minStakeMinor: 1, maxStakeMinor: 100_000_000 };
 
 export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEnabled: (m: PlayMode) => Promise<boolean>): Promise<BetView> {
@@ -148,6 +160,7 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
       const out = await tx(db, async (c: Tx) => {
         const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for share', [r.id])).rows[0]!;
         if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
+        await assertEligibleInTx(c, i.userId, r.table_id);
         await lockAccount(c, wallet);
         if ((await balance(c, wallet)) < i.stakeMinor) throw unprocessable('insufficient_funds', 'balance too low');
         const ins = await c.query(

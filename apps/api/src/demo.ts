@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { migrate } from '@preflop/db';
 import { hashPassword } from './auth/players.ts';
 import { audit } from './lib/audit.ts';
@@ -12,12 +13,15 @@ import { seedAdmin } from './seed.ts';
  * - player@preflop.local is a regular player with free chips.
  * Run after the simulator has seeded its tables: `pnpm --filter @preflop/api demo`.
  */
+// Demo credentials come from the environment, or are generated and printed once — never fixed in source.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? randomBytes(12).toString('base64url');
+const PLAYER_PASSWORD = process.env.PLAYER_PASSWORD ?? randomBytes(12).toString('base64url');
 const db = createPool(process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5432/preflop', 4);
 await migrate(db);
 await tx(db, async (c) => {
-  const adminId = await seedAdmin(c, process.env.ADMIN_EMAIL ?? 'admin@preflop.local', process.env.ADMIN_PASSWORD ?? 'preflop-admin');
+  const adminId = await seedAdmin(c, process.env.ADMIN_EMAIL ?? 'admin@preflop.local', ADMIN_PASSWORD);
   const player = 'u_demo_player';
-  await c.query(`insert into users (id, email, password_hash, display_name) values ($1, 'player@preflop.local', $2, 'Demo Player') on conflict (id) do nothing`, [player, await hashPassword('preflop-player')]);
+  await c.query(`insert into users (id, email, password_hash, display_name) values ($1, 'player@preflop.local', $2, 'Demo Player') on conflict (id) do update set password_hash = excluded.password_hash`, [player, await hashPassword(PLAYER_PASSWORD)]);
   await post(c, 'play.grant', player, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(player, 'wallet', 'play', 'PLAY'), amountMinor: 10_000 }]);
   for (const [id, kind, name] of [['atlas', 'club', 'Atlas Poker Club'], ['betco', 'partner', 'BetCo (demo partner)'], ['diamond-nights', 'organizer', 'Diamond Nights (demo organizer)']] as const) {
     await c.query(`insert into organizations (id, kind, name, settings) values ($1, $2, $3, '{"city":"Bucharest","demo":true}') on conflict (id) do nothing`, [id, kind, name]);
@@ -39,4 +43,4 @@ await tx(db, async (c) => {
   await audit(c, { type: 'demo.seeded' });
 });
 await db.end();
-console.log('demo data ready: admin@preflop.local / preflop-admin, player@preflop.local / preflop-player');
+console.log(`demo data ready (passwords apply to this database only):\n  admin@preflop.local / ${ADMIN_PASSWORD}\n  player@preflop.local / ${PLAYER_PASSWORD}`);

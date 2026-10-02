@@ -10,7 +10,7 @@ import { newId } from '../lib/ids.ts';
 import { type Transfer, acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { poolAccount } from '../rounds/service.ts';
-import { type BetView, statsOf, withKeyLock } from './service.ts';
+import { type BetView, assertEligibleInTx, statsOf, withKeyLock } from './service.ts';
 
 /**
  * Rooms: books run by an organizer or club in virtual chips or diamonds (docs/08, docs/10).
@@ -184,6 +184,7 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
     const row = await tx(db, async (c) => {
       const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for share', [r.id])).rows[0]!;
       if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
+      await assertEligibleInTx(c, i.userId, r.table_id);
       // wallets in ascending id order
       for (const a of [wallet, ...(room.house === 'organizer' ? [collateral] : [])].sort()) await lockAccount(c, a);
       if ((await balance(c, wallet)) < i.stakeMinor) throw unprocessable('insufficient_funds', 'balance too low');

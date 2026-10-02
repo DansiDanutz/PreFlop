@@ -32,7 +32,7 @@ pnpm -r build
 export DATABASE_URL=postgres://postgres@localhost:5432/preflop
 pnpm --filter @preflop/api dev        # API + worker → :4000
 pnpm --filter @preflop/api sim        # 5 simulated tables (a flop every 20 s)
-pnpm --filter @preflop/api demo       # demo orgs: admin@preflop.local / preflop-admin, player@preflop.local / preflop-player
+ADMIN_PASSWORD=… pnpm --filter @preflop/api demo   # demo orgs + users; passwords from env, or generated and printed
 pnpm --filter @preflop/web dev        # :5173  website + player app
 pnpm --filter @preflop/console dev    # :5174  dashboards
 pnpm --filter @preflop/table dev      # :5175  club tablet

@@ -24,9 +24,14 @@ export async function audit(c: Tx, event: Record<string, unknown>): Promise<void
 export async function verifyAuditChain(db: Db | Tx): Promise<{ ok: boolean; brokenAt: number | null; count: number }> {
   const rows = (await db.query<{ seq: number; prev_hash: string; hash: string; event: string }>('select seq, prev_hash, hash, event from audit_log order by seq')).rows;
   let prev = 'genesis';
+  let last = 0;
   for (const r of rows) {
     if (r.prev_hash !== prev || sha256Hex(prev + r.event) !== r.hash) return { ok: false, brokenAt: r.seq, count: rows.length };
     prev = r.hash;
+    last = r.seq;
   }
+  // A truncated tail would leave a valid prefix: the chain must end exactly at the stored head.
+  const head = (await db.query<{ seq: number; hash: string }>('select seq, hash from audit_head where id = 1')).rows[0];
+  if (!head || head.hash !== prev || Number(head.seq) !== Number(last)) return { ok: false, brokenAt: last + 1, count: rows.length };
   return { ok: true, brokenAt: null, count: rows.length };
 }

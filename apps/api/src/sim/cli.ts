@@ -27,7 +27,8 @@ async function seed(): Promise<SimKeysFile[]> {
   const pool = createPool(DB, 4);
   await migrate(pool);
   const keys = await tx(pool, async (c) => {
-    await seedAdmin(c, process.env.ADMIN_EMAIL ?? 'admin@preflop.local', process.env.ADMIN_PASSWORD ?? 'preflop-admin');
+    // An admin is created only with an explicit password: no credential is ever baked into the source.
+    if (process.env.ADMIN_PASSWORD) await seedAdmin(c, process.env.ADMIN_EMAIL ?? 'admin@preflop.local', process.env.ADMIN_PASSWORD);
     const out: SimKeysFile[] = [];
     for (const t of TABLES) {
       await upsertClub(c, t.clubId, t.club, { city: t.city, country: t.country });
