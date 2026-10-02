@@ -111,6 +111,7 @@ function nav() {
     .join("");
 }
 function shell(content) {
+  $("#app").className = `route-${route}`;
   $("#app").innerHTML =
     `<aside class="sidebar"><a class="wordmark" href="#lobby" aria-label="PreFlop lobby">PreFlop<span>♠</span></a><span class="side-caption">THE FLOP IS JUST THE BEGINNING</span><nav aria-label="Main">${nav()}</nav><div class="sidebar-bottom"><div class="practice-mark">${icon("info")}<span>All instinct.<br>Zero real money.</span></div><button class="text-button" data-action="help">How to play</button><small>Free chips · No cash value</small></div></aside><div class="workspace"><header class="topbar"><a href="#lobby" class="wordmark mobile-wordmark">PreFlop<span>♠</span></a><div class="breadcrumb">${route === "table" ? "THE TABLE" : route === "club" ? "THE CLUB" : route.toUpperCase()}<span class="pill practice">PRACTICE</span></div><div class="account"><span class="chip-icon">♠</span><div><strong>${fmt(S.profile.balance)}</strong><small>free chips</small></div><a class="avatar" href="#profile" aria-label="Your profile">${esc(S.profile.name[0].toUpperCase())}</a></div></header><main id="main" tabindex="-1">${content}</main><footer class="page-footer"><span>Example clubs. Simulated rounds.</span><span>Free chips. No purchases, prizes or cash-out.</span></footer></div><nav class="bottom-nav" aria-label="Mobile navigation">${nav()}</nav>`;
 }
@@ -143,9 +144,12 @@ function tableResults() {
   const ts = filteredTables();
   return `<div class="results-label"><span>${ts.length} ${ts.length === 1 ? "table" : "tables"}</span><span>Choose your atmosphere. Play at your pace.</span></div><div class="table-grid">${ts.map(tableCard).join("") || '<div class="empty"><span>♧</span><h2>No tables here yet</h2><p>Try another search, or save a table using its star.</p><button class="button secondary" data-action="clear-filters">Clear filters</button></div>'}</div>`;
 }
+function lobbyWelcome() {
+  return `<section class="lobby-welcome" aria-label="Practice lobby"><div class="welcome-copy"><span class="eyebrow">THE PREFLOP CLUBHOUSE · PRACTICE</span><h1>Every flop.<br>A new possibility.</h1><p>Find your room. Pick your favorites.<br>Let the next three cards tell the story.</p><div class="welcome-facts"><span><b>${S.clubs.length}</b> example clubs</span><span><b>${S.tables.filter((t) => t.available).length}</b> available tables</span><span>Always free to play</span></div></div><div class="welcome-cards" aria-hidden="true">${card("As")}${card("Kh")}${card("Qc")}<span class="welcome-chip">P</span></div><button class="text-button welcome-help" data-action="help">How to play ${icon("arrow")}</button></section><div class="club-shortcuts" aria-label="Explore example clubs">${S.clubs.map((c) => `<a href="#club/${c.id}" class="club-shortcut"><span class="club-seal ${c.tone}">${c.monogram}</span><span><strong>${esc(c.name)}</strong><small>${esc(c.city)} · ${S.tables.filter((t) => t.clubId === c.id).length} tables</small></span>${icon("arrow")}</a>`).join("")}</div><div class="lobby-section-heading"><div><span class="eyebrow">TAKE YOUR SEAT</span><h2>The table lobby</h2></div><span class="pill practice">PLAY MONEY</span></div>`;
+}
 function lobby() {
   shell(
-    `${heading("YOUR NEXT THREE CARDS", "Find your table.", "Different rooms. The same feeling when the cards turn.", `<button class="button secondary how-button" data-action="help">${icon("info")} How to play</button>`)}<div class="lobby-toolbar"><label class="search-field">${icon("search")}<input id="lobby-search" type="search" placeholder="Search tables or clubs" aria-label="Search tables or clubs" value="${esc(lobbySearch)}"></label><div class="filters" aria-label="Table filters">${[
+    `${lobbyWelcome()}<div class="lobby-toolbar"><label class="search-field">${icon("search")}<input id="lobby-search" type="search" placeholder="Search tables or clubs" aria-label="Search tables or clubs" value="${esc(lobbySearch)}"></label><div class="filters" aria-label="Table filters">${[
       ["all", "All tables"],
       ["available", "Available"],
       ["saved", "Saved"],
