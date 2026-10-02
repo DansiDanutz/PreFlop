@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@preflop/client": "workspace:*",
     "@preflop/ui": "workspace:*",
     "@tanstack/react-query": "^5.62.0",

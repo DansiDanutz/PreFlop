@@ -77,3 +77,18 @@ export function applyRoundEvent<T extends TableSummary>(t: T, e: StreamEvent): T
       return t;
   }
 }
+
+// ------------------------------------------------------------------ connection
+
+export type StreamStatus = 'connecting' | 'open' | 'closed';
+
+/**
+ * Bets are paused while the live stream is not open: the player would otherwise bet on a round
+ * whose lock or flop they cannot see. The server stays authoritative (it refuses late bets
+ * whatever the screen shows); this keeps the screen honest. `message` is null when connected.
+ */
+export function streamGate(ws: StreamStatus): { paused: boolean; message: string | null } {
+  if (ws === 'open') return { paused: false, message: null };
+  if (ws === 'connecting') return { paused: true, message: 'Connecting to the table… bets paused' };
+  return { paused: true, message: 'Reconnecting… bets paused' };
+}

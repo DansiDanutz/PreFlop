@@ -102,7 +102,7 @@ export function ProfilePage() {
       </div>
 
       {money.length > 0 && (
-        <WalletCard title="Money wallets" wallets={money} note="Real-money balance. Play responsibly; deposits and withdrawals are under Identity & payments." />
+        <WalletCard title="Money wallets" wallets={money} note="Real-money balance. Play responsibly. Deposits and withdrawals open in the app when real money is enabled for your account." />
       )}
       {organizer.length > 0 && (
         <WalletCard title="Organizer wallets" wallets={organizer} note="Chips and diamonds from organizers have no cash value." />

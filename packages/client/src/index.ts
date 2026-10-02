@@ -5,6 +5,8 @@
  * Money is always integer minor units with a currency. Odds are integer hundredths.
  */
 
+import type { z } from 'zod';
+import * as S from './schemas.ts';
 export { COUNTRY_CODES, isCountryCode } from './countries.ts';
 
 // ======================================================================================= types
@@ -272,8 +274,35 @@ export interface AdminAgents {
 }
 export interface Badge { id: string; kind: 'champion' | 'podium' | 'top10'; label: string; leaderboard_id: string | null; awarded_at: string }
 
+const isProblem = (d: unknown): d is Problem => !!d && typeof d === 'object' && typeof (d as Problem).type === 'string';
+
+/**
+ * The body of a response as JSON, as an ApiError when it is not usable: a proxy's HTML error
+ * page, a truncated body, or (with a schema) JSON that does not have the shape the apps compute
+ * money with (`invalid_response`). Never a raw SyntaxError, never an unchecked `as T`.
+ */
+export function parseResponse<T>(status: number, statusText: string, text: string, schema?: z.ZodTypeAny): T {
+  let data: unknown = null;
+  let json = true;
+  if (text) { try { data = JSON.parse(text); } catch { json = false; } }
+  if (status < 200 || status >= 300) {
+    throw new ApiError(status, json && isProblem(data) ? data : { type: 'http_error', title: statusText || `HTTP ${status}`, status });
+  }
+  if (!json) throw new ApiError(status, { type: 'invalid_response', title: 'The server sent a response that is not JSON.', status });
+  if (schema) {
+    const r = schema.safeParse(data);
+    if (!r.success) {
+      throw new ApiError(status, {
+        type: 'invalid_response', title: 'The server sent a response this app cannot read.', status,
+        issues: r.error.issues.slice(0, 5).map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+      });
+    }
+  }
+  return data as T;
+}
+
 export function createClient(o: ClientOptions) {
-  async function req<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  async function req<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}, schema?: z.ZodTypeAny): Promise<T> {
     const token = o.getToken?.();
     const res = await fetch(o.baseUrl + path, {
       method,
@@ -281,15 +310,11 @@ export function createClient(o: ClientOptions) {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      if (res.status === 401) o.onUnauthorized?.();
-      throw new ApiError(res.status, data ?? { type: 'http_error', title: res.statusText, status: res.status });
-    }
-    return data as T;
+    if (res.status === 401) o.onUnauthorized?.();
+    return parseResponse<T>(res.status, res.statusText, text, schema);
   }
-  const get = <T>(p: string) => req<T>('GET', p);
-  const post = <T>(p: string, b: unknown = {}, h?: Record<string, string>) => req<T>('POST', p, b, h);
+  const get = <T>(p: string, s?: z.ZodTypeAny) => req<T>('GET', p, undefined, {}, s);
+  const post = <T>(p: string, b: unknown = {}, h?: Record<string, string>, s?: z.ZodTypeAny) => req<T>('POST', p, b, h, s);
   const put = <T>(p: string, b: unknown = {}) => req<T>('PUT', p, b);
   const del = <T>(p: string) => req<T>('DELETE', p);
   const q = (o2: Record<string, string | number | undefined | null>) => {
@@ -327,7 +352,7 @@ export function createClient(o: ClientOptions) {
     resetPassword: (token: string, password: string) => post<{ ok: true }>('/v1/auth/reset-password', { token, password }),
 
     // ---------- player
-    me: () => get<Me>('/v1/me'),
+    me: () => get<Me>('/v1/me', S.meSchema),
     /** date_of_birth and country can only be added when missing (409 already_set otherwise). */
     updateMe: (b: { display_name?: string; date_of_birth?: string; country?: string }) =>
       req<{ id: string; display_name: string; date_of_birth: string | null; country: string | null }>('PATCH', '/v1/me', b),
@@ -338,36 +363,36 @@ export function createClient(o: ClientOptions) {
     mfaEnable: (code: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code }),
     mfaDisable: (code: string) => post<{ mfa_enabled: false }>('/v1/me/mfa/disable', { code }),
     mySession: () => get<PlaySession>('/v1/me/session'),
-    wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets'),
-    resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset'),
-    placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }),
-    myBets: (f: { limit?: number; round_id?: string; status?: string } = {}) => get<{ bets: MyBet[] }>(`/v1/me/bets${q(f)}`),
+    wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets', S.walletsSchema),
+    resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset', {}, undefined, S.balanceSchema),
+    placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }, S.betViewSchema),
+    myBets: (f: { limit?: number; round_id?: string; status?: string } = {}) => get<{ bets: MyBet[] }>(`/v1/me/bets${q(f)}`, S.myBetsSchema),
     myLedger: () => get<{ entries: LedgerLine[] }>('/v1/me/ledger'),
-    myStats: () => get<MyStats>('/v1/me/stats'),
+    myStats: () => get<MyStats>('/v1/me/stats', S.myStatsSchema),
     favorites: () => get<{ selection_ids: string[] }>('/v1/me/favorites'),
     setFavorites: (selection_ids: string[]) => put<{ selection_ids: string[] }>('/v1/me/favorites', { selection_ids }),
     joinRoom: (code: string) => post<Room>('/v1/rooms/join', { code }),
     leaderboards: (mode?: PlayMode) => get<{ leaderboards: Leaderboard[] }>(`/v1/leaderboards${mode ? `?mode=${mode}` : ''}`),
     leaderboard: (id: string) => get<LeaderboardDetail>(`/v1/leaderboards/${encodeURIComponent(id)}`),
     // tournaments (docs/17). Live updates: WS /v1/stream, subscribe to `tournament:<id>` → `tournament.standings`.
-    tournaments: (status?: 'upcoming' | 'running' | 'finished') => get<{ tournaments: Tournament[]; server_time: string }>(`/v1/tournaments${q({ status })}`),
-    tournament: (id: string) => get<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}`),
-    registerTournament: (id: string) => post<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}/register`),
-    unregisterTournament: (id: string) => del<{ ok: true; refunded_minor: number }>(`/v1/tournaments/${encodeURIComponent(id)}/register`),
-    tournamentBet: (id: string, b: TournamentBetInput) => post<TournamentBet>(`/v1/tournaments/${encodeURIComponent(id)}/bets`, b),
+    tournaments: (status?: 'upcoming' | 'running' | 'finished') => get<{ tournaments: Tournament[]; server_time: string }>(`/v1/tournaments${q({ status })}`, S.tournamentsSchema),
+    tournament: (id: string) => get<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}`, S.tournamentDetailSchema),
+    registerTournament: (id: string) => post<TournamentDetail>(`/v1/tournaments/${encodeURIComponent(id)}/register`, {}, undefined, S.tournamentDetailSchema),
+    unregisterTournament: (id: string) => req<{ ok: true; refunded_minor: number }>('DELETE', `/v1/tournaments/${encodeURIComponent(id)}/register`, undefined, {}, S.refundSchema),
+    tournamentBet: (id: string, b: TournamentBetInput) => post<TournamentBet>(`/v1/tournaments/${encodeURIComponent(id)}/bets`, b, undefined, S.tournamentBetSchema),
     myAgent: () => get<MyAgent>('/v1/me/agent'),
     applyAgent: (note?: string) => post<Agent>('/v1/me/agent/apply', note ? { note } : {}),
     myBadges: () => get<{ badges: Badge[] }>('/v1/me/badges'),
     promotions: () => get<{ promotions: Promotion[] }>('/v1/promotions'),
-    claimPromotion: (id: string) => post<{ amount_minor: number; currency: string }>(`/v1/promotions/${encodeURIComponent(id)}/claim`),
+    claimPromotion: (id: string) => post<{ amount_minor: number; currency: string }>(`/v1/promotions/${encodeURIComponent(id)}/claim`, {}, undefined, S.claimSchema),
     limits: () => get<Limits>('/v1/me/limits'),
     setLimits: (l: Limits) => put<Limits>('/v1/me/limits', l),
     selfExclude: (days: number) => post<{ until: string }>('/v1/me/self-exclusion', { days }),
     startKyc: () => post<{ kyc_status: string }>('/v1/me/kyc'),
-    payments: () => get<{ payments: Payment[] }>('/v1/me/payments'),
-    deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }) => post<Payment>('/v1/me/deposits', b),
-    withdraw: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string; destination?: string }) => post<Payment>('/v1/me/withdrawals', b),
-    buyChips: (b: { chips: number; pay_with: string }) => post<Payment>('/v1/me/chips/purchases', b),
+    payments: () => get<{ payments: Payment[] }>('/v1/me/payments', S.paymentsSchema),
+    deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }) => post<Payment>('/v1/me/deposits', b, undefined, S.paymentSchema),
+    withdraw: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string; destination?: string }) => post<Payment>('/v1/me/withdrawals', b, undefined, S.paymentSchema),
+    buyChips: (b: { chips: number; pay_with: string }) => post<Payment>('/v1/me/chips/purchases', b, undefined, S.paymentSchema),
 
     // ---------- organization portals (club / partner / organizer)
     orgOverview: (id: string) => get<OrgOverview>(`${org(id)}/overview`),
@@ -476,9 +501,23 @@ export type PreFlopClient = ReturnType<typeof createClient>;
 
 // =================================================================================== stream
 
+/** A stream frame, or null when it is not one (not JSON, or no `type`). */
+export function parseStreamFrame(raw: unknown): StreamEvent | null {
+  try {
+    const d: unknown = JSON.parse(String(raw));
+    if (!d || typeof d !== 'object' || typeof (d as StreamEvent).type !== 'string') return null;
+    const e = d as StreamEvent;
+    if (e.data !== undefined && (e.data === null || typeof e.data !== 'object')) return null;
+    return { ...e, data: e.data ?? {} };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Live events over WebSocket with auto-reconnect. Topics: "lobby", "table:<id>". Pass a session
- * token to also receive your own bet events (bet.accepted, bet.settled, bet.voided).
+ * token to also receive your own bet events (bet.accepted, bet.settled, bet.voided): it is sent as
+ * the first frame ({"type":"auth"}), never in the URL, so it stays out of proxy and access logs.
  */
 export function connectStream(o: { url: string; topics: string[]; token?: string | null; onEvent: (e: StreamEvent) => void; onStatus?: (s: 'open' | 'closed') => void }) {
   let ws: WebSocket | null = null;
@@ -486,14 +525,16 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
   let retry = 500;
   let topics = [...o.topics];
   const open = () => {
-    ws = new WebSocket(o.url + (o.token ? `?token=${encodeURIComponent(o.token)}` : ''));
+    ws = new WebSocket(o.url);
     ws.onopen = () => {
       retry = 500;
       o.onStatus?.('open');
+      if (o.token) ws?.send(JSON.stringify({ type: 'auth', token: o.token }));
       ws?.send(JSON.stringify({ subscribe: topics }));
     };
     ws.onmessage = (m) => {
-      try { o.onEvent(JSON.parse(String(m.data))); } catch { /* ignore */ }
+      const e = parseStreamFrame(m.data);
+      if (e) o.onEvent(e);
     };
     ws.onclose = () => {
       o.onStatus?.('closed');

@@ -222,6 +222,25 @@ The random cut makes it harder to aim at one **exact** card position. It does **
 6. UPS charged and on mains power.
 7. Dealer roster logged; dealers rotate every 30 minutes.
 
+## 7a. Staff tablets: PIN lock and lost tablets
+
+Each staff tablet holds one person's signing key for one table and role (non-extractable WebCrypto Ed25519 key in the browser's IndexedDB). On top of that:
+
+- **Staff PIN.** Enrollment ends with the person choosing a 6–8 digit PIN (no repeated digits or runs). Only a salted PBKDF2-SHA-256 hash (210,000 iterations) is stored next to the key; the PIN never leaves the tablet.
+- **Auto-lock.** The tablet locks after 5 idle minutes (2, 5, 10 or 15 in the tablet settings), when it returns to the foreground after being idle that long, after every reload, and on *Lock now*. While locked, the table screens are not shown and **nothing is signed**: the app refuses to sign any request (polls included) until the PIN is entered. After 5 wrong PINs each try waits 30 s, doubling up to 15 minutes; the count survives a reload.
+- **Press and hold.** Every signed step of a hand (START HAND, CUT, DEAL START and the flop submission) is press-and-hold, so a stray tap never signs.
+- **Forgotten PIN.** It cannot be recovered: *Reset this tablet* deletes the key and PIN, then the club admin revokes the old credential and enrolls a new key.
+
+The PIN stops someone walking past an unattended tablet. It is not encryption: anyone who can run code in that browser profile can use the key directly. A tablet that leaves the club's control is therefore always revoked server-side.
+
+### Runbook: revoke a lost or stolen tablet
+
+1. **Revoke now, investigate later.** In the club console, *Staff & devices → Staff credentials*, find the tablet's credential (table, person, role) and press **Revoke**. Revocation is immediate: every later request signed with that key is refused with `credential_revoked`. If several tablets went missing, revoke each credential.
+2. **Check the table.** If the lost tablet was the only dealer, floor or floor-manager credential for its table, the table cannot run hands: enroll a replacement (step 4) or pause the table from the floor manager's tablet (or ask PreFlop operations) until one is ready. Open rounds are protected anyway: a round that cannot finish its procedure is voided and refunded (§6).
+3. **Review what it signed.** In the back office, check the table's recent rounds and the audit log for actions by that credential since the tablet was last seen (start, cut, deal-start, flop entries, reviews). Raise an alert with PreFlop risk if anything was signed after the loss was noticed.
+4. **Enroll a replacement.** On a clean tablet: *Set up this table tablet* (table id, person, role) → *Create tablet key* → read the fingerprint aloud to the club admin, who enrolls the public key (*Staff → Add tablet credential*) → enter the credential id → the person sets a new PIN. Never reuse the old credential id.
+5. **If the tablet is found.** Do not reuse it as-is: open its settings, *Reset this tablet* (deletes the old key), and enroll it again as a new credential.
+
 ## 8. Rough equipment cost per table (estimates)
 
 | Item | Certified | Social |

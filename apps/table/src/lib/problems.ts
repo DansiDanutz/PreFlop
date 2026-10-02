@@ -18,6 +18,7 @@ const MESSAGES: Record<string, string> = {
   retry_later: 'Server busy. Retry.',
   not_found: 'Not found.',
   bad_request: 'The request was refused.',
+  tablet_locked: 'The tablet is locked. Unlock it with your PIN, then retry.',
   network: 'No answer from PreFlop. Check the connection, then retry.',
   timeout: 'PreFlop did not answer in time. Retry (it is safe: the action will not run twice).',
 };
@@ -29,4 +30,4 @@ export function problemMessage(type: string, title?: string): string {
 }
 
 /** Problems a retry with the same Idempotency-Key may fix (no answer, or server busy). */
-export const isRetryable = (type: string) => type === 'network' || type === 'timeout' || type === 'retry_later' || type === 'internal';
+export const isRetryable = (type: string) => type === 'tablet_locked' || type === 'network' || type === 'timeout' || type === 'retry_later' || type === 'internal';

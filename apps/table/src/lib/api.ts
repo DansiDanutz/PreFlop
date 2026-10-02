@@ -1,5 +1,6 @@
 import { authHeader, newIdempotencyKey } from './envelope.ts';
 import type { Identity } from './keystore.ts';
+import { signingAllowed } from './lock.ts';
 import { problemMessage } from './problems.ts';
 import { normalizeState } from './state.ts';
 import type { Evidence, TableState, WhoAmI } from './types.ts';
@@ -56,6 +57,8 @@ export class TableApi {
 
   /** Signed request. Throws ApiProblem (type `network` / `timeout` when there was no answer). */
   async request<T>(method: string, path: string, o: { body?: string; idempotencyKey?: string } = {}): Promise<T> {
+    // Nothing is signed while the tablet is locked (lib/lock.ts).
+    if (!signingAllowed()) throw new ApiProblem(0, 'tablet_locked');
     const cred = this.id.config.credentialId;
     if (!cred) throw new ApiProblem(0, 'unknown_credential', 'tablet not enrolled');
     const url = new URL(this.base + path);

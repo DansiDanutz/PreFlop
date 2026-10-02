@@ -8,10 +8,11 @@
     "dev": "vite --port 5173 --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5173 --host",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
     "@preflop/client": "workspace:*",
     "@preflop/ui": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

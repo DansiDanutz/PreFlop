@@ -58,9 +58,37 @@ export interface BuildOptions {
   logStream?: NodeJS.WritableStream;
 }
 
+/** Query parameters whose values never reach a log line (old clients may still send ?token=). */
+const SECRET_PARAMS = /([?&](?:token|access_token|client_secret|secret|password)=)[^&#]*/gi;
+export const redactUrl = (url: string) => url.replace(SECRET_PARAMS, '$1[redacted]');
+
+/** Fastify's default request serializer, with secrets in the query string redacted. */
+const logSerializers = {
+  req: (req: FastifyRequest) => ({
+    method: req.method,
+    url: redactUrl(req.url),
+    host: req.host,
+    remoteAddress: req.ip,
+    ...(req.socket?.remotePort !== undefined ? { remotePort: req.socket.remotePort } : {}),
+  }),
+};
+
+/**
+ * Security headers on every API answer. Responses are JSON for scripts, never documents, so they
+ * get a deny-all CSP, and are never cached by browsers or shared proxies (they carry balances,
+ * bets and sessions) unless a route opts in by setting its own Cache-Control.
+ */
+function securityHeaders(reply: FastifyReply) {
+  reply.header('x-content-type-options', 'nosniff');
+  reply.header('referrer-policy', 'no-referrer');
+  reply.header('x-frame-options', 'DENY');
+  reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+  if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
+}
+
 export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: opts.logStream ? { stream: opts.logStream } : config.log,
+    logger: opts.logStream ? { stream: opts.logStream, serializers: logSerializers } : config.log ? { serializers: logSerializers } : false,
     trustProxy: config.trustProxy,
     bodyLimit: 12 * 1024 * 1024,
     // Every request carries an id: the caller's X-Request-Id when it is sane, otherwise a new
@@ -73,6 +101,10 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   });
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id);
+  });
+  app.addHook('onSend', async (_req, reply, payload) => {
+    securityHeaders(reply);
+    return payload;
   });
 
   // Keep the raw body: provider requests are signed over its exact bytes.

@@ -29,10 +29,16 @@ CMD ["npx", "tsx", "--conditions=preflop-source", "src/sim/cli.ts"]
 # ---- Static web apps (website + player app, console, club tablet)
 FROM nginx:1.27-alpine AS web
 COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/web.headers.conf /etc/nginx/preflop/headers.conf
+COPY deploy/nginx/web.embed.headers.conf /etc/nginx/preflop/embed.headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 FROM nginx:1.27-alpine AS console
 COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/console.headers.conf /etc/nginx/preflop/headers.conf
+COPY deploy/nginx/console.embed.headers.conf /etc/nginx/preflop/embed.headers.conf
 COPY --from=build /app/apps/console/dist /usr/share/nginx/html
 FROM nginx:1.27-alpine AS table
 COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/table.headers.conf /etc/nginx/preflop/headers.conf
+COPY deploy/nginx/table.embed.headers.conf /etc/nginx/preflop/embed.headers.conf
 COPY --from=build /app/apps/table/dist /usr/share/nginx/html

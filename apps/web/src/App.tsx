@@ -64,6 +64,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage inApp />} />
         </Route>
         <Route path="embed/table/:id" element={<EmbedTablePage />} />
+        <Route path="embed" element={<EmbedTablePage />} />
       </Routes>
     </>
   );
