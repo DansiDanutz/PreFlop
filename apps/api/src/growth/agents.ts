@@ -57,6 +57,7 @@ export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: st
   await c.query('select 1 from agents where user_id = any($1) order by user_id for update', [ids]);
   const a = (await c.query<AgentRow>('select * from agents where user_id = $1', [agentId])).rows[0];
   if (!a) throw notFound('agent');
+  if (agentId === by) throw forbidden('self_approval', 'another team member decides on your own agent account');
   if (u.rate_l1_bps !== undefined && (u.rate_l1_bps < 0 || u.rate_l1_bps > RATE_CAPS.l1)) throw unprocessable('rate_cap', `level-1 rate is 0–${RATE_CAPS.l1 / 100}%`);
   if (u.rate_l2_bps !== undefined && (u.rate_l2_bps < 0 || u.rate_l2_bps > RATE_CAPS.l2)) throw unprocessable('rate_cap', `level-2 rate is 0–${RATE_CAPS.l2 / 100}%`);
   if (u.parent_agent_id !== undefined && u.parent_agent_id !== null) {
@@ -113,8 +114,16 @@ async function ngr(c: Tx, playersSql: string, params: unknown[], month: string, 
  */
 export async function closeMonth(c: Tx, monthYm: string, by: string, now = new Date()): Promise<number> {
   const month = monthStart(monthYm, now);
-  const first = await c.query(`insert into agent_month_closes (month, statements, closed_by) values ($1, 0, $2) on conflict do nothing`, [month, by]);
-  if (!first.rowCount) return 0;
+  // Months close in order: the level-1 carry runs from each month into the next, so closing out of
+  // order would apply a negative balance twice or lose it.
+  await c.query('lock table agent_month_closes in share row exclusive mode');
+  if ((await c.query('select 1 from agent_month_closes where month = $1', [month])).rowCount) return 0;
+  const order = (await c.query<{ later: boolean; any: boolean; prev: boolean }>(
+    `select exists (select 1 from agent_month_closes where month > $1) as later, exists (select 1 from agent_month_closes) as any,
+            exists (select 1 from agent_month_closes where month = ($1::date - interval '1 month')::date) as prev`, [month])).rows[0]!;
+  if (order.later) throw unprocessable('month_out_of_order', 'a later month is already closed');
+  if (order.any && !order.prev) throw unprocessable('month_out_of_order', 'close the previous month first');
+  await c.query('insert into agent_month_closes (month, statements, closed_by) values ($1, 0, $2)', [month, by]);
   const agents = (await c.query<AgentRow>(`select * from agents where status in ('active','suspended') order by user_id`)).rows;
   let created = 0;
   for (const a of agents) {
@@ -147,6 +156,8 @@ export async function closeMonth(c: Tx, monthYm: string, by: string, now = new D
 }
 
 export async function approveStatement(c: Tx, id: string, by: string): Promise<void> {
+  const own = (await c.query('select 1 from agent_statements where id = $1 and agent_id = $2', [id, by])).rowCount;
+  if (own) throw forbidden('self_approval', 'another team member approves your own statements');
   const r = await c.query(`update agent_statements set status = 'approved', decided_by = $2 where id = $1 and status = 'draft'`, [id, by]);
   if (!r.rowCount) throw unprocessable('not_draft', 'only a draft statement can be approved');
   await audit(c, { type: 'agent.statement_approved', statementId: id, by });
@@ -158,6 +169,7 @@ export async function payStatement(c: Tx, id: string, by: string): Promise<void>
     'select agent_id, currency, amount_minor::text, status from agent_statements where id = $1 for update', [id])).rows[0];
   if (!s) throw notFound('statement');
   if (s.status !== 'approved') throw unprocessable('not_approved', 'approve the statement before paying it');
+  if (s.agent_id === by) throw forbidden('self_approval', 'another admin pays your own statements');
   const agent = (await c.query<{ status: string }>('select status from agents where user_id = $1', [s.agent_id])).rows[0];
   if (agent?.status !== 'active') throw unprocessable('agent_not_active', 'commission is paid to active agents only; re-activate the agent first');
   const mode = REAL_CURRENCIES[s.currency]!;

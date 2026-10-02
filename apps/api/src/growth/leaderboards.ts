@@ -59,6 +59,8 @@ function scopeSql(lb: LeaderboardRow, until: Date): { where: string; params: unk
     const i = params.length;
     scope = `and (t.club_id = $${i} or b.room_id in (select id from rooms where org_id = $${i}))`;
   }
+  // Chips and diamonds stay in the owner's closed loop: only bets in its own rooms count.
+  if (CLOSED_LOOP_MODES.has(lb.mode)) { params.push(lb.owner_org); scope += ` and b.room_id in (select id from rooms where org_id = $${params.length})`; }
   return {
     where: `b.mode = $1 and b.currency = $2 and b.status in ('won','lost') and b.settled_at >= $3 and b.settled_at < $4 ${scope}`,
     params,
@@ -136,7 +138,7 @@ export async function fund(c: Tx, lb: LeaderboardRow, source: 'org' | 'sponsor',
 export async function accrue(c: Tx, lb: LeaderboardRow, now = new Date()): Promise<number> {
   if (lb.margin_bps === 0 && lb.contribution_bps === 0) return 0;
   const from = lb.accrued_until ?? lb.starts_at;
-  const until = new Date(Math.min(now.getTime(), lb.ends_at.getTime()));
+  const until = new Date(Math.min(now.getTime() - SETTLE_GRACE_MS, lb.ends_at.getTime()));
   if (until <= from) return 0;
   const s = scopeSql({ ...lb, starts_at: from }, until);
   const t = (await c.query<{ house: string; fees: string; staked: string }>(
@@ -165,6 +167,12 @@ export async function accrue(c: Tx, lb: LeaderboardRow, now = new Date()): Promi
   await c.query('update leaderboards set accrued_until = $2 where id = $1', [lb.id, until]);
   return total;
 }
+
+/**
+ * Settlement stamps settled_at inside a transaction that commits a moment later, so accrual and
+ * final standings only look at bets settled at least this long ago.
+ */
+export const SETTLE_GRACE_MS = 2 * 60_000;
 
 const BADGE = (rank: number): 'champion' | 'podium' | 'top10' | null => (rank === 1 ? 'champion' : rank <= 3 ? 'podium' : rank <= 10 ? 'top10' : null);
 
@@ -202,7 +210,7 @@ async function winners(c: Tx, lb: LeaderboardRow, now: Date): Promise<Standing[]
  */
 export async function settle(c: Tx, id: string, now = new Date()): Promise<boolean> {
   const lb = await lockBoard(c, id);
-  if (!lb || lb.status === 'settled' || lb.status === 'cancelled' || lb.ends_at > now) return false;
+  if (!lb || lb.status === 'settled' || lb.status === 'cancelled' || lb.ends_at.getTime() + SETTLE_GRACE_MS > now.getTime()) return false;
   if (REAL_MODES.has(lb.mode) && !(await modeEnabled(c, lb.mode))) return false;
   await accrue(c, lb, now);
   const pool = await poolBalance(c, lb);

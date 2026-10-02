@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import type { SessionUser } from '../auth/players.ts';
 import {
-  CLOSED_LOOP_MODES, DEFAULT_MIN_ROUNDS, type LeaderboardRow, type Metric, assertBoardModeAllowed, cancel, fund, lockBoard, poolBalance, settle, standingOf, standings,
+  CLOSED_LOOP_MODES, DEFAULT_MIN_ROUNDS, REAL_MODES, type LeaderboardRow, type Metric, assertBoardModeAllowed, cancel, fund, lockBoard, poolBalance, settle, standingOf, standings,
 } from '../growth/leaderboards.ts';
 import { type PromotionRow, claim, isLive } from '../growth/promotions.ts';
 import { audit } from '../lib/audit.ts';
@@ -87,6 +87,8 @@ async function createBoard(ctx: AppContext, b: BoardInput, ownerOrg: string | nu
   await assertBoardModeAllowed(ctx.db, b.mode as PlayMode);
   if (!ownerOrg && CLOSED_LOOP_MODES.has(b.mode as PlayMode)) throw unprocessable('org_required', 'chips and diamonds belong to one organization; its portal creates and funds the board');
   if (ownerOrg && b.margin_bps > 0) throw forbidden('margin_preflop_only', 'only PreFlop boards take a share of PreFlop’s margin');
+  // The player contribution comes out of PreFlop's bankroll, so only PreFlop boards take one.
+  if (ownerOrg && b.contribution_bps > 0) throw forbidden('contribution_preflop_only', 'only PreFlop boards take a player contribution');
   return tx(ctx.db, async (c) => {
     const id = newId('lb');
     const now = new Date();
@@ -199,11 +201,24 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
       : null;
     const live = settledResults ? [] : await standings(ctx.db, lb, 50);
     const pool = (await boardView(ctx, lb)).pool_minor;
-    const projected = (rank: number | null) => (rank && rank <= lb.prize_split_bps.length ? Math.floor((pool * lb.prize_split_bps[rank - 1]!) / 10_000) : 0);
+    // On real-money boards only verified players take prizes (as settle does), so projected prizes skip the rest.
+    const prizeRank = new Map<string, number>();
+    if (!settledResults) {
+      let eligible = live.filter((x) => x.qualified);
+      if (REAL_MODES.has(lb.mode)) {
+        const ok = new Set((await ctx.db.query<{ id: string }>(`select id from users where id = any($1) and kyc_status = 'verified'`, [eligible.map((x) => x.user_id)])).rows.map((r) => r.id));
+        eligible = eligible.filter((x) => ok.has(x.user_id));
+      }
+      eligible.forEach((x, i) => prizeRank.set(x.user_id, i + 1));
+    }
+    const projected = (userId: string) => {
+      const rank = prizeRank.get(userId);
+      return rank && rank <= lb.prize_split_bps.length ? Math.floor((pool * lb.prize_split_bps[rank - 1]!) / 10_000) : 0;
+    };
     const rows = settledResults
       ? settledResults.map((r) => ({ rank: r.rank, user_id: r.user_id, display_name: r.display_name, score: Number(r.score), rounds: r.rounds, qualified: true, prize_minor: Number(r.prize_minor), badge: r.badge }))
-      : live.map((s) => ({ rank: s.rank, user_id: s.user_id, display_name: s.display_name, score: s.score, rounds: s.rounds, qualified: s.qualified, prize_minor: projected(s.rank), badge: null }));
-    const mine = u ? rows.find((r) => r.user_id === u.id) ?? (settledResults ? null : await standingOf(ctx.db, lb, u.id).then((s) => (s ? { rank: s.rank, user_id: s.user_id, display_name: s.display_name, score: s.score, rounds: s.rounds, qualified: s.qualified, prize_minor: projected(s.rank), badge: null } : null))) : null;
+      : live.map((s) => ({ rank: s.rank, user_id: s.user_id, display_name: s.display_name, score: s.score, rounds: s.rounds, qualified: s.qualified, prize_minor: projected(s.user_id), badge: null }));
+    const mine = u ? rows.find((r) => r.user_id === u.id) ?? (settledResults ? null : await standingOf(ctx.db, lb, u.id).then((s) => (s ? { rank: s.rank, user_id: s.user_id, display_name: s.display_name, score: s.score, rounds: s.rounds, qualified: s.qualified, prize_minor: 0, badge: null } : null))) : null;
     // Other players are shown by display name only.
     const strip = <T extends { user_id: string }>(r: T) => { const { user_id: _drop, ...rest } = r; return { ...rest, you: u?.id === r.user_id }; };
     return { leaderboard: await boardView(ctx, lb), standings: rows.map(strip), you: mine ? strip(mine) : null };
@@ -287,6 +302,9 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
       const p = (await c.query<PromotionRow>('select * from promotions where id = $1 for update', [id])).rows[0];
       if (!p) throw notFound('promotion');
       if (p.status !== 'pending_review') throw unprocessable('not_pending', `this promotion is ${p.status}`);
+      // Four eyes: nobody reviews a promotion they wrote or that comes from an organization they belong to.
+      const mine = p.created_by === u.id || !!(await c.query('select 1 from memberships where org_id = $1 and user_id = $2', [p.owner_org, u.id])).rowCount;
+      if (mine) throw forbidden('self_approval', 'another team member reviews this promotion');
       const status = b.decision === 'approve' ? 'approved' : 'rejected';
       await c.query('update promotions set status = $2, review_note = $3, reviewed_by = $4 where id = $1', [id, status, b.note ?? null, u.id]);
       await audit(c, { type: 'promotion.reviewed', promotionId: id, decision: b.decision, by: u.id });
@@ -343,5 +361,16 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
     const { user, org } = await requireOrg(ctx, req, id, { kinds: ['club', 'organizer'], write: true });
     const b = PromoBody.parse(req.body);
     return reply.code(201).send(promoView(await createPromotion(ctx, b, id, org.kind, user.id)));
+  });
+  /** Sends a draft for review. */
+  app.post('/v1/org/:id/promotions/:promo/submit', async (req) => {
+    const { id, promo } = req.params as { id: string; promo: string };
+    const { user } = await requireOrg(ctx, req, id, { kinds: ['club', 'organizer'], write: true });
+    return tx(ctx.db, async (c) => {
+      const r = await c.query(`update promotions set status = 'pending_review' where id = $1 and owner_org = $2 and status = 'draft' returning id`, [promo, id]);
+      if (!r.rowCount) throw unprocessable('not_draft', 'only your own draft promotions can be submitted');
+      await audit(c, { type: 'promotion.submitted', promotionId: promo, by: user.id });
+      return { id: promo, status: 'pending_review' };
+    });
   });
 }

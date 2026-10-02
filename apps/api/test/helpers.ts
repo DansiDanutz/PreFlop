@@ -96,3 +96,14 @@ export async function walletOf(h: Harness, token: string, mode = 'play'): Promis
 export async function ledgerSums(db: Db): Promise<{ currency: string; total: number }[]> {
   return (await db.query<{ currency: string; total: number }>('select currency, sum(amount_minor)::bigint as total from ledger_entries group by currency')).rows;
 }
+
+/** Creates an organization as the PreFlop team; the owner takes it over with the single-use claim link. */
+export async function ownedOrg(h: Harness, adminToken: string, body: { kind: 'club' | 'partner' | 'organizer'; name: string; settings?: Record<string, unknown> },
+  owner: { token: string; email: string }): Promise<string> {
+  const r = await h.api('POST', '/v1/admin/orgs', adminToken, { ...body, owner_email: owner.email });
+  if (r.status !== 201) throw new Error(`org create failed: ${r.status} ${JSON.stringify(r.body)}`);
+  const c = await h.api('POST', '/v1/me/org-claims', owner.token, { token: r.body.owner_claim.token });
+  if (c.status !== 200) throw new Error(`claim failed: ${c.status} ${JSON.stringify(c.body)}`);
+  return r.body.id as string;
+}
+

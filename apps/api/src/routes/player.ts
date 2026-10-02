@@ -15,9 +15,12 @@ import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { bindReferral } from '../growth/agents.ts';
+import { redeemOwnerClaim } from '../lib/ownerClaims.ts';
 
 const Register = z.object({
-  email: z.string().email().max(200).transform((s) => s.toLowerCase()),
+  // Partner players get placeholder addresses under .partner.preflop; nobody can register one.
+  email: z.string().email().max(200).transform((s) => s.toLowerCase())
+    .refine((s) => !/\.partner\.preflop$/.test(s), 'this address is reserved'),
   password: z.string().min(8).max(200),
   display_name: z.string().min(1).max(60),
   country: z.string().length(2).optional(),
@@ -80,8 +83,6 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       await c.query('insert into users (id, email, password_hash, display_name, country) values ($1, $2, $3, $4, $5)', [id, b.email, hash, b.display_name, b.country ?? null]);
       // Every account starts with free play money (no cash value, no fees).
       await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: ctx.config.playStartMinor }]);
-      // Organizations approved for this email before the account existed get their owner now.
-      await c.query(`insert into memberships (user_id, org_id, role) select $1, id, 'owner' from organizations where settings->>'owner_email' = $2 on conflict do nothing`, [id, b.email]);
       await audit(c, { type: 'user.registered', userId: id });
       await bindReferral(c, id, b.ref);
       return createSession(c, id);
@@ -106,6 +107,13 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const t = bearer(req.headers.authorization);
     if (t) await endSession(ctx.db, t);
     return { ok: true };
+  });
+
+  /** Redeems a single-use owner link from PreFlop: the signed-in account becomes an owner of that organization. */
+  app.post('/v1/me/org-claims', { preHandler: perIp(ctx.limits.login) }, async (req) => {
+    const u = await ctx.user(req);
+    const { token } = z.object({ token: z.string().min(20).max(200) }).parse(req.body);
+    return tx(ctx.db, (c) => redeemOwnerClaim(c, token, u.id));
   });
 
   app.get('/v1/me', async (req) => {

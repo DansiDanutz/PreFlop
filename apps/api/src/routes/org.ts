@@ -34,7 +34,7 @@ export async function requireOrg(ctx: AppContext, req: FastifyRequest, orgId: st
   return { user: u, org, role: m?.role ?? `platform:${u.platform_role}` };
 }
 
-const RESERVED_SETTINGS = new Set(['owner_email', 'application_id', 'demo', 'widget']);
+export const RESERVED_SETTINGS = new Set(['owner_email', 'application_id', 'demo', 'widget']);
 const PER_SHIFT = new Set(['shufflerSealsVerifiedThisShift', 'boardCameraCalibrated', 'privacyMasksVerified']);
 
 const RoomBody = z.object({
@@ -105,6 +105,13 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const target = (await ctx.db.query<{ id: string }>('select id from users where email = $1', [b.email.toLowerCase()])).rows[0];
     if (!target) throw notFound('user with that email (they must register first)');
     await tx(ctx.db, async (c) => {
+      const owners = (await c.query<{ user_id: string }>(`select user_id from memberships where org_id = $1 and role = 'owner' for update`, [org.id])).rows;
+      const isOwner = owners.some((o) => o.user_id === target.id);
+      if (isOwner && b.role !== 'owner') {
+        // Only an owner (or the PreFlop team) changes an owner's role, and an organization always keeps one.
+        if (role !== 'owner' && !role.startsWith('platform:')) throw forbidden('read_only', 'only an owner can change an owner’s role');
+        if (owners.length === 1) throw conflict('last_owner', 'an organization needs at least one owner; add another owner first');
+      }
       await c.query('insert into memberships (user_id, org_id, role) values ($1, $2, $3) on conflict (user_id, org_id) do update set role = excluded.role', [target.id, org.id, b.role]);
       await audit(c, { type: 'org.member', orgId: org.id, userId: target.id, role: b.role, by: user.id });
     });
@@ -140,7 +147,14 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
          union select user_id from transfers where org_id = $1
          union select m.user_id from room_members m join rooms r on r.id = m.room_id where r.org_id = $1
          union select b.user_id from bets b join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id where t.club_id = $1)
-       select u.id as user_id, u.email, u.display_name,
+       -- Email only for the org's own customers (its rooms, transfers, house or partner bets); players who
+       -- merely bet at a club's tables belong to PreFlop or another operator.
+       select u.id as user_id,
+              case when exists (select 1 from bets x where x.user_id = u.id and (x.house_owner = $1 or x.partner_id = $1))
+                     or exists (select 1 from transfers x where x.user_id = u.id and x.org_id = $1)
+                     or exists (select 1 from room_members m join rooms r on r.id = m.room_id where m.user_id = u.id and r.org_id = $1)
+                   then u.email end as email,
+              u.display_name,
               (select count(*)::int from bets b where b.user_id = u.id) as bets
          from p join users u on u.id = p.user_id order by u.display_name limit 500`, [org.id])).rows;
     const bal = (await ctx.db.query<{ account_id: string; b: number }>(
@@ -310,7 +324,8 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send(await tx(ctx.db, (c) => buyDiamonds(c, org.id, b.diamonds, b.pay_with)));
   });
   app.post(`${P}/chips/purchases`, async (req, reply) => {
-    const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
+    // Partners buy chips too: their treasury funds transfer-wallet deposits to their players.
+    const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
     const b = z.object({ chips: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
     return reply.code(201).send(await tx(ctx.db, (c) => buyChips(c, { orgId: org.id }, b.chips, b.pay_with)));

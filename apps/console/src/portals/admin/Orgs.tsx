@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Application, OrgKind } from '@preflop/client';
+import type { Application, OrgKind, OwnerClaim } from '@preflop/client';
 import { Button } from '@preflop/ui';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api.ts';
@@ -9,11 +9,30 @@ import { isEmail } from '../../lib/rules.ts';
 import { KIND_LABEL } from '../../lib/portals.ts';
 import { DataTable } from '../../components/DataTable.tsx';
 import { StatusBadge } from '../../components/domain.tsx';
-import { ConfirmDialog, Field, Modal, PageHeader, Pills, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
+import { Callout, ConfirmDialog, CopyButton, Field, Modal, PageHeader, Pills, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 
 type OrgRow = Awaited<ReturnType<typeof api.adminOrgs>>['orgs'][number];
+interface LinkFor { name: string; email: string | null; claim: OwnerClaim }
 
-function CreateOrg({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Shows a single-use owner link once. Only its hash is stored, so it cannot be shown again. */
+function OwnerLink({ link, onClose }: { link: LinkFor | null; onClose: () => void }) {
+  const url = link ? `${window.location.origin}/claim/${link.claim.token}` : '';
+  return (
+    <Modal open={!!link} onClose={onClose} title={`Owner link for ${link?.name ?? ''}`}
+      footer={<Button size="sm" onClick={onClose}>Done</Button>}>
+      <div className="space-y-4">
+        <p className="text-sm text-ink/85">Send this link to {link?.email ? <strong>{link.email}</strong> : 'the owner'} directly. Whoever opens it while signed in becomes an owner, once. It expires on {link ? fmtDate(link.claim.expires_at) : ''}.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-[8px] border border-line-strong bg-surface-2 px-3 py-2.5 font-mono text-xs">{url}</code>
+          <CopyButton text={url} label="Copy link" size="md" />
+        </div>
+        <Callout tone="warn" title="Shown once">Copy it now. If it is lost, issue a new link from the organization’s row; the old one stops working.</Callout>
+      </div>
+    </Modal>
+  );
+}
+
+function CreateOrg({ open, onClose, onLink }: { open: boolean; onClose: () => void; onLink: (l: LinkFor) => void }) {
   const [f, setF] = useState({ kind: 'club' as OrgKind, name: '', owner_email: '', city: '', country: '' });
   const [touched, setTouched] = useState(false);
   const errs = {
@@ -24,7 +43,10 @@ function CreateOrg({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useAction(() => api.adminCreateOrg({
     kind: f.kind, name: f.name.trim(), owner_email: f.owner_email.trim(),
     settings: { ...(f.city ? { city: f.city.trim() } : {}), ...(f.country ? { country: f.country.toUpperCase() } : {}) },
-  }), { invalidate: [['admin', 'orgs']], success: `Organization created. ${f.owner_email} is its owner.`, onSuccess: () => { onClose(); setF({ kind: 'club', name: '', owner_email: '', city: '', country: '' }); setTouched(false); } });
+  }), { invalidate: [['admin', 'orgs']], success: 'Organization created. Send the owner link to its owner.', onSuccess: (r) => {
+    if (r.owner_claim) onLink({ name: f.name.trim(), email: f.owner_email.trim(), claim: r.owner_claim });
+    onClose(); setF({ kind: 'club', name: '', owner_email: '', city: '', country: '' }); setTouched(false);
+  } });
   const submit = () => { setTouched(true); if (!Object.values(errs).some(Boolean)) create.mutate(undefined); };
   return (
     <Modal open={open} onClose={onClose} title="Create organization"
@@ -32,7 +54,7 @@ function CreateOrg({ open, onClose }: { open: boolean; onClose: () => void }) {
       <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); submit(); }} noValidate>
         <Field label="Kind">{(p) => <Select {...p} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as OrgKind })}>{(['club', 'partner', 'organizer'] as const).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}</Select>}</Field>
         <Field label="Name" error={touched ? errs.name : null}>{(p) => <TextInput {...p} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Atlas Poker Club" />}</Field>
-        <Field label="Owner email" hint="The account becomes the org owner; it must already exist or will be invited." error={touched ? errs.owner_email : null}>{(p) => <TextInput {...p} type="email" value={f.owner_email} onChange={(e) => setF({ ...f, owner_email: e.target.value })} />}</Field>
+        <Field label="Owner email" hint="Where you will send the owner link. The email itself grants nothing: the owner signs in and opens the link." error={touched ? errs.owner_email : null}>{(p) => <TextInput {...p} type="email" value={f.owner_email} onChange={(e) => setF({ ...f, owner_email: e.target.value })} />}</Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="City (optional)">{(p) => <TextInput {...p} value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} />}</Field>
           <Field label="Country (optional)" error={touched ? errs.country : null}>{(p) => <TextInput {...p} maxLength={2} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })} placeholder="RO" />}</Field>
@@ -50,8 +72,11 @@ export function Orgs() {
   const [creating, setCreating] = useState(false);
   const [statusTarget, setStatusTarget] = useState<OrgRow | null>(null);
   const [decision, setDecision] = useState<{ a: Application; d: 'approved' | 'rejected' } | null>(null);
+  const [link, setLink] = useState<LinkFor | null>(null);
+  const reissue = useAction((o: OrgRow) => api.adminIssueOwnerClaim(o.id), { success: 'New owner link issued. Earlier links stop working.', onSuccess: (r, o) => setLink({ name: o.name, email: null, claim: r.owner_claim }) });
   const setStatus = useAction((o: OrgRow) => api.adminSetOrgStatus(o.id, o.status === 'suspended' ? 'active' : 'suspended'), { invalidate: [['admin', 'orgs']], success: 'Organization updated.', onSuccess: () => setStatusTarget(null) });
-  const decide = useAction((x: { a: Application; d: 'approved' | 'rejected' }) => api.adminDecideApplication(x.a.id, x.d), { invalidate: [['admin', 'applications'], ['admin', 'orgs']], success: (_, x) => `Application ${x.d}.`, onSuccess: () => setDecision(null) });
+  const decide = useAction((x: { a: Application; d: 'approved' | 'rejected' }) => api.adminDecideApplication(x.a.id, x.d), { invalidate: [['admin', 'applications'], ['admin', 'orgs']], success: (r, x) => (x.d === 'approved' && r.owner_user_id ? 'Application approved. The applicant is the owner.' : `Application ${x.d}.`),
+    onSuccess: (r, x) => { setDecision(null); if (r.owner_claim) setLink({ name: x.a.name, email: x.a.email, claim: r.owner_claim }); } });
   const pending = apps.data?.applications.filter((a) => a.status === 'new').length ?? 0;
 
   return (
@@ -71,7 +96,12 @@ export function Orgs() {
                   { key: 'where', header: 'Location', cell: (o) => [o.settings.city, o.settings.country].filter(Boolean).join(', ') || '—' },
                   { key: 'created', header: 'Created', sort: (o) => o.created_at, cell: (o) => <span className="text-xs text-muted">{fmtDate(o.created_at)}</span> },
                   { key: 'status', header: 'Status', sort: (o) => o.status, cell: (o) => <StatusBadge status={o.status} /> },
-                  { key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', cell: (o) => <Button size="sm" variant={o.status === 'suspended' ? 'secondary' : 'ghost'} className={o.status === 'suspended' ? '' : '!text-danger'} onClick={() => setStatusTarget(o)}>{o.status === 'suspended' ? 'Reactivate' : 'Suspend'}</Button> },
+                  { key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', cell: (o) => (
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="secondary" disabled={reissue.isPending} onClick={() => reissue.mutate(o)}>Owner link</Button>
+                      <Button size="sm" variant={o.status === 'suspended' ? 'secondary' : 'ghost'} className={o.status === 'suspended' ? '' : '!text-danger'} onClick={() => setStatusTarget(o)}>{o.status === 'suspended' ? 'Reactivate' : 'Suspend'}</Button>
+                    </div>
+                  ) },
                 ]} />
             )}
           </QueryView>
@@ -100,7 +130,8 @@ export function Orgs() {
           </QueryView>
         </Section>
       )}
-      <CreateOrg open={creating} onClose={() => setCreating(false)} />
+      <CreateOrg open={creating} onClose={() => setCreating(false)} onLink={setLink} />
+      <OwnerLink link={link} onClose={() => setLink(null)} />
       <ConfirmDialog open={!!statusTarget} onClose={() => setStatusTarget(null)} busy={setStatus.isPending} danger={statusTarget?.status !== 'suspended'}
         title={statusTarget?.status === 'suspended' ? `Reactivate ${statusTarget?.name}?` : `Suspend ${statusTarget?.name}?`} confirmLabel={statusTarget?.status === 'suspended' ? 'Reactivate' : 'Suspend'}
         onConfirm={() => statusTarget && setStatus.mutate(statusTarget)}>
@@ -109,7 +140,11 @@ export function Orgs() {
       <ConfirmDialog open={!!decision} onClose={() => setDecision(null)} busy={decide.isPending} danger={decision?.d === 'rejected'}
         title={`${decision?.d === 'approved' ? 'Approve' : 'Reject'} ${decision?.a.name}?`} confirmLabel={decision?.d === 'approved' ? 'Approve' : 'Reject'}
         onConfirm={() => decision && decide.mutate(decision)}>
-        {decision?.d === 'approved' ? <>A {decision && KIND_LABEL[decision.a.kind].toLowerCase()} organization is created with <strong>{decision?.a.email}</strong> as owner.</> : 'The applicant is notified that the application was not accepted.'}
+        {decision?.d === 'approved'
+          ? (decision.a.user_id
+            ? <>A {KIND_LABEL[decision.a.kind].toLowerCase()} organization is created. The applicant applied while signed in, so their account becomes its owner.</>
+            : <>A {KIND_LABEL[decision.a.kind].toLowerCase()} organization is created, and you get a single-use owner link to send to <strong>{decision.a.email}</strong>.</>)
+          : 'The applicant is notified that the application was not accepted.'}
       </ConfirmDialog>
     </>
   );

@@ -7,7 +7,7 @@ import { EventBatch } from '../src/lib/events.ts';
 import { signWebhook, deliverDue } from '../src/routes/partner.ts';
 import { resolve } from '../src/rounds/service.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
 
 let h: Harness;
 let admin: string;
@@ -33,10 +33,8 @@ async function userWithEmail(name: string) {
   const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
-async function createOrg(kind: 'club' | 'partner' | 'organizer', ownerEmail: string, name = `${kind} org`) {
-  const r = await h.api('POST', '/v1/admin/orgs', admin, { kind, name, owner_email: ownerEmail, settings: { city: 'Bucharest' } });
-  expect(r.status).toBe(201);
-  return r.body.id as string;
+async function createOrg(kind: 'club' | 'partner' | 'organizer', owner: { token: string; email: string }, name = `${kind} org`) {
+  return ownedOrg(h, admin, { kind, name, settings: { city: 'Bucharest' } }, owner);
 }
 const wallet = async (token: string, mode: string, orgId?: string) =>
   ((await h.api('GET', '/v1/me/wallets', token)).body.wallets.find((w: any) => w.mode === mode && (orgId ? w.org_id === orgId : !w.org_id))?.balance_minor ?? 0) as number;
@@ -50,7 +48,7 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
   it('an organizer buys diamonds, funds collateral, creates a room and gives diamonds to a player', async () => {
     owner = await userWithEmail('owner');
     player = await userWithEmail('player');
-    orgId = await createOrg('organizer', owner.email, 'Diamond Nights');
+    orgId = await createOrg('organizer', owner, 'Diamond Nights');
     const me = (await h.api('GET', '/v1/me', owner.token)).body;
     expect(me.memberships.map((m: any) => m.org_id)).toContain(orgId);
 
@@ -128,7 +126,7 @@ describe('pool room in virtual chips', () => {
     const owner = await userWithEmail('pool-owner');
     const a = await userWithEmail('alice');
     const b = await userWithEmail('bob');
-    const orgId = await createOrg('organizer', owner.email, 'Pool Party');
+    const orgId = await createOrg('organizer', owner, 'Pool Party');
     expect((await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5_000, pay_with: 'EUR' })).status).toBe(201);
     for (const p of [a, b]) await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1_000 });
     const room = (await h.api('POST', `/v1/org/${orgId}/rooms`, owner.token, { name: 'Friday pool', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' })).body;
@@ -156,7 +154,7 @@ describe('club portal', () => {
   it('a club owner certifies tables and enrolls a staff key; outsiders are refused', async () => {
     const owner = await userWithEmail('club-owner');
     const outsider = await userWithEmail('outsider');
-    const clubId = await createOrg('club', owner.email, 'Atlas Test Club');
+    const clubId = await createOrg('club', owner, 'Atlas Test Club');
     const t = await h.api('POST', `/v1/org/${clubId}/tables`, owner.token, { name: 'Table 1', kind: 'physical', mode: 'play', currency: 'PLAY' });
     expect(t.status).toBe(201);
     const cert = await h.api('PUT', `/v1/org/${clubId}/tables/${t.body.id}/certification`, owner.token, { items: { shufflerPaired: true, camerasApproved: true } });
@@ -185,7 +183,7 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     const port = (server.address() as AddressInfo).port;
 
     const owner = await userWithEmail('partner-owner');
-    const orgId = await createOrg('partner', owner.email, 'BetCo');
+    const orgId = await createOrg('partner', owner, 'BetCo');
     const client = (await h.api('POST', `/v1/org/${orgId}/api-clients`, owner.token, { name: 'prod' })).body;
     expect(client.secret).toMatch(/^pfs_/);
     const hook = (await h.api('POST', `/v1/org/${orgId}/webhooks`, owner.token, { url: `http://127.0.0.1:${port}/hook`, events: ['bet.settled'] })).body;
@@ -219,7 +217,7 @@ describe('partner API and webhooks (docs/02 §2)', () => {
 
   it('the webhook delivery is written in the same transaction as the settlement', async () => {
     const owner = await userWithEmail('durable-owner');
-    const orgId = await createOrg('partner', owner.email, 'DurableBet');
+    const orgId = await createOrg('partner', owner, 'DurableBet');
     const client = (await h.api('POST', `/v1/org/${orgId}/api-clients`, owner.token, { name: 'prod' })).body;
     const hook = (await h.api('POST', `/v1/org/${orgId}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events: ['bet.settled', 'round.voided'] })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
@@ -263,7 +261,7 @@ describe('partner API and webhooks (docs/02 §2)', () => {
   it('a voided round queues round.voided for subscribers and bet.voided only for the bettor\'s partner', async () => {
     const mk = async (name: string, events: string[]) => {
       const owner = await userWithEmail(`${name}-owner`);
-      const orgId = await createOrg('partner', owner.email, name);
+      const orgId = await createOrg('partner', owner, name);
       const hook = (await h.api('POST', `/v1/org/${orgId}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events })).body;
       const client = (await h.api('POST', `/v1/org/${orgId}/api-clients`, owner.token, { name: 'prod' })).body;
       const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
@@ -297,15 +295,35 @@ describe('player profile', () => {
 });
 
 describe('applications, real-money sandbox and responsible gaming', () => {
-  it('an approved application becomes an organization owned by the applicant once they register', async () => {
+  it('an approved application hands ownership over by claim link, never by email', async () => {
     const email = `applicant-${Date.now()}@test.dev`;
-    const app = await h.api('POST', '/v1/applications', undefined, { kind: 'organizer', name: 'Home Game League', email });
+    const app = await h.api('POST', '/v1/applications', undefined, { kind: 'organizer', name: 'Home Game League', email, details: { owner_email: 'x@evil.dev', city: 'Cluj' } });
     expect(app.status).toBe(201);
+    // Someone registers the applicant's address first: it gains nothing.
+    const squatter = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: 'Squatter' });
     const d = await h.api('POST', `/v1/admin/applications/${app.body.id}/decision`, admin, { decision: 'approved' });
-    expect(d.body.org_id).toBeTruthy();
-    const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: 'Applicant' });
-    const me = (await h.api('GET', '/v1/me', r.body.token)).body;
-    expect(me.memberships[0]).toMatchObject({ org_id: d.body.org_id, kind: 'organizer', role: 'owner' });
+    expect(d.body).toMatchObject({ org_id: expect.any(String), owner_user_id: null, owner_claim: { token: expect.any(String) } });
+    expect((await h.api('GET', '/v1/me', squatter.body.token)).body.memberships).toEqual([]);
+    const settings = (await h.db.query('select settings from organizations where id = $1', [d.body.org_id])).rows[0].settings;
+    expect(settings).toMatchObject({ city: 'Cluj', application_id: app.body.id });
+    expect(settings).not.toHaveProperty('owner_email');
+    // The real owner redeems the link once.
+    const owner = await h.api('POST', '/v1/auth/register', undefined, { email: `owner-${Date.now()}@test.dev`, password: 'correct horse', display_name: 'Owner' });
+    expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: d.body.owner_claim.token })).body).toMatchObject({ org_id: d.body.org_id, kind: 'organizer' });
+    expect((await h.api('GET', '/v1/me', owner.body.token)).body.memberships[0]).toMatchObject({ org_id: d.body.org_id, role: 'owner' });
+    expect((await h.api('POST', '/v1/me/org-claims', squatter.body.token, { token: d.body.owner_claim.token })).body.type).toBe('claim_used');
+    // A re-issued link replaces the old one.
+    const again = (await h.api('POST', `/v1/admin/orgs/${d.body.org_id}/owner-claim`, admin, {})).body.owner_claim.token;
+    expect((await h.api('POST', '/v1/me/org-claims', squatter.body.token, { token: 'x'.repeat(43) })).status).toBe(404);
+    expect(again).not.toBe(d.body.owner_claim.token);
+  });
+
+  it('an application sent while signed in makes the applicant the owner at once', async () => {
+    const r = await h.api('POST', '/v1/auth/register', undefined, { email: `signed-${Date.now()}@test.dev`, password: 'correct horse', display_name: 'Signed' });
+    const app = await h.api('POST', '/v1/applications', r.body.token, { kind: 'club', name: 'Signed Club', email: 'anything@else.dev' });
+    const d = await h.api('POST', `/v1/admin/applications/${app.body.id}/decision`, admin, { decision: 'approved' });
+    expect(d.body).toMatchObject({ owner_user_id: r.body.user.id, owner_claim: null });
+    expect((await h.api('GET', '/v1/me', r.body.token)).body.memberships[0]).toMatchObject({ org_id: d.body.org_id, role: 'owner' });
   });
 
   it('real money requires the mode, KYC and limits; withdrawals return funds; self-exclusion blocks play', async () => {

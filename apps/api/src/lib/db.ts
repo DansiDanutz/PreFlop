@@ -14,7 +14,8 @@ export type Db = pg.Pool;
 export type Tx = pg.PoolClient;
 
 export function createPool(connectionString: string, max = 20): Db {
-  return new pg.Pool({ connectionString, max });
+  // Every session runs in UTC, so date casts (month windows, day totals) never depend on the server's zone.
+  return new pg.Pool({ connectionString, max, options: '-c TimeZone=UTC' });
 }
 
 const RETRYABLE = new Set(['40P01', '40001']); // deadlock_detected, serialization_failure

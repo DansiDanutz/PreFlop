@@ -3,7 +3,7 @@ import { tx } from '../src/lib/db.ts';
 import { guardedLookup, isPrivateAddress, postWebhook } from '../src/lib/safeUrl.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, harness, ledgerSums } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
 
 /** Regressions for the Greptile review of b2c9c1e (one test per finding). */
 let h: Harness;
@@ -22,15 +22,15 @@ async function user(name: string) {
   const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
-async function org(kind: 'organizer' | 'partner' | 'club', ownerEmail: string) {
-  return (await h.api('POST', '/v1/admin/orgs', admin, { kind, name: `${kind} ${n}`, owner_email: ownerEmail })).body.id as string;
+async function org(kind: 'organizer' | 'partner' | 'club', owner: { token: string; email: string }) {
+  return ownedOrg(h, admin, { kind, name: `${kind} ${n}` }, owner);
 }
 
 describe('Greptile review of b2c9c1e', () => {
   it('1. an org admin cannot rewrite ownership settings', async () => {
     const owner = await user('owner');
     const adm = await user('adm');
-    const id = await org('organizer', owner.email);
+    const id = await org('organizer', owner);
     await h.api('POST', `/v1/org/${id}/members`, owner.token, { email: adm.email, role: 'admin' });
     const r = await h.api('PUT', `/v1/org/${id}`, adm.token, { settings: { owner_email: 'attacker@evil.dev' } });
     expect(r.status).toBe(403);
@@ -40,7 +40,7 @@ describe('Greptile review of b2c9c1e', () => {
 
   it('2. webhooks cannot target loopback, private or link-local addresses', async () => {
     const owner = await user('p');
-    const id = await org('partner', owner.email);
+    const id = await org('partner', owner);
     for (const url of ['http://127.0.0.1:9/x', 'https://127.0.0.1/x', 'https://10.1.2.3/x', 'https://169.254.169.254/latest', 'https://[::1]/x', 'https://localhost/x']) {
       const r = await h.api('POST', `/v1/org/${id}/webhooks`, owner.token, { url, events: ['bet.settled'] });
       expect(r.status, url).toBe(422);
@@ -56,7 +56,7 @@ describe('Greptile review of b2c9c1e', () => {
     for (const ip of priv) expect(isPrivateAddress(ip), ip).toBe(true);
     for (const ip of ['::ffff:808:808', '64:ff9b::808:808', '2002:808:808::1', '2001:4860:4860::8888']) expect(isPrivateAddress(ip), ip).toBe(false);
     const owner = await user('p6');
-    const id = await org('partner', owner.email);
+    const id = await org('partner', owner);
     const r = await h.api('POST', `/v1/org/${id}/webhooks`, owner.token, { url: 'https://[::ffff:7f00:1]/x', events: ['bet.settled'] });
     expect(r.status).toBe(422);
   });
@@ -104,7 +104,7 @@ describe('Greptile review of b2c9c1e', () => {
 
   it('6. a diamond organizer room below the EV floor is rejected', async () => {
     const owner = await user('d');
-    const id = await org('organizer', owner.email);
+    const id = await org('organizer', owner);
     const v = (await h.api('POST', `/v1/org/${id}/rooms/validate`, owner.token, { mode: 'diamonds', house: 'organizer', rules: { margin_bps: 300, min_stake_minor: 20, rake_bps: 0, provider_share_bps: 10000 } })).body;
     expect(v.ok).toBe(false);
     expect(v.problems.join(' ')).toMatch(/organizer EV/);
@@ -112,7 +112,7 @@ describe('Greptile review of b2c9c1e', () => {
 
   it('7. partner refs that differ only in punctuation stay distinct players', async () => {
     const owner = await user('ptn');
-    const id = await org('partner', owner.email);
+    const id = await org('partner', owner);
     const client = (await h.api('POST', `/v1/org/${id}/api-clients`, owner.token, { name: 'c' })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
     const a = await h.api('POST', '/v1/partner/players', undefined, { player_ref: 'user@x' }, { authorization: `Bearer ${tok}` });
@@ -125,7 +125,7 @@ describe('Greptile review of b2c9c1e', () => {
   it('8. invite-only room details are hidden from non-members', async () => {
     const owner = await user('inv');
     const outsider = await user('out');
-    const id = await org('organizer', owner.email);
+    const id = await org('organizer', owner);
     const room = (await h.api('POST', `/v1/org/${id}/rooms`, owner.token, { name: 'Secret', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'invite' })).body;
     expect((await h.api('GET', `/v1/rooms/${room.id}`)).status).toBe(404);
     expect((await h.api('GET', `/v1/rooms/${room.id}`, outsider.token)).status).toBe(404);

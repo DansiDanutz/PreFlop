@@ -100,6 +100,9 @@ export interface Dilution { period: string; bought: number; sunk_preflop_fee: nu
 export interface ApiClient { id: string; name: string; created_at: string; revoked: boolean; secret?: string }
 export interface Webhook { id: string; url: string; events: string[]; active: boolean; created_at: string; secret?: string }
 export interface WebhookDelivery { id: string; webhook_id: string; event_type: string; status: 'pending' | 'delivered' | 'failed'; attempts: number; last_error: string | null; created_at: string }
+/** A single-use link that makes whoever redeems it (signed in) an owner of the organization. */
+export interface OwnerClaim { token: string; expires_at: string }
+
 export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null }
 export interface Alert { id: number; table_id: string | null; round_id: string | null; kind: string; severity: 'info' | 'warning' | 'critical'; details: Record<string, unknown>; created_at: string; resolved_at: string | null }
 export interface Evidence { round: Round & { review_reasons: string[] | null }; capture: Record<string, unknown> | null; image_data_url: string | null; entries: { source: string; person_id: string; cards: string[] }[]; events: { ord: number; step: string; at: string }[] }
@@ -249,7 +252,7 @@ export function createClient(o: ClientOptions) {
     orgAddMember: (id: string, b: { email: string; role: OrgRole }) => post<{ ok: true }>(`${org(id)}/members`, b),
     orgStatements: (id: string, period?: string) => get<{ statements: Statement[] }>(`${org(id)}/statements${q({ period })}`),
     orgRounds: (id: string, f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number })[] }>(`${org(id)}/rounds${q(f)}`),
-    orgPlayers: (id: string) => get<{ players: { user_id: string; email: string; display_name: string; balance_minor: number; currency: string; bets: number }[] }>(`${org(id)}/players`),
+    orgPlayers: (id: string) => get<{ players: { user_id: string; email: string | null; display_name: string; balance_minor: number; currency: string; bets: number }[] }>(`${org(id)}/players`),
     // club
     clubTables: (id: string) => get<{ tables: ClubTable[] }>(`${org(id)}/tables`),
     clubCreateTable: (id: string, b: { name: string; kind: 'physical' | 'simulated'; mode: PlayMode; currency: string }) => post<{ id: string }>(`${org(id)}/tables`, b),
@@ -319,10 +322,13 @@ export function createClient(o: ClientOptions) {
     adminDecidePromotion: (id: string, decision: 'approve' | 'reject', note?: string) => post<{ id: string; status: string }>(`/v1/admin/promotions/${encodeURIComponent(id)}/decision`, { decision, ...(note ? { note } : {}) }),
     adminEndPromotion: (id: string) => post<{ ok: true }>(`/v1/admin/promotions/${encodeURIComponent(id)}/end`),
     adminOrgs: () => get<{ orgs: (OrgOverview['org'] & { members: number; created_at: string })[] }>('/v1/admin/orgs'),
-    adminCreateOrg: (b: { kind: OrgKind; name: string; owner_email: string; settings?: Record<string, unknown> }) => post<{ id: string }>('/v1/admin/orgs', b),
+    adminCreateOrg: (b: { kind: OrgKind; name: string; owner_email: string; settings?: Record<string, unknown> }) =>
+      post<{ id: string; owner_user_id: string | null; owner_claim: OwnerClaim | null }>('/v1/admin/orgs', b),
+    adminIssueOwnerClaim: (id: string, email?: string) => post<{ owner_claim: OwnerClaim }>(`/v1/admin/orgs/${encodeURIComponent(id)}/owner-claim`, email ? { email } : {}),
+    claimOrg: (token: string) => post<{ org_id: string; kind: OrgKind }>('/v1/me/org-claims', { token }),
     adminSetOrgStatus: (id: string, status: 'active' | 'suspended') => put<{ ok: true }>(`/v1/admin/orgs/${encodeURIComponent(id)}/status`, { status }),
     adminApplications: () => get<{ applications: Application[] }>('/v1/admin/applications'),
-    adminDecideApplication: (id: string, decision: 'approved' | 'rejected') => post<{ ok: true; org_id?: string }>(`/v1/admin/applications/${encodeURIComponent(id)}/decision`, { decision }),
+    adminDecideApplication: (id: string, decision: 'approved' | 'rejected') => post<{ ok: true; org_id?: string; owner_user_id?: string | null; owner_claim?: OwnerClaim | null }>(`/v1/admin/applications/${encodeURIComponent(id)}/decision`, { decision }),
     adminTables: () => get<{ tables: ClubTable[] }>('/v1/admin/tables'),
     adminSetTableStatus: (id: string, status: 'active' | 'paused', reason?: string) => put<{ ok: true }>(`/v1/admin/tables/${encodeURIComponent(id)}/status`, { status, reason }),
     adminLedger: (f: { account?: string; kind?: string; limit?: number } = {}) => get<{ accounts: { account_id: string; balance_minor: number; currency: string }[]; entries: (LedgerLine & { tx_id: number })[] }>(`/v1/admin/ledger${q(f)}`),

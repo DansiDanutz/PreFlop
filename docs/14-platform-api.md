@@ -36,7 +36,8 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
 | `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one waits 24 h. Self-exclusion ends the sessions |
-| `POST /v1/me/kyc` | KYC through the sandbox provider |
+| `POST /v1/me/kyc` | KYC through the sandbox provider. The sandbox KYC, deposit and withdrawal rails return `503 provider_not_configured` when `NODE_ENV=production` |
+| `POST /v1/me/org-claims` | Redeem a single-use owner link (`claim_used`, `claim_expired`) |
 | `POST /v1/me/deposits` · `withdrawals` · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent) |
 | `POST /v1/me/chips/purchases` | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC |
 
@@ -64,7 +65,7 @@ Other provider routes:
 **Common to every organization:**
 - `overview`;
 - `PUT /` (settings);
-- `members`;
+- `members`. Only an owner (or the PreFlop team) changes an owner's role, and the last owner cannot be demoted (`last_owner`);
 - `statements?period=YYYY-MM` (dynamic sharing, `docs/09`);
 - `rounds`;
 - `players`;
@@ -94,7 +95,7 @@ Other provider routes:
 |---|---|
 | `POST /v1/partner/oauth/token` | Client credentials → bearer token (1 h). Rate-limited per IP |
 | `POST /v1/partner/players` · `/v1/partner/players/:ref/session` | Partner players, and the widget session token |
-| `POST /v1/partner/players/:ref/deposits` | Transfer wallet mode: partner float → player wallet |
+| `POST /v1/partner/players/:ref/deposits` | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`) |
 | `POST /v1/partner/bets` · `GET /v1/partner/bets` | Bets on the `partner` channel |
 
 **Webhooks:**
@@ -113,9 +114,12 @@ Other provider routes:
 - `risk`: worst-case exposure per open round, plus the CUSUM outcome monitor.
 
 **Administration:**
-- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early;
-- `orgs` (GET, POST, `:id/status`);
-- `applications` and `applications/:id/decision`. An approved application creates the organization, and the applicant becomes its owner when they register;
+- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early. Only admins change roles, and support and risk cannot change a team account or their own (`forbidden_target`);
+- `orgs` (GET, POST, `:id/status`, `:id/owner-claim`);
+- `applications` and `applications/:id/decision`. An approved application creates the organization:
+  - if the applicant applied while signed in, their account becomes the owner;
+  - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
+- **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
 - `tables` and `tables/:id/status`;
 - `settings` (`modes_enabled`, `physical_play_enabled`, `territories`).
 

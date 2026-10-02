@@ -46,7 +46,9 @@ Every leaderboard owns a pool account: `leaderboard:<id>:pool:<mode>:<currency>`
 | **Player contribution** (`contribution_bps`) | At settlement of each bet in scope, `contribution_bps` of the stake moves from PreFlop's bankroll share into the pool. The player's price is unchanged: the contribution comes out of the house edge, so the odds book stays proven. | **real money only**, so it is blocked while real money is off |
 | **PreFlop sponsored** (`sponsor`) | A fixed amount, posted when the board is created. For play money it is issued (`PreFlop:play-issuance`); for other currencies it comes from `PreFlop:marketing`. | all |
 
-**Paying out:** at `ends_at` the worker closes the board. It takes the final standings and pays `prize_split_bps` of the pool to the qualifying ranks in order (`pool.payout`, ref `<board>:<rank>`). It awards badges, and anything unallocated (fewer qualifiers than prize ranks, or rounding) returns to whoever funded the board, pro rata (`pool.return`).
+**Accrual and settlement wait 2 minutes** after a bet settles (`SETTLE_GRACE_MS`), so a bet whose transaction commits a moment after its `settled_at` is never skipped. Chip and diamond boards count only bets in the owner's own rooms. Only PreFlop boards take a margin share or a player contribution (both come out of PreFlop's bankroll).
+
+**Paying out:** at `ends_at` (plus the grace) the worker closes the board. It takes the final standings and pays `prize_split_bps` of the pool to the qualifying ranks in order (`pool.payout`, ref `<board>:<rank>`). It awards badges, and anything unallocated (fewer qualifiers than prize ranks, or rounding) returns to whoever funded the board, pro rata (`pool.return`).
 - **Play money:** prizes are free chips into `wallet:play`, plus badges (`champion`, `podium`, `top10`). There are never diamonds, real money or goods. The UI says "Free chips. No cash value."
 - **Real money:** creating and funding a board requires `modes_enabled` for that mode. Today the API refuses real-money boards with `403 mode_disabled`.
   - Settlement waits while the mode is switched off. The board settles once the mode is back on, or the team cancels it and the pool returns to its funders.
@@ -79,11 +81,12 @@ A promotion is a player-facing offer with an owner (PreFlop or an organization),
 - **Closing a month** builds a statement per agent, currency and level:
   - L1 = `rate_l1 × max(0, ΣNGR(own players) + carry-in)`, where the carry-in is last month's negative balance (zero or less). A negative result is carried out to the next month.
   - L2 = `rate_l2 × max(0, ΣNGR(sub-agents' players))`. Level 2 has no carry.
-  - A month can be closed once, starting one hour after it ends (UTC); earlier gives `month_not_ended`. Revenue is grouped by settlement time, so a bet that settles later counts in the month it settles.
+  - A month can be closed once, starting one hour after it ends (UTC); earlier gives `month_not_ended`. Months close in order: no gaps after the first close, and never before a later closed month (`month_out_of_order`). Revenue is grouped by settlement time, so a bet that settles later counts in the month it settles.
   - The close is recorded (`agent_month_closes`), so closing the same month again creates nothing, even if agents were reparented, approved or suspended since.
   - Suspended agents still get statements, so their carry stays intact, but they are not paid until re-activated (`agent_not_active`).
   - The carry-in is the carry-out of the agent's latest earlier level-1 statement.
 - Reparenting locks the agent and the new parent together, so two concurrent changes can never build a third level.
+- Four eyes: nobody decides on their own agent account, or approves or pays their own statements (`self_approval`).
 - Statements go `draft` → `approved` (admin or ops) → `paid` (super admin only). Paying posts `agent.commission` from `PreFlop:marketing` to the agent's wallet in that mode and currency, and needs the mode switched on.
 - While real money is off, statements still compute in the sandbox, but none can be paid (`403 mode_disabled`).
 

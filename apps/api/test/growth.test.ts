@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { growthTick } from '../src/growth/worker.ts';
+import { SETTLE_GRACE_MS } from '../src/growth/leaderboards.ts';
 import { verifyAuditChain } from '../src/lib/audit.ts';
 import { tx } from '../src/lib/db.ts';
 import { balance } from '../src/lib/ledger.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, bet, harness, ledgerSums, walletOf } from './helpers.ts';
+import { type Harness, bet, harness, ledgerSums, ownedOrg, walletOf } from './helpers.ts';
 
 /** Leaderboards, prize pools and promotions (docs/16). */
 let h: Harness;
@@ -79,11 +80,13 @@ describe('leaderboards and prize pools', () => {
     await playHand([[p.token, 'paired-board:yes', 1_000]]);
     const house = (await h.db.query<{ h: string }>(`select coalesce(sum(stake_minor - coalesce(payout_minor, 0)), 0)::text as h from bets b join leaderboards l on l.id = $1
       where b.mode = 'play' and b.status in ('won','lost') and b.settled_at >= l.starts_at`, [lb.id])).rows[0]!.h;
-    await growthTick(h.db);
+    // Accrual only reads bets settled at least SETTLE_GRACE_MS ago.
+    const later = new Date(Date.now() + SETTLE_GRACE_MS + 1_000);
+    await growthTick(h.db, later);
     const pool = (await h.api('GET', `/v1/leaderboards/${lb.id}`)).body.leaderboard.pool_minor;
     expect(pool).toBe(Math.floor((Math.max(0, Number(house)) * 1_000) / 10_000));
     // A second tick with no new bets adds nothing.
-    await growthTick(h.db);
+    await growthTick(h.db, later);
     expect((await h.api('GET', `/v1/leaderboards/${lb.id}`)).body.leaderboard.pool_minor).toBe(pool);
     expect((await h.api('POST', `/v1/admin/leaderboards/${lb.id}/cancel`, admin)).status).toBe(200);
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
@@ -102,7 +105,7 @@ describe('leaderboards and prize pools', () => {
 
   it('organizations run boards on their own tables or rooms only, funded from their treasury', async () => {
     const owner = await user('club-owner');
-    const org = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Night Owls', owner_email: owner.email })).body.id as string;
+    const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Night Owls' }, owner);
     await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 5_000, pay_with: 'USDT' });
     const base = { name: 'Diamond week', mode: 'diamonds', currency: 'DIAMOND', metric: 'roi', prize_split_bps: [10_000], ...window() };
     expect((await h.api('POST', `/v1/org/${org}/leaderboards`, owner.token, { ...base, scope: 'global' })).body.type).toBe('scope_not_allowed');
@@ -126,7 +129,7 @@ describe('leaderboards and prize pools', () => {
 
   it('a board on an invite-only room is hidden from everyone who cannot see the room', async () => {
     const owner = await user('room-owner');
-    const org = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Back Room', owner_email: owner.email })).body.id as string;
+    const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Back Room' }, owner);
     const room = (await h.api('POST', `/v1/org/${org}/rooms`, owner.token, { name: 'Private', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'invite' })).body;
     const lb = (await h.api('POST', `/v1/org/${org}/leaderboards`, owner.token, { name: 'Private week', mode: 'virtual-chips', currency: 'CHIP', metric: 'net', prize_split_bps: [10_000], scope: 'room', scope_ref: room.id, ...window() })).body;
     const outsider = await user('outsider');
@@ -180,7 +183,7 @@ describe('promotions', () => {
 
   it('club promotions wait for review; an organizer drop pays from its treasury within budget, to its own players only', async () => {
     const owner = await user('drop-owner');
-    const org = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Drop Club', owner_email: owner.email })).body.id as string;
+    const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Drop Club' }, owner);
     await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 1_000, pay_with: 'USDT' });
     expect((await h.api('POST', `/v1/org/${org}/promotions`, owner.token, { kind: 'free-chips', title: 'Not allowed', amount_minor: 10, ...window() })).body.type).toBe('kind_not_allowed');
     expect((await h.api('POST', `/v1/org/${org}/promotions`, owner.token, { kind: 'org-drop', title: 'Too big', mode: 'diamonds', currency: 'DIAMOND', amount_minor: 100, budget_minor: 50_000, ...window() })).body.type).toBe('insufficient_treasury');

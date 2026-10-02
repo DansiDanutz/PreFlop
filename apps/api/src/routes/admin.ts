@@ -8,11 +8,13 @@ import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { ensureOpenRound, lockRound, voidRound } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
+import { RESERVED_SETTINGS } from './org.ts';
 
 export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...roles: string[]) {
   const u = await ctx.user(req);
@@ -198,8 +200,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ status: z.enum(['active', 'suspended', 'self_excluded', 'closed']).optional(), kyc_status: z.enum(['none', 'pending', 'verified', 'rejected']).optional(), platform_role: z.enum(['admin', 'ops', 'risk', 'support']).nullable().optional() }).parse(req.body);
     if (b.platform_role !== undefined && u.platform_role !== 'admin') throw forbidden('forbidden_role', 'only admins change platform roles');
     return tx(ctx.db, async (c) => {
-      const cur = (await c.query('select status, self_excluded_until from users where id = $1', [id])).rows[0];
+      const cur = (await c.query('select status, self_excluded_until, platform_role from users where id = $1 for update', [id])).rows[0];
       if (!cur) throw notFound('user');
+      // Support and risk manage players, not the team: no changes to staff accounts or to themselves.
+      if (u.platform_role !== 'admin' && (id === u.id || cur.platform_role !== null)) throw forbidden('forbidden_target', 'only an admin can change a PreFlop team account');
       if (cur.status === 'self_excluded' && b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
         throw conflict('self_excluded', 'a self-exclusion cannot be lifted before it ends');
       const r = (await c.query(
@@ -217,21 +221,37 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     await requirePlatform(ctx, req);
     return { orgs: (await ctx.db.query(`select o.*, (select count(*)::int from memberships m where m.org_id = o.id) as members from organizations o order by o.kind, o.name`)).rows };
   });
-  const createOrg = async (c: Parameters<Parameters<typeof tx>[1]>[0], kind: 'club' | 'partner' | 'organizer', name: string, ownerEmail: string, settings: Record<string, unknown>, by: string) => {
+  /**
+   * Creates an organization. Its owner is either a known, signed-in account (an application made
+   * while logged in) or whoever redeems the single-use claim link returned here. An email address
+   * alone never grants ownership: nobody has proven they control it.
+   */
+  const createOrg = async (c: Parameters<Parameters<typeof tx>[1]>[0], kind: 'club' | 'partner' | 'organizer', name: string, ownerEmail: string,
+    settings: Record<string, unknown>, by: string, ownerUserId: string | null = null) => {
     const id = newId(kind === 'club' ? 'club' : kind === 'partner' ? 'ptn' : 'org').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
-    if (kind === 'club') await upsertClub(c, id, name, settings);
-    else await c.query('insert into organizations (id, kind, name, settings) values ($1, $2, $3, $4)', [id, kind, name, JSON.stringify(settings)]);
-    const owner = (await c.query<{ id: string }>('select id from users where email = $1', [ownerEmail.toLowerCase()])).rows[0];
-    if (owner) await c.query(`insert into memberships (user_id, org_id, role) values ($1, $2, 'owner') on conflict do nothing`, [owner.id, id]);
-    else await c.query(`update organizations set settings = settings || jsonb_build_object('owner_email', $2::text) where id = $1`, [id, ownerEmail.toLowerCase()]);
-    await audit(c, { type: 'org.created', orgId: id, kind, name, ownerEmail: ownerEmail.toLowerCase(), by });
-    return id;
+    const clean = Object.fromEntries(Object.entries(settings).filter(([k]) => !RESERVED_SETTINGS.has(k) || k === 'application_id'));
+    if (kind === 'club') await upsertClub(c, id, name, clean);
+    else await c.query('insert into organizations (id, kind, name, settings) values ($1, $2, $3, $4)', [id, kind, name, JSON.stringify(clean)]);
+    let owner_claim = null;
+    if (ownerUserId) await c.query(`insert into memberships (user_id, org_id, role) values ($1, $2, 'owner') on conflict do nothing`, [ownerUserId, id]);
+    else owner_claim = await issueOwnerClaim(c, id, ownerEmail.toLowerCase(), by);
+    await audit(c, { type: 'org.created', orgId: id, kind, name, ownerEmail: ownerEmail.toLowerCase(), ownerUserId, by });
+    return { id, owner_user_id: ownerUserId, owner_claim };
   };
   app.post('/v1/admin/orgs', async (req, reply) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     const b = z.object({ kind: z.enum(['club', 'partner', 'organizer']), name: z.string().min(2).max(120), owner_email: z.string().email(), settings: z.record(z.unknown()).optional() }).parse(req.body);
-    const id = await tx(ctx.db, (c) => createOrg(c, b.kind, b.name, b.owner_email, b.settings ?? {}, u.id));
-    return reply.code(201).send({ id });
+    return reply.code(201).send(await tx(ctx.db, (c) => createOrg(c, b.kind, b.name, b.owner_email, b.settings ?? {}, u.id)));
+  });
+  /** A new single-use owner link for an organization (earlier unclaimed links stop working). */
+  app.post('/v1/admin/orgs/:id/owner-claim', async (req, reply) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const b = z.object({ email: z.string().email().optional() }).parse(req.body ?? {});
+    return reply.code(201).send(await tx(ctx.db, async (c) => {
+      if (!(await c.query('select 1 from organizations where id = $1', [id])).rowCount) throw notFound('organization');
+      return { owner_claim: await issueOwnerClaim(c, id, b.email?.toLowerCase() ?? null, u.id) };
+    }));
   });
   app.put('/v1/admin/orgs/:id/status', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
@@ -257,10 +277,14 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!a) throw notFound('application');
       if (a.status !== 'new') throw conflict('already_decided', `application is ${a.status}`);
       await c.query('update applications set status = $2, decided_by = $3 where id = $1', [id, decision, u.id]);
-      let orgId: string | undefined;
-      if (decision === 'approved') orgId = await createOrg(c, a.kind, a.name, a.email, { ...(a.details ?? {}), application_id: id }, u.id);
-      await audit(c, { type: 'application.decided', applicationId: id, decision, orgId: orgId ?? null, by: u.id });
-      return { ok: true, ...(orgId ? { org_id: orgId } : {}) };
+      if (decision === 'rejected') {
+        await audit(c, { type: 'application.decided', applicationId: id, decision, orgId: null, by: u.id });
+        return { ok: true };
+      }
+      // An application sent while signed in names its owner; otherwise the owner gets a claim link.
+      const org = await createOrg(c, a.kind, a.name, a.email, { ...(a.details ?? {}), application_id: id }, u.id, a.user_id ?? null);
+      await audit(c, { type: 'application.decided', applicationId: id, decision, orgId: org.id, by: u.id });
+      return { ok: true, org_id: org.id, owner_user_id: org.owner_user_id, owner_claim: org.owner_claim };
     });
   });
 

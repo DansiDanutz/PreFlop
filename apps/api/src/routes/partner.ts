@@ -7,13 +7,13 @@ import { createSession, hashPassword } from '../auth/players.ts';
 import { placeBet } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, tx } from '../lib/db.ts';
-import { badRequest, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
+import { badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
-import { acct, post } from '../lib/ledger.ts';
+import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
 
 /**
@@ -180,16 +180,27 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     return { token: await createSession(ctx.db, id), user_id: id };
   });
-  /** Transfer wallet mode: move value from the partner's float into its player's PreFlop wallet. */
+  /**
+   * Transfer wallet mode: move value into the partner's player's PreFlop wallet. Free chips are
+   * issued (no value); virtual chips come out of the partner's treasury, which it funds by buying
+   * chips, and never exceed what it holds.
+   */
   app.post('/v1/partner/players/:ref/deposits', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
     const { ref } = req.params as { ref: string };
     const b = z.object({ amount_minor: z.number().int().positive(), mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
+    if (!(await ctx.modeEnabled(b.mode))) throw conflict('mode_disabled', `${b.mode} is not enabled`);
     const ref2 = newId('pdep');
     await tx(ctx.db, async (c) => {
-      await post(c, 'partner.deposit', ref2, [{ from: acct(p.orgId, 'float', b.mode, currency), to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }]);
+      let from = acct('PreFlop', 'play-issuance', 'play', 'PLAY');
+      if (b.mode === 'virtual-chips') {
+        from = acct(p.orgId, 'treasury', b.mode, currency);
+        await lockAccount(c, from);
+        if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_treasury', 'buy chips for your treasury first');
+      }
+      await post(c, 'partner.deposit', ref2, [{ from, to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }]);
       await audit(c, { type: 'partner.deposit', orgId: p.orgId, userId: id, amountMinor: b.amount_minor, mode: b.mode });
     });
     return reply.code(201).send({ id: ref2, player_ref: ref, amount_minor: b.amount_minor, currency });

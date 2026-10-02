@@ -141,7 +141,12 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ---------------------------------------------------------------- KYC (sandbox provider)
+  /** The sandbox KYC and payment rails never run in production: real providers replace them (fail closed). */
+  const sandboxOnly = () => {
+    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'identity and payments need a real provider in production');
+  };
   app.post('/v1/me/kyc', async (req) => {
+    sandboxOnly();
     const u = await ctx.user(req);
     return tx(ctx.db, async (c) => {
       // Sandbox: documents are "verified" instantly. A real KYC provider sets 'pending' here and
@@ -164,6 +169,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     return { payments: (await ctx.db.query('select id, kind, method, mode, currency, amount_minor, status, created_at, address from payments where user_id = $1 order by created_at desc limit 100', [u.id])).rows };
   });
   app.post('/v1/me/deposits', async (req, reply) => {
+    sandboxOnly();
     const u = await ctx.user(req);
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
@@ -186,6 +192,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send(out);
   });
   app.post('/v1/me/withdrawals', async (req, reply) => {
+    sandboxOnly();
     const u = await ctx.user(req);
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
