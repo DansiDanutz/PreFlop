@@ -8,10 +8,11 @@ import { placeBet } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, tx } from '../lib/db.ts';
 import { badRequest, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
-import { type DomainEvent, EventBatch, bus, publish } from '../lib/events.ts';
+import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
+import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
 
@@ -24,7 +25,7 @@ import { requireOrg } from './org.ts';
  */
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
-export const WEBHOOK_EVENTS = ['bet.settled', 'bet.voided', 'round.voided', 'event.finished', 'fee.statement.ready'] as const;
+export { WEBHOOK_EVENTS };
 
 export function signWebhook(secret: string, body: string, t = Math.floor(Date.now() / 1000)): string {
   return `t=${t}, v1=${createHmac('sha256', secret).update(`${t}.${body}`).digest('hex')}`;
@@ -217,30 +218,8 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 }
 
-// ---------------------------------------------------------------- webhook fan-out and delivery
-
-/** Queues webhook deliveries for partner-relevant domain events (after commit). */
-export function startWebhookFanout(db: Db): () => void {
-  const on = async (e: DomainEvent) => {
-    try {
-      const type = e.type;
-      if (!(WEBHOOK_EVENTS as readonly string[]).includes(type)) return;
-      const partnerId = (e.data as { partnerId?: string | null }).partnerId ?? null;
-      const hooks = (await db.query<{ id: string }>(
-        `select w.id from webhooks w join organizations o on o.id = w.org_id
-          where w.active and o.kind = 'partner' and $1 = any(w.events) and ($2::text is null or w.org_id = $2)`, [type, type === 'round.voided' ? null : partnerId])).rows;
-      if (type !== 'round.voided' && !partnerId) return;
-      const eventId = `${type}:${e.roundId ?? ''}:${(e.data as { betId?: string }).betId ?? ''}`;
-      for (const h of hooks)
-        await db.query(`insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload) values ($1, $2, $3, $4, $5) on conflict do nothing`,
-          [newId('whd'), h.id, eventId, type, JSON.stringify({ event_id: eventId, type, round_id: e.roundId ?? null, table_id: e.tableId ?? null, data: e.data, at: new Date().toISOString() })]);
-    } catch (err) {
-      console.error('webhook fan-out', err);
-    }
-  };
-  bus.on('event', on);
-  return () => bus.off('event', on);
-}
+// ---------------------------------------------------------------- webhook delivery
+// Fan-out is durable: lib/webhooks.ts queues the rows inside the settlement/void transaction.
 
 /** Delivers due webhooks with an HMAC signature; exponential backoff for 24 h, then failed. */
 export async function deliverDue(db: Db, limit = 20): Promise<number> {

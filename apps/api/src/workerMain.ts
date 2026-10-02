@@ -6,7 +6,8 @@ import { startWorker } from './worker.ts';
 /**
  * Standalone worker: outbox jobs, deadline sweeper and webhook delivery. Run it when the API is
  * started with RUN_WORKER=false. Several workers may run: jobs are taken with SKIP LOCKED and
- * every job is idempotent. (Webhook fan-out listens to in-process events, so it stays with the API.)
+ * every job is idempotent. Webhook deliveries are queued inside the settlement/void transactions
+ * (lib/webhooks.ts), so whichever process settles a round also queues its webhooks.
  */
 const config = loadConfigOrExit();
 const db = createPool(config.databaseUrl, 5);

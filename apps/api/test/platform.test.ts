@@ -3,22 +3,21 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
-import { signWebhook, startWebhookFanout, deliverDue } from '../src/routes/partner.ts';
+import { EventBatch } from '../src/lib/events.ts';
+import { signWebhook, deliverDue } from '../src/routes/partner.ts';
+import { resolve } from '../src/rounds/service.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { type Harness, harness, ledgerSums } from './helpers.ts';
 
 let h: Harness;
 let admin: string;
-let stopFanout: () => void;
 beforeAll(async () => {
   process.env.WEBHOOK_ALLOW_PRIVATE = 'true'; // the test webhook receiver listens on 127.0.0.1
   h = await harness('platform');
   await tx(h.db, (c) => seedAdmin(c, 'admin@test.dev', 'admin-pass-1'));
   admin = (await h.api('POST', '/v1/auth/login', undefined, { email: 'admin@test.dev', password: 'admin-pass-1' })).body.token;
-  stopFanout = startWebhookFanout(h.db);
 });
 afterAll(async () => {
-  stopFanout?.();
   await h?.close();
 });
 
@@ -204,8 +203,7 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     const b = await h.api('POST', '/v1/partner/bets', undefined, { player_ref: 'p-42', round_id: `sim-1:h${n}`, selection_id: 'colour:mixed', stake_minor: 100, odds_centi: odds }, { ...auth, 'idempotency-key': 'partner-bet-0001' });
     expect(b.status).toBe(201);
     await h.sim.playHand(n);
-    await h.work();
-    await new Promise((r) => setTimeout(r, 200)); // fan-out runs after commit
+    await h.work(); // the settlement transaction queues the delivery itself: no listener, no wait
     await deliverDue(h.db);
     expect(received.length).toBe(1);
     const payload = JSON.parse(received[0]!.body);
@@ -217,6 +215,72 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     const stmts = (await h.api('GET', `/v1/org/${orgId}/statements`, owner.token)).body.statements;
     expect(stmts[0].lines.some((l: any) => /Revenue share/.test(l.label))).toBe(true);
     server.close();
+  });
+
+  it('the webhook delivery is written in the same transaction as the settlement', async () => {
+    const owner = await userWithEmail('durable-owner');
+    const orgId = await createOrg('partner', owner.email, 'DurableBet');
+    const client = (await h.api('POST', `/v1/org/${orgId}/api-clients`, owner.token, { name: 'prod' })).body;
+    const hook = (await h.api('POST', `/v1/org/${orgId}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events: ['bet.settled', 'round.voided'] })).body;
+    const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
+    const auth = { authorization: `Bearer ${tok}` };
+    const n = await open();
+    const rid = `sim-1:h${n}`;
+    const odds = (await h.api('GET', '/v1/book?channel=partner')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
+    const b = await h.api('POST', '/v1/partner/bets', undefined, { player_ref: 'durable-1', round_id: rid, selection_id: 'colour:mixed', stake_minor: 100, odds_centi: odds }, { ...auth, 'idempotency-key': 'durable-bet-0001' });
+    expect(b.status).toBe(201);
+    await h.sim.playHand(n);
+    expect((await h.db.query('select state from rounds where id = $1', [rid])).rows[0].state).toBe('DEALT');
+    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
+    const deliveries = (q: { query: typeof h.db.query }) => q.query<{ event_id: string; payload: any }>('select event_id, payload from webhook_deliveries where webhook_id = $1', [hook.id]).then((r) => r.rows);
+
+    // 1. a settlement that rolls back leaves no delivery behind
+    await expect(tx(h.db, async (c) => {
+      expect(await resolve(c, rid, timing, new EventBatch())).toBe('settled');
+      expect(await deliveries(c)).toHaveLength(1);
+      throw new Error('crash before commit');
+    })).rejects.toThrow('crash before commit');
+    expect(await deliveries(h.db)).toHaveLength(0);
+    expect((await h.db.query('select state from rounds where id = $1', [rid])).rows[0].state).toBe('DEALT');
+
+    // 2. inside the settlement transaction the row exists, and nobody else sees it before commit
+    await tx(h.db, async (c) => {
+      expect(await resolve(c, rid, timing, new EventBatch())).toBe('settled');
+      const mine = await deliveries(c);
+      expect(mine).toHaveLength(1);
+      expect(mine[0]!.event_id).toBe(`bet.settled:${rid}:${b.body.bet_id}`);
+      expect(mine[0]!.payload).toMatchObject({ type: 'bet.settled', round_id: rid, data: { betId: b.body.bet_id, partnerId: orgId } });
+      expect(await deliveries(h.db)).toHaveLength(0);
+    });
+    // 3. committed together; no in-process listener was involved
+    expect(await deliveries(h.db)).toHaveLength(1);
+    expect((await h.db.query('select state from rounds where id = $1', [rid])).rows[0].state).toBe('SETTLED');
+    await h.work(); // the outbox job finds the round settled: nothing is queued twice
+    expect(await deliveries(h.db)).toHaveLength(1);
+    await h.db.query(`update webhooks set active = false where id = $1`, [hook.id]);
+  });
+
+  it('a voided round queues round.voided for subscribers and bet.voided only for the bettor\'s partner', async () => {
+    const mk = async (name: string, events: string[]) => {
+      const owner = await userWithEmail(`${name}-owner`);
+      const orgId = await createOrg('partner', owner.email, name);
+      const hook = (await h.api('POST', `/v1/org/${orgId}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events })).body;
+      const client = (await h.api('POST', `/v1/org/${orgId}/api-clients`, owner.token, { name: 'prod' })).body;
+      const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
+      return { orgId, hook, auth: { authorization: `Bearer ${tok}` } };
+    };
+    const a = await mk('VoidCo', ['bet.voided', 'round.voided']);
+    const other = await mk('Watcher', ['bet.voided', 'round.voided']);
+    const n = await open();
+    const rid = `sim-1:h${n}`;
+    const odds = (await h.api('GET', '/v1/book?channel=partner')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
+    const b = await h.api('POST', '/v1/partner/bets', undefined, { player_ref: 'v-1', round_id: rid, selection_id: 'colour:mixed', stake_minor: 50, odds_centi: odds }, { ...a.auth, 'idempotency-key': 'void-bet-0001' });
+    expect(b.status).toBe(201);
+    await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'test' });
+    const rows = async (hookId: string) => (await h.db.query<{ event_type: string }>('select event_type from webhook_deliveries where webhook_id = $1 order by event_type', [hookId])).rows.map((r) => r.event_type);
+    expect(await rows(a.hook.id)).toEqual(['bet.voided', 'round.voided']);
+    expect(await rows(other.hook.id)).toEqual(['round.voided']);
+    for (const x of [a, other]) await h.db.query(`update webhooks set active = false where id = $1`, [x.hook.id]);
   });
 });
 
