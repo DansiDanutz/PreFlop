@@ -1,0 +1,64 @@
+@import "tailwindcss";
+@import "@preflop/ui/tokens.css";
+@source "../../../packages/ui/src";
+
+/* App-level extras on top of the shared tokens. */
+
+html, body, #root { min-height: 100%; }
+/* Keep focused or scrolled-to controls clear of the fixed tab bar. */
+html { scroll-padding-bottom: 96px; scroll-padding-top: 72px; }
+body { overscroll-behavior-y: none; }
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* The faint serif "PreFlop" watermark on stream thumbnails. */
+.pf-watermark {
+  font-family: var(--font-serif);
+  color: rgba(255, 255, 255, 0.07);
+  letter-spacing: -0.01em;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Felt edge vignette so the table reads as a table, not a flat gradient. */
+.felt-vignette {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 -40px 80px rgba(0, 0, 0, 0.35);
+}
+
+.pf-skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-3) 50%, var(--color-surface-2) 100%);
+  background-size: 200% 100%;
+  animation: pf-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes pf-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes pf-sheet-in {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.pf-sheet-in { animation: pf-sheet-in 220ms ease-out both; }
+
+@keyframes pf-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.pf-fade-in { animation: pf-fade-in 180ms ease-out both; }
+
+/* Card reveal: each card of a freshly dealt flop flips in turn. */
+.pf-reveal > * { animation: pf-flip 420ms ease-out both; transform-origin: 50% 50%; }
+.pf-reveal > *:nth-child(2) { animation-delay: 140ms; }
+.pf-reveal > *:nth-child(3) { animation-delay: 280ms; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-reveal > *, .pf-flip, .pf-sheet-in, .pf-fade-in, .pf-pulse, .pf-skeleton { animation: none !important; }
+}
