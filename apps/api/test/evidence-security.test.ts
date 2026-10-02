@@ -74,8 +74,9 @@ describe('signed evidence (docs/13 §8.4)', () => {
     const { cards } = await h.sim.procedure(n);
     const { image, signed } = h.sim.buildCapture(n, cards);
     await h.sim.sendCapture(n, signed, image);
-    const wrong = cards[0] === '2c' ? ['3c', cards[1]!, cards[2]!] : ['2c', cards[1]!, cards[2]!];
-    if (wrong.includes(cards[1]!) && wrong.filter((c) => c === wrong[0]).length > 1) throw new Error('bad fixture');
+    // replace the first card with one guaranteed not to be on this flop
+    const absent = ['2c', '3c', '4c', '5c'].find((c) => !cards.includes(c))!;
+    const wrong = [absent, cards[1]!, cards[2]!];
     await h.sim.enter(n, 'dealer', wrong);
     await h.sim.enter(n, 'floor', cards);
     await h.work();
