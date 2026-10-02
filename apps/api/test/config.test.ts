@@ -71,6 +71,11 @@ describe('validated config', () => {
     expect(problemsOf({ ...PROD, WEBHOOK_ALLOW_PRIVATE: 'false' })).toEqual([]);
   });
 
+  it('production refuses RATE_LIMIT_ENABLED=false; limits are configurable', () => {
+    expect(problemsOf({ ...PROD, RATE_LIMIT_ENABLED: 'false' })).toEqual([expect.stringMatching(/RATE_LIMIT_ENABLED=false is for tests/)]);
+    expect(loadConfig({ RATE_LIMIT_BETS_PER_MIN: '30' }).rateLimit).toEqual({ enabled: true, authPerMinute: 20, partnerTokenPerMinute: 30, betsPerMinute: 30 });
+  });
+
   it('lists every production problem at once', () => {
     const p = problemsOf({ NODE_ENV: 'production', CORS_ORIGINS: '*', WEBHOOK_ALLOW_PRIVATE: 'true', ADMIN_PASSWORD: 'x' });
     expect(p).toHaveLength(4); // CORS, DATABASE_URL unset, ADMIN_PASSWORD, WEBHOOK_ALLOW_PRIVATE

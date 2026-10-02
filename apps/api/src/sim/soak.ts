@@ -25,7 +25,8 @@ const u = new URL(base);
 u.pathname = '/preflop_soak';
 const db = createPool(u.toString(), 20);
 await migrate(db);
-const config = { ...loadConfig({}), runWorker: false };
+const baseConfig = loadConfig({});
+const config = { ...baseConfig, runWorker: false, rateLimit: { ...baseConfig.rateLimit, enabled: false } }; // the soak bets far faster than a person
 const app = await buildApp(db, config);
 const send: Send = async (r) => {
   const res = await app.inject({ method: r.method as 'GET', url: r.url, headers: r.headers, ...(r.body !== undefined ? { payload: r.body } : {}) });

@@ -7,6 +7,7 @@ import { type SessionUser, bearer, userFromToken } from './auth/players.ts';
 import type { Config } from './config.ts';
 import type { Db } from './lib/db.ts';
 import { ApiError } from './lib/errors.ts';
+import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { orgRoutes } from './routes/org.ts';
@@ -30,6 +31,8 @@ export interface AppContext {
   /** Signed-in player or console user (throws 401). */
   user(req: FastifyRequest): Promise<SessionUser>;
   modeEnabled(mode: PlayMode): Promise<boolean>;
+  /** In-process rate limiters (one set per app instance; see lib/rateLimit.ts). */
+  limits: { login: Limiter; register: Limiter; partnerToken: Limiter; bets: Limiter };
 }
 
 export async function buildApp(db: Db, config: Config): Promise<FastifyInstance> {
@@ -51,6 +54,7 @@ export async function buildApp(db: Db, config: Config): Promise<FastifyInstance>
 
   app.setErrorHandler((err: unknown, _req: FastifyRequest, reply: FastifyReply) => {
     if (err instanceof ApiError) {
+      if (err.status === 429 && typeof err.extra.retry_after_s === 'number') reply.header('retry-after', String(err.extra.retry_after_s));
       return reply.code(err.status).type('application/problem+json').send({ type: err.type, title: err.message, status: err.status, ...err.extra });
     }
     if (err instanceof ZodError) {
@@ -63,6 +67,8 @@ export async function buildApp(db: Db, config: Config): Promise<FastifyInstance>
     return reply.code(500).type('application/problem+json').send({ type: 'internal', title: 'internal error', status: 500 });
   });
 
+  const rl = config.rateLimit;
+  const limiter = (name: string, perMinute: number): Limiter => (rl.enabled ? new RateLimiter(name, perMinute, 60_000) : unlimited(name));
   const ctx: AppContext = {
     db,
     config,
@@ -71,6 +77,12 @@ export async function buildApp(db: Db, config: Config): Promise<FastifyInstance>
     async modeEnabled(mode) {
       const v = (await db.query<{ value: Record<string, boolean> }>("select value from settings where key = 'modes_enabled'")).rows[0]?.value;
       return !!v?.[mode];
+    },
+    limits: {
+      login: limiter('login', rl.authPerMinute),
+      register: limiter('register', rl.authPerMinute),
+      partnerToken: limiter('partner token', rl.partnerTokenPerMinute),
+      bets: limiter('bets', rl.betsPerMinute),
     },
   };
 

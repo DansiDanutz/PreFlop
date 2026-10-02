@@ -10,6 +10,7 @@ import { type Db, tx } from '../lib/db.ts';
 import { badRequest, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { type DomainEvent, EventBatch, bus, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
@@ -156,7 +157,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ---------------------------------------------------------------- Partner API (server to server)
-  app.post('/v1/partner/oauth/token', async (req) => {
+  app.post('/v1/partner/oauth/token', { preHandler: perIp(ctx.limits.partnerToken) }, async (req) => {
     const b = z.object({ grant_type: z.literal('client_credentials'), client_id: z.string(), client_secret: z.string() }).parse(req.body);
     const c = (await ctx.db.query<{ id: string; org_id: string; secret_sha256: string; revoked: boolean }>('select * from api_clients where id = $1', [b.client_id])).rows[0];
     const ok = c && !c.revoked && timingSafeEqual(Buffer.from(sha(b.client_secret)), Buffer.from(c.secret_sha256));

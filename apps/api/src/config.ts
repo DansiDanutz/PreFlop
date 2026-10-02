@@ -20,6 +20,18 @@ export interface Config {
   trustProxy: boolean;
   /** Fastify request logging (LOG=1). */
   log: boolean;
+  /** In-process limits per window of one minute (per API instance). */
+  rateLimit: RateLimitConfig;
+}
+
+export interface RateLimitConfig {
+  enabled: boolean;
+  /** POST /v1/auth/login and /v1/auth/register, per client IP (each route counted separately). */
+  authPerMinute: number;
+  /** POST /v1/partner/oauth/token, per client IP. */
+  partnerTokenPerMinute: number;
+  /** POST /v1/bets, per signed-in user. */
+  betsPerMinute: number;
 }
 
 /** Thrown when the environment is invalid; `problems` lists every reason, one per line. */
@@ -79,6 +91,10 @@ const Env = z.object({
   LOG: bool(false),
   WEBHOOK_ALLOW_PRIVATE: bool(false),
   ADMIN_PASSWORD: z.string().optional(),
+  RATE_LIMIT_ENABLED: bool(true),
+  RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
+  RATE_LIMIT_PARTNER_TOKEN_PER_MIN: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_BETS_PER_MIN: z.coerce.number().int().positive().default(120),
 });
 type Env = z.infer<typeof Env>;
 
@@ -108,6 +124,7 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
     const why = passwordWeakness(e.ADMIN_PASSWORD);
     if (why) problems.push(`ADMIN_PASSWORD ${why}`);
   }
+  if (!e.RATE_LIMIT_ENABLED) problems.push('RATE_LIMIT_ENABLED=false is for tests and the soak only');
   if (e.WEBHOOK_ALLOW_PRIVATE) problems.push('WEBHOOK_ALLOW_PRIVATE=true is for local tests only; it lets webhooks reach private addresses (SSRF)');
   return problems;
 }
@@ -139,6 +156,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     corsOrigins: e.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
     trustProxy: e.TRUST_PROXY,
     log: e.LOG,
+    rateLimit: {
+      enabled: e.RATE_LIMIT_ENABLED,
+      authPerMinute: e.RATE_LIMIT_AUTH_PER_MIN,
+      partnerTokenPerMinute: e.RATE_LIMIT_PARTNER_TOKEN_PER_MIN,
+      betsPerMinute: e.RATE_LIMIT_BETS_PER_MIN,
+    },
   };
 }
 
