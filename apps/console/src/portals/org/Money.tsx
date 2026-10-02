@@ -102,7 +102,7 @@ export function Transfers() {
   return (
     <>
       <PageHeader eyebrow={portal.name} title="Transfers to players" subtitle="Send diamonds or chips to your players online. Every transfer is in the ledger (from, to, amount)." />
-      <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         <Section title="New transfer"><TransferForm modes={['diamonds', 'virtual-chips']} /></Section>
         <Section title="History"><TransferHistory /></Section>
       </div>
@@ -156,7 +156,7 @@ export function Chips() {
           </div>
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         <div className="space-y-4">
           <Section title="Buy chips"><BuyChips /></Section>
           <Section title="Send chips to a player"><TransferForm modes={['virtual-chips']} /></Section>
@@ -185,7 +185,7 @@ export function Treasury() {
   return (
     <>
       <PageHeader eyebrow={portal.name} title="Treasury & collateral" subtitle="When you are the house, your collateral pays your winners. Each open round reserves its exact worst-case loss plus PreFlop's fee; a bet that would exceed your collateral is refused." />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Section title="Accounts">
           <QueryView q={q} what="treasury balances">
             {(d) => (

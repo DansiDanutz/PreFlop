@@ -205,7 +205,7 @@ export function Widget() {
       <PageHeader eyebrow={portal.name} title="Widget" subtitle="The fastest integration: an embeddable lobby, video, bet slip and history, themed to your brand. Money moves through your wallet." />
       <QueryView q={q} what="widget settings">
         {(d) => (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
             <div className="space-y-4">
               <Section title="Theme & defaults">
                 <form noValidate className="grid gap-4" onSubmit={(e) => { e.preventDefault(); if (!errs.accent && !errs.presets) save.mutate(undefined); }}>

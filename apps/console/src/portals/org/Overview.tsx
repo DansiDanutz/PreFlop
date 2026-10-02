@@ -45,11 +45,11 @@ export function OrgOverviewPage() {
               <div className="space-y-4">
                 {d.kpis.length > 0 && (
                   <div className={`grid grid-cols-2 gap-3 md:grid-cols-3 ${d.kpis.length % 5 === 0 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
-                    {d.kpis.map((k) => <Kpi key={k.label} label={k.label} value={k.currency ? formatMoney(k.value, k.currency) : nf(k.value)} hint={k.hint} />)}
+                    {d.kpis.map((k, i) => <Kpi key={`${k.label}:${k.currency ?? ''}:${i}`} label={k.label} value={k.currency ? formatMoney(k.value, k.currency) : nf(k.value)} hint={k.hint} />)}
                   </div>
                 )}
                 {d.series.length > 0 ? (
-                  <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
                     <Section title="Turnover and GGR" subtitle={`Daily, last ${d.series.length} days · ${cur ?? "minor units, all currencies"}`}>
                       <LineChart ariaLabel="Daily turnover and GGR" labels={days} format={fmt}
                         series={[{ name: 'Turnover', values: d.series.map((s) => s.turnover_minor) }, { name: 'GGR', values: d.series.map((s) => s.ggr_minor) }]} />

@@ -21,7 +21,7 @@ export function PageHeader({ title, subtitle, actions, eyebrow }: { title: React
 
 export function Section({ title, subtitle, actions, children, className }: { title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <Card className={cx('p-5 md:p-6', className)}>
+    <Card className={cx('min-w-0 p-5 md:p-6', className)}>
       {(title || actions) && (
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -297,7 +297,7 @@ export function SecretOnce({ label, secret }: { label: string; secret: string })
 
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
-    <div className="relative rounded-[10px] border border-line bg-bg">
+    <div className="relative min-w-0 rounded-[10px] border border-line bg-bg">
       <div className="flex items-center justify-between border-b border-line px-4 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">{lang}</span>
         <CopyButton text={code} />

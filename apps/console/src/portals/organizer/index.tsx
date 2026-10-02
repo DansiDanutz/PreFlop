@@ -64,7 +64,7 @@ export function Diamonds() {
                   <Kpi label="House net" value={`${d.house_net > 0 ? '+' : ''}${nf(d.house_net)} ◆`} tone={d.house_net < 0 ? 'danger' : d.house_net > 0 ? 'accent' : undefined} />
                   <Kpi label="Bets until empty" value={d.bets_until_empty === null ? '—' : nf(d.bets_until_empty)} hint={d.bets_until_empty === null ? 'Needs betting activity to estimate' : 'At the current average stake'} tone={d.bets_until_empty !== null && d.bets_until_empty < 1000 ? 'warn' : undefined} />
                 </div>
-                <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
                   <div>
                     <div className="mb-2 text-sm text-muted">Flows this period (◆)</div>
                     <BarChart ariaLabel="Diamond flows this period" data={[

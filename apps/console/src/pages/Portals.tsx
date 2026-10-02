@@ -16,7 +16,7 @@ export function PortalsPage() {
       <header className="flex h-16 items-center justify-between border-b border-line px-4 md:px-8">
         <div className="flex items-baseline gap-2"><Wordmark /><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Console</span></div>
         <div className="flex items-center gap-3">
-          <EnvBadge />
+          <span className="hidden sm:inline-flex"><EnvBadge /></span>
           <Button variant="ghost" size="sm" onClick={async () => { await logout(); nav('/login'); }}><LogOut size={14} aria-hidden />Sign out</Button>
         </div>
       </header>
@@ -45,7 +45,7 @@ export function PortalsPage() {
                 </>
               );
               return (
-                <li key={p.key}>
+                <li key={p.key} className="min-w-0">
                   {p.enabled ? (
                     <Link to={p.key} className={cx('group flex items-center gap-4 rounded-[12px] border bg-surface px-5 py-4 transition-colors hover:border-accent/60', p.key === last ? 'border-accent/40' : 'border-line')}>{inner}</Link>
                   ) : (

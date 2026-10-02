@@ -30,6 +30,9 @@ function Section({ icon, title, subtitle, children, defaultOpen = false }: { ico
   );
 }
 
+const agentTitle = (status: string | undefined) =>
+  status === 'active' || status === 'suspended' ? 'Your agent account' : status === 'applied' ? 'Agent application' : 'Become an agent';
+
 export function ProfilePage() {
   const me = useMe();
   const real = useRealMoney();
@@ -106,7 +109,7 @@ export function ProfilePage() {
 
       <div className="mt-6 space-y-4">
       <Section icon={<Ticket className="h-5 w-5" />} title="Join a room" subtitle="Have an invite code from an organizer?"><JoinRoom /></Section>
-      <Section icon={<Network className="h-5 w-5" />} title={u?.agent?.status === 'active' ? 'Your agent account' : 'Become an agent'} subtitle={u?.agent?.status === 'active' ? `Code ${u.agent.code} · invite players and earn commission` : 'Invite players and earn a share of net revenue'}>
+      <Section icon={<Network className="h-5 w-5" />} title={agentTitle(u?.agent?.status)} subtitle={u?.agent?.status === 'active' ? `Code ${u.agent.code} · invite players and earn commission` : u?.agent?.status === 'applied' ? 'The PreFlop team is reviewing your application' : 'Invite players and earn a share of net revenue'}>
         <AgentSection />
       </Section>
       <Section icon={<Briefcase className="h-5 w-5" />} title="Become an organizer" subtitle="Run your own room with chips or diamonds"><OrganizerForm email={u?.email ?? ''} name={u?.display_name ?? ''} /></Section>

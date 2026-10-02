@@ -119,7 +119,7 @@ export function BarChart({ data, height = 220, format = compact, ariaLabel, colo
             ? `M${cx - bw / 2},${y0}V${top + r}Q${cx - bw / 2},${top} ${cx - bw / 2 + r},${top}H${cx + bw / 2 - r}Q${cx + bw / 2},${top} ${cx + bw / 2},${top + r}V${y0}Z`
             : `M${cx - bw / 2},${y0}V${top + h - r}Q${cx - bw / 2},${top + h} ${cx - bw / 2 + r},${top + h}H${cx + bw / 2 - r}Q${cx + bw / 2},${top + h} ${cx + bw / 2},${top + h - r}V${y0}Z`;
           return (
-            <g key={d.label} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(i)} onBlur={() => setHover(null)} tabIndex={0} aria-label={`${d.label}: ${format(d.value)}`}>
+            <g key={`${d.label}:${i}`} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(i)} onBlur={() => setHover(null)} tabIndex={0} aria-label={`${d.label}: ${format(d.value)}`}>
               <rect x={cx - band / 2} y={M.top} width={band} height={height - M.top - M.bottom} fill="transparent" />
               <path d={path} fill={d.color ?? color} opacity={hover === null || hover === i ? 1 : 0.55} />
               <text x={cx} y={height - 6} textAnchor="middle" fontSize="11" fill="var(--color-faint)">{d.label}</text>

@@ -57,7 +57,7 @@ function RoomEditor({ open, onClose, room }: { open: boolean; onClose: () => voi
   return (
     <Modal open={open} onClose={onClose} wide title={room ? `Edit ${room.name}` : 'Create room'}
       footer={<><Button size="sm" variant="secondary" onClick={onClose}>Cancel</Button><Button size="sm" onClick={submit} disabled={save.isPending || serverOk === false}>{room ? 'Save changes' : 'Create room'}</Button></>}>
-      <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }} className="grid gap-6 md:grid-cols-[minmax(0,1fr)_260px]">
+      <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }} className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_260px]">
         <div className="grid gap-4">
           <Field label="Room name" error={err('name')}>{(p) => <TextInput {...p} value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="Friday High Rollers" autoFocus />}</Field>
           <Field label="Table" error={err('table_id')} hint={room ? 'A room stays on its table.' : 'The live table whose flops this room bets on.'}>

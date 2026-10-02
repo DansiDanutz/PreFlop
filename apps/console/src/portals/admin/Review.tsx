@@ -66,7 +66,7 @@ export function ReviewDetail() {
               <div className="mb-6"><Callout tone="info" icon={<Info size={16} />} title="Admins can only void">{FLOOR_NOTE}</Callout></div>
               {r.review_reasons?.length ? <div className="mb-6"><Callout tone="warn" title="Review reasons">{r.review_reasons.join(' · ')}</Callout></div> : null}
 
-              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                 <Section title="Evidence image" subtitle="Board camera C1, stored only if its SHA-256 matches the signed capture.">
                   {ev.image_data_url
                     ? <img src={ev.image_data_url} alt={`Board capture for hand ${r.hand_no}`} className="w-full rounded-[12px] border border-line" />
@@ -119,7 +119,7 @@ export function ReviewDetail() {
                   )}
                 </Section>
                 <Section title="Capture record" subtitle="As signed by the Table Box (Ed25519).">
-                  {ev.capture ? <pre className="max-h-96 overflow-auto rounded-[12px] border border-line bg-bg p-4 font-mono text-[12px] leading-relaxed">{JSON.stringify(ev.capture, null, 2)}</pre> : <p className="text-sm text-muted">No authentic capture.</p>}
+                  {ev.capture ? <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-[12px] border border-line bg-bg p-4 font-mono text-[12px] leading-relaxed">{JSON.stringify(ev.capture, null, 2)}</pre> : <p className="text-sm text-muted">No authentic capture.</p>}
                 </Section>
               </div>
 

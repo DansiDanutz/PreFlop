@@ -110,7 +110,7 @@ export function Docs() {
   return (
     <>
       <PageHeader eyebrow={portal.name} title="Integration docs" subtitle="Quickstart for the Partner API (docs/02 §2). Sandbox: a simulated table deals random flops every ~20 s, so you can integrate without a live club." />
-      <div className="grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
         <nav aria-label="On this page" className="hidden xl:block">
           <ul className="sticky top-24 space-y-1 text-sm">
             {steps.map((s) => <li key={s.id}><a href={`#${s.id}`} className="block rounded-[8px] px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-ink">{s.title.replace(/^\d\.\s*/, '')}</a></li>)}
