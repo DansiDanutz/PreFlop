@@ -20,7 +20,7 @@ export async function verifyPassword(pw: string, stored: string): Promise<boolea
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
-const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex');
+export const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex');
 export const SESSION_DAYS = 30;
 
 export async function createSession(c: Db | Tx, userId: string): Promise<string> {
@@ -33,6 +33,12 @@ export async function endSession(c: Db, token: string): Promise<void> {
   await c.query('delete from sessions where token_sha256 = $1', [tokenHash(token)]);
 }
 
+/** Signs the user out everywhere, or everywhere but the session whose token hash is `keep`. */
+export async function revokeSessions(c: Db | Tx, userId: string, keep?: string): Promise<number> {
+  const r = await c.query('delete from sessions where user_id = $1 and token_sha256 is distinct from $2', [userId, keep ?? null]);
+  return r.rowCount ?? 0;
+}
+
 export interface SessionUser {
   id: string;
   email: string;
@@ -42,6 +48,11 @@ export interface SessionUser {
   platform_role: string | null;
   country: string | null;
   partner_id: string | null;
+  /** YYYY-MM-DD, or null when never declared (accounts created before the age gate). */
+  date_of_birth: string | null;
+  email_verified: boolean;
+  /** TOTP two-factor authentication is enabled for sign-in. */
+  mfa_enabled: boolean;
 }
 
 export function bearer(header: string | undefined): string | undefined {
@@ -52,7 +63,9 @@ export function bearer(header: string | undefined): string | undefined {
 export async function userFromToken(db: Db, token: string | undefined): Promise<SessionUser> {
   if (!token) throw unauthorized('unauthorized', 'sign in required');
   const u = (await db.query<SessionUser>(
-    `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id
+    `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id,
+            to_char(u.date_of_birth, 'YYYY-MM-DD') as date_of_birth, u.email_verified_at is not null as email_verified,
+            exists (select 1 from user_mfa m where m.user_id = u.id and m.enabled_at is not null) as mfa_enabled
        from sessions s join users u on u.id = s.user_id
       where s.token_sha256 = $1 and s.expires_at > now()`, [tokenHash(token)])).rows[0];
   if (!u) throw unauthorized('unauthorized', 'session expired or invalid');

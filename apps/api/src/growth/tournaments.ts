@@ -5,6 +5,7 @@ import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
@@ -163,6 +164,7 @@ export async function register(c: Tx, id: string, userId: string, ev: EventBatch
   const u = (await c.query<{ status: string; kyc_status: string }>('select status, kyc_status from users where id = $1', [userId])).rows[0];
   if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'this account cannot play');
   if (REAL_MODES.has(t.mode) && u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required for real money');
+  if (REAL_MODES.has(t.mode)) await assertRealMoneyAccount(c, userId); // a real-money entry: age, verified email, territory
   if ((await c.query('select 1 from tournament_entries where tournament_id = $1 and user_id = $2', [id, userId])).rowCount) throw conflict('already_registered', 'you are already registered');
   const count = Number((await c.query<{ n: string }>('select count(*) as n from tournament_entries where tournament_id = $1', [id])).rows[0]!.n);
   if (t.max_entries != null && count >= t.max_entries) throw conflict('tournament_full', 'the tournament is full');

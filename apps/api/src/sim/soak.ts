@@ -51,7 +51,7 @@ const api = async (method: string, url: string, token?: string, body?: unknown, 
 };
 const players: string[] = [], playerIds: string[] = [];
 for (let i = 0; i < 8; i++) {
-  const r = (await api('POST', '/v1/auth/register', undefined, { email: `soak${i}@x.dev`, password: 'correct horse', display_name: `S${i}` })).body;
+  const r = (await api('POST', '/v1/auth/register', undefined, { email: `soak${i}@x.dev`, password: 'correct horse', display_name: `S${i}`, date_of_birth: '1990-01-01', country: 'MT' })).body;
   players.push(r.token);
   playerIds.push(r.user.id);
 }

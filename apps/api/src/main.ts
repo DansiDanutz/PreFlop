@@ -3,14 +3,17 @@ import { buildApp } from './app.ts';
 import { loadConfigOrExit } from './config.ts';
 import { startGrowthWorker } from './growth/worker.ts';
 import { createPool } from './lib/db.ts';
+import { mailTransportFor, mailWarning } from './lib/mailer.ts';
 import { startWorker } from './worker.ts';
 
 const config = loadConfigOrExit();
+const mailProblem = mailWarning(config);
+if (mailProblem) console.warn(`warning: ${mailProblem}`);
 const db = createPool(config.databaseUrl);
 const applied = await migrate(db);
 if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 const app = await buildApp(db, config);
-const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }) : async () => {};
+const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }) : async () => {};
 const stopGrowth = config.runWorker ? startGrowthWorker(db) : () => {};
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`PreFlop API on :${config.port}`);

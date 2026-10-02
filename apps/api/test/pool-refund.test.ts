@@ -11,7 +11,7 @@ describe('pool with no winning backer (deterministic)', () => {
   it('refunds every stake in full — rake and PreFlop fee included', async () => {
     await tx(h.db, (c) => seedAdmin(c, 'pr-admin@test.dev', 'admin-pass-1'));
     const admin = (await h.api('POST', '/v1/auth/login', undefined, { email: 'pr-admin@test.dev', password: 'admin-pass-1' })).body.token;
-    const mk = async (n: string) => { const e = `${n}-${Date.now()}@t.dev`; const r = await h.api('POST', '/v1/auth/register', undefined, { email: e, password: 'correct horse', display_name: n }); return { token: r.body.token as string, email: e }; };
+    const mk = async (n: string) => { const e = `${n}-${Date.now()}@t.dev`; const r = await h.api('POST', '/v1/auth/register', undefined, { email: e, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: n }); return { token: r.body.token as string, email: e }; };
     const owner = await mk('o'), a = await mk('a'), b = await mk('b');
     const orgId = await ownedOrg(h, admin, { kind: 'organizer', name: 'Refund Club' }, owner);
     await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5000, pay_with: 'EUR' });

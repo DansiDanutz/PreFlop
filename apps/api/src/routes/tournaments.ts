@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
-import type { SessionUser } from '../auth/players.ts';
+import { type SessionUser, bearer, tokenHash } from '../auth/players.ts';
+import { assertMayBet, assertSessionTime } from '../lib/accounts.ts';
 import {
   type Phase, type StandingRow, type TournamentRow, allocatePrizes, cancel, createTournament, entriesOf, lateRegUntil, phaseOf,
   placeTournamentBet, prizeEligible, prizePoolOf, rankEntries, register, unregister,
@@ -159,6 +160,8 @@ export async function tournamentRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/tournaments/:id/bets', async (req, reply) => {
     const u = await ctx.user(req);
     ctx.limits.bets.consume(`user:${u.id}`);
+    await assertMayBet(ctx.db, u);
+    await assertSessionTime(ctx.db, tokenHash(bearer(req.headers.authorization) ?? ''), u.id);
     const { id } = req.params as { id: string };
     const b = BetBody.parse(req.body);
     const bet = await withEvents((ev) => placeTournamentBet(ctx.db, id, u.id, {

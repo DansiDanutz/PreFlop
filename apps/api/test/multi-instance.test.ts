@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RoundExposure, getSelection, payoutMinor, statsFor } from '@preflop/odds-engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Harness, harness } from './helpers.ts';
+import { DB_PREFIX, type Harness, harness } from './helpers.ts';
 
 /**
  * Two API processes on one database (docs/13 §5): the exposure cap must hold although each process
@@ -42,7 +42,7 @@ async function call(base: string, method: string, path: string, token?: string, 
 beforeAll(async () => {
   h = await harness('multi_instance');
   const u = new URL(process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5432/postgres');
-  u.pathname = '/preflop_test_multi_instance';
+  u.pathname = `/${DB_PREFIX}_multi_instance`;
   instances.push(...(await Promise.all([startInstance(u.toString()), startInstance(u.toString())])));
 });
 afterAll(async () => {
@@ -55,7 +55,7 @@ describe('exposure cap across API instances', () => {
     const [a, b] = [instances[0]!, instances[1]!];
     // 24 players, registered half on each instance
     const players = await Promise.all(Array.from({ length: 24 }, async (_, k) => {
-      const r = await call((k % 2 ? b : a).url, 'POST', '/v1/auth/register', undefined, { email: `mi${k}-${Date.now()}@test.dev`, password: 'correct horse', display_name: `MI${k}` });
+      const r = await call((k % 2 ? b : a).url, 'POST', '/v1/auth/register', undefined, { email: `mi${k}-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: `MI${k}`});
       expect(r.status).toBe(201);
       return r.body.token as string;
     }));
@@ -95,7 +95,7 @@ describe('exposure cap across API instances', () => {
 
   it('mixed selections racing on both instances: the exact worst case stays within the cap', async () => {
     const [a, b] = [instances[0]!, instances[1]!];
-    const players = await Promise.all(Array.from({ length: 16 }, async (_, k) => (await call((k % 2 ? b : a).url, 'POST', '/v1/auth/register', undefined, { email: `mx${k}-${Date.now()}@test.dev`, password: 'correct horse', display_name: `MX${k}` })).body.token as string));
+    const players = await Promise.all(Array.from({ length: 16 }, async (_, k) => (await call((k % 2 ? b : a).url, 'POST', '/v1/auth/register', undefined, { email: `mx${k}-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: `MX${k}` })).body.token as string));
     const book = (await call(a.url, 'GET', '/v1/book')).body.markets.flatMap((m: any) => m.selections).filter((s: any) => s.offered);
     const picks = ['colour:all-red', 'colour:all-black', 'hand-class:pair', 'colour:mixed'].map((id) => book.find((s: any) => s.id === id)).filter(Boolean);
     const cap = 4_000;

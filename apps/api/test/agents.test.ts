@@ -22,7 +22,7 @@ afterAll(async () => h?.close());
 
 let un = 0;
 async function user(name: string, ref?: string) {
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${++un}@test.dev`, password: 'correct horse', display_name: name, ...(ref ? { ref } : {}) });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${++un}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name, ...(ref ? { ref } : {}) });
   return { token: r.body.token as string, id: r.body.user.id as string };
 }
 
