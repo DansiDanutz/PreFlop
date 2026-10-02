@@ -8,6 +8,7 @@ import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { newId } from '../lib/ids.ts';
+import { defaultRoundLossMinor } from '../lib/limits.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { orgStatements } from '../lib/statements.ts';
 import { buyChips, buyDiamonds, diamondPacks } from '../payments/sandbox.ts';
@@ -171,7 +172,8 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get(`${P}/tables`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['club'] });
     const summaries = await tableSummaries(ctx, 't.club_id = $1', [org.id]);
-    const raw = new Map((await ctx.db.query('select id, certification, max_round_loss_minor, link, link_at from poker_tables where club_id = $1', [org.id])).rows.map((r) => [r.id, r]));
+    const raw = new Map((await ctx.db.query(
+      'select id, certification, max_round_loss_minor, max_user_round_payout_minor, link, link_at, real_money_approved_at from poker_tables where club_id = $1', [org.id])).rows.map((r) => [r.id, r]));
     return { tables: summaries.map((t) => ({ ...t, ...raw.get(t.id) })) };
   });
   app.post(`${P}/tables`, async (req, reply) => {
@@ -180,9 +182,12 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!MODES[b.mode].currencies.includes(b.currency)) throw unprocessable('invalid_currency', `${b.currency} is not valid in ${b.mode}`);
     if (b.mode === 'diamonds') throw unprocessable('invalid_mode', 'diamond play happens in organizer rooms; tables deal for every mode');
     const id = `${org.id}-${newId('t').slice(2, 8).toLowerCase()}`;
+    // A real-money table is created unapproved: it takes real-money bets only after the PreFlop
+    // team approves it (PUT /v1/admin/tables/:id/real-money). The round loss limit is per currency.
     await tx(ctx.db, async (c) => {
-      await c.query('insert into poker_tables (id, club_id, name, mode, currency, kind) values ($1, $2, $3, $4, $5, $6)', [id, org.id, b.name, b.mode, b.currency, b.kind]);
-      await audit(c, { type: 'table.created', tableId: id, orgId: org.id, by: user.id });
+      await c.query('insert into poker_tables (id, club_id, name, mode, currency, kind, max_round_loss_minor) values ($1, $2, $3, $4, $5, $6, $7)',
+        [id, org.id, b.name, b.mode, b.currency, b.kind, defaultRoundLossMinor(b.currency)]);
+      await audit(c, { type: 'table.created', tableId: id, orgId: org.id, mode: b.mode, currency: b.currency, by: user.id });
     });
     return reply.code(201).send({ id });
   });
@@ -191,7 +196,8 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const { tableId } = req.params as { tableId: string };
     const items = z.object({ items: z.record(z.boolean()) }).parse(req.body).items;
     return tx(ctx.db, async (c) => {
-      const t = (await c.query<{ certification: Record<string, CertItem> }>('select certification from poker_tables where id = $1 and club_id = $2 for update', [tableId, org.id])).rows[0];
+      const t = (await c.query<{ certification: Record<string, CertItem>; real_money_approved_at: Date | null }>(
+        'select certification, real_money_approved_at from poker_tables where id = $1 and club_id = $2 for update', [tableId, org.id])).rows[0];
       if (!t) throw notFound('table');
       const cert = { ...t.certification };
       const now = Date.now();
@@ -199,9 +205,16 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
         if (!(CERT_FLAGS as readonly string[]).includes(k)) throw unprocessable('unknown_item', `unknown certification item ${k}`);
         cert[k] = { ok, by: user.id, at: new Date(now).toISOString(), expires_at: new Date(now + (PER_SHIFT.has(k) ? 12 * 3600_000 : 365 * 86_400_000)).toISOString() };
       }
-      await c.query('update poker_tables set certification = $2 where id = $1', [tableId, JSON.stringify(cert)]);
-      await audit(c, { type: 'table.certification', tableId, items, by: user.id });
-      return { certification: cert };
+      // The PreFlop real-money approval covers the certification as it was. Only the routine shift
+      // check (per-shift items re-confirmed as OK) keeps it; any other change needs a new approval.
+      const keepsApproval = Object.entries(items).every(([k, ok]) => ok && PER_SHIFT.has(k));
+      await c.query(
+        `update poker_tables set certification = $2,
+                real_money_approved_at = case when $3 then real_money_approved_at end, real_money_approved_by = case when $3 then real_money_approved_by end
+          where id = $1`, [tableId, JSON.stringify(cert), keepsApproval]);
+      const approvedAt = keepsApproval ? t.real_money_approved_at : null;
+      await audit(c, { type: 'table.certification', tableId, items, realMoneyApprovalCleared: t.real_money_approved_at !== null && approvedAt === null, by: user.id });
+      return { certification: cert, real_money_approved_at: approvedAt };
     });
   });
   app.get(`${P}/staff`, async (req) => {

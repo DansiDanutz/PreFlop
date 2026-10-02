@@ -298,6 +298,8 @@ describe('tournament lifecycle', () => {
       const r = await openRound();
       // The simulated tables play free chips; make this flop a real-money one for the race.
       await h.db.query(`update rounds set mode = 'real-fiat', currency = 'EUR' where id = $1`, [r.id]);
+      // ...and a real-money bet needs a PreFlop-approved table (the admin route approves real-mode tables only).
+      await h.db.query(`update poker_tables set real_money_approved_at = now(), real_money_approved_by = 'test' where id = 'sim-1'`);
       const sel = 'paired-board:no';
       const [reg, b] = await Promise.all([
         h.api('POST', `/v1/tournaments/${t.id}/register`, p.token),
@@ -308,7 +310,10 @@ describe('tournament lifecycle', () => {
       expect((reg.status === 200 ? b : reg).body.type).toBe('limit_reached');
       await h.api('POST', `/v1/admin/rounds/${r.id}/void`, admin, { reason: 'race test' });
       await h.api('POST', `/v1/admin/tournaments/${t.id}/cancel`, admin, { reason: 'race test' });
-    } finally { await modes(false); }
+    } finally {
+      await modes(false);
+      await h.db.query(`update poker_tables set real_money_approved_at = null, real_money_approved_by = null where id = 'sim-1'`);
+    }
   });
 
   it('refuses real money while it is off, closed-loop modes from the team, and bad settings', async () => {

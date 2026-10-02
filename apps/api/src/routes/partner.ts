@@ -6,9 +6,10 @@ import type { AppContext } from '../app.ts';
 import { createSession, hashPassword } from '../auth/players.ts';
 import { placeBet } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
-import { type Db, tx } from '../lib/db.ts';
+import { type Db, type Tx, tx } from '../lib/db.ts';
 import { badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
+import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
@@ -40,6 +41,16 @@ async function partnerFromToken(db: Db, req: FastifyRequest): Promise<{ orgId: s
       where p.token_sha256 = $1 and p.expires_at > now() and not c.revoked and o.status = 'active'`, [sha(token)])).rows[0];
   if (!r) throw unauthorized('unauthorized', 'token expired or revoked');
   return { orgId: r.org_id, clientId: r.client_id };
+}
+
+/**
+ * Signs out every player of a partner (users created through its Partner API, users.partner_id).
+ * Used when a client is revoked or the partner is suspended: widget sessions die with the partner's
+ * access, and the partner must issue new ones. Returns the number of sessions ended.
+ */
+export async function endPartnerSessions(c: Tx, orgId: string): Promise<number> {
+  const r = await c.query('delete from sessions where user_id in (select id from users where partner_id = $1)', [orgId]);
+  return r.rowCount ?? 0;
 }
 
 async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: string): Promise<string> {
@@ -87,7 +98,10 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
       const r = await c.query('update api_clients set revoked = true where id = $1 and org_id = $2', [clientId, org.id]);
       if (!r.rowCount) throw notFound('client');
       await c.query('delete from partner_tokens where client_id = $1', [clientId]);
-      await audit(c, { type: 'partner.client_revoked', clientId, by: user.id });
+      // Player sessions are not tied to one client, so revoking any client signs out every player of
+      // this partner; the partner issues fresh sessions with a client it still trusts.
+      const ended = await endPartnerSessions(c, org.id);
+      await audit(c, { type: 'partner.client_revoked', clientId, partnerSessionsEnded: ended, by: user.id });
     });
     return { ok: true };
   });
@@ -185,25 +199,40 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
    * issued (no value); virtual chips come out of the partner's treasury, which it funds by buying
    * chips, and never exceed what it holds.
    */
+  /**
+   * Idempotent: the `Idempotency-Key` header (as for partner bets) keys both the stored response and
+   * the ledger posting, so a retry after a lost response returns the original deposit and never
+   * credits twice. The same key with a different request gets 422 idempotency_mismatch.
+   */
   app.post('/v1/partner/players/:ref/deposits', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
+    const key = req.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header required (8–200 characters)');
     const { ref } = req.params as { ref: string };
     const b = z.object({ amount_minor: z.number().int().positive(), mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
-    if (!(await ctx.modeEnabled(b.mode))) throw conflict('mode_disabled', `${b.mode} is not enabled`);
-    const ref2 = newId('pdep');
-    await tx(ctx.db, async (c) => {
-      let from = acct('PreFlop', 'play-issuance', 'play', 'PLAY');
-      if (b.mode === 'virtual-chips') {
-        from = acct(p.orgId, 'treasury', b.mode, currency);
-        await lockAccount(c, from);
-        if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_treasury', 'buy chips for your treasury first');
-      }
-      await post(c, 'partner.deposit', ref2, [{ from, to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }]);
-      await audit(c, { type: 'partner.deposit', orgId: p.orgId, userId: id, amountMinor: b.amount_minor, mode: b.mode });
+    const principal = `partner:${p.orgId}`;
+    const res = await tx(ctx.db, async (c) => {
+      // Two concurrent requests with one key queue here; the second then finds the stored response.
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`partner.deposit:${p.orgId}:${key}`]);
+      return idempotent(c, principal, key, req.method, req.url, req.rawBody ?? '', async () => {
+        if (!(await ctx.modeEnabled(b.mode))) throw conflict('mode_disabled', `${b.mode} is not enabled`);
+        const depositId = newId('pdep');
+        let from = acct('PreFlop', 'play-issuance', 'play', 'PLAY');
+        if (b.mode === 'virtual-chips') {
+          from = acct(p.orgId, 'treasury', b.mode, currency);
+          await lockAccount(c, from);
+          if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_treasury', 'buy chips for your treasury first');
+        }
+        // Keyed by the partner's key, not a fresh id: the ledger itself refuses a second credit.
+        if (!(await post(c, 'partner.deposit', `${p.orgId}:${key}`, [{ from, to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }])))
+          throw conflict('duplicate_deposit', 'this Idempotency-Key was already used for a deposit');
+        await audit(c, { type: 'partner.deposit', orgId: p.orgId, userId: id, depositId, idempotencyKey: key, amountMinor: b.amount_minor, mode: b.mode });
+        return { status: 201, body: { id: depositId, player_ref: ref, amount_minor: b.amount_minor, currency } };
+      });
     });
-    return reply.code(201).send({ id: ref2, player_ref: ref, amount_minor: b.amount_minor, currency });
+    return reply.code(res.status).send(res.body);
   });
   app.post('/v1/partner/bets', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
@@ -232,11 +261,31 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
 // ---------------------------------------------------------------- webhook delivery
 // Fan-out is durable: lib/webhooks.ts queues the rows inside the settlement/void transaction.
 
-/** Delivers due webhooks with an HMAC signature; exponential backoff for 24 h, then failed. */
-export async function deliverDue(db: Db, limit = 20): Promise<number> {
+/** A claim older than this is taken over: its sender died (the HTTP call itself times out after 5 s). */
+export const WEBHOOK_CLAIM_STALE_MS = 5 * 60_000;
+
+/**
+ * Delivers due webhooks with an HMAC signature; exponential backoff for 24 h, then failed.
+ *
+ * Safe with several workers and API processes: rows are CLAIMED first, in one statement that
+ * selects them `for update skip locked` and marks them `sending` (claimed_at, attempts + 1), so two
+ * callers never send the same row. The outcome is written only while the claim is still ours
+ * (status 'sending' and the same attempts count); a claim older than WEBHOOK_CLAIM_STALE_MS is
+ * taken over, and then the late sender's result is ignored.
+ */
+export async function deliverDue(db: Db, limit = 20, staleMs = WEBHOOK_CLAIM_STALE_MS): Promise<number> {
   const due = (await db.query<{ id: string; url: string; secret: string; payload: unknown; attempts: number; created_at: Date }>(
-    `select d.id, w.url, w.secret, d.payload, d.attempts, d.created_at from webhook_deliveries d join webhooks w on w.id = d.webhook_id
-      where d.status = 'pending' and d.next_attempt_at <= now() order by d.next_attempt_at limit $1`, [limit])).rows;
+    `with claimed as (
+       update webhook_deliveries d set status = 'sending', claimed_at = now(), attempts = d.attempts + 1
+        where d.id in (
+          select id from webhook_deliveries
+           where (status = 'pending' and next_attempt_at <= now())
+              or (status = 'sending' and claimed_at <= now() - ($2 || ' milliseconds')::interval)
+           order by next_attempt_at limit $1
+           for update skip locked)
+        returning d.id, d.webhook_id, d.payload, d.attempts, d.created_at)
+     select c.id, w.url, w.secret, c.payload, c.attempts, c.created_at from claimed c join webhooks w on w.id = c.webhook_id`,
+    [limit, String(staleMs)])).rows;
   for (const d of due) {
     const body = JSON.stringify(d.payload);
     let error: string | null = null;
@@ -249,12 +298,16 @@ export async function deliverDue(db: Db, limit = 20): Promise<number> {
     } catch (e) {
       error = (e as Error).message;
     }
-    if (!error) await db.query(`update webhook_deliveries set status = 'delivered', attempts = attempts + 1, delivered_at = now(), last_error = null where id = $1`, [d.id]);
-    else {
+    // Guarded by the claim: a row taken over after a stale claim is not overwritten by this sender.
+    if (!error) {
+      await db.query(`update webhook_deliveries set status = 'delivered', delivered_at = now(), last_error = null, claimed_at = null
+                       where id = $1 and status = 'sending' and attempts = $2`, [d.id, d.attempts]);
+    } else {
       const expired = Date.now() - d.created_at.getTime() > 24 * 3600_000;
-      const backoff = Math.min(3600, 2 ** Math.min(d.attempts + 1, 12));
-      await db.query(`update webhook_deliveries set attempts = attempts + 1, last_error = $2, status = $3, next_attempt_at = now() + ($4 || ' seconds')::interval where id = $1`,
-        [d.id, error.slice(0, 300), expired ? 'failed' : 'pending', String(backoff)]);
+      const backoff = Math.min(3600, 2 ** Math.min(d.attempts, 12));
+      await db.query(`update webhook_deliveries set last_error = $2, status = $3, next_attempt_at = now() + ($4 || ' seconds')::interval, claimed_at = null
+                       where id = $1 and status = 'sending' and attempts = $5`,
+        [d.id, error.slice(0, 300), expired ? 'failed' : 'pending', String(backoff), d.attempts]);
     }
   }
   return due.length;

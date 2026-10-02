@@ -14,6 +14,7 @@ import { emit } from '../lib/webhooks.ts';
 import { updateMonitor } from './monitor.ts';
 import { type TableRow, tableReadiness } from './readiness.ts';
 import { settleTournamentBets, voidTournamentBets } from '../growth/tournaments.ts';
+import { REAL_MODES } from '../lib/limits.ts';
 
 /**
  * The round state machine (docs/13 §4).
@@ -521,26 +522,50 @@ export async function voidRound(c: Tx, r: RoundRow, reason: string, by: string, 
   return true;
 }
 
-/** A floor manager's decision on a REVIEW round (docs/13 §4). */
-export async function resolveReview(
-  c: Tx, r: RoundRow, p: Extract<Principal, { kind: 'staff' }>, decision: { action: 'settle'; cards: unknown } | { action: 'void'; reason: string },
-  t: Timing, ev: EventBatch,
-): Promise<{ status: 200 | 409; body: Record<string, unknown> }> {
+export type ReviewDecision = { action: 'settle'; cards: unknown } | { action: 'void'; reason: string };
+type ReviewOutcome = { status: 200 | 409; body: Record<string, unknown> };
+
+/**
+ * A floor manager's decision on a REVIEW round (docs/13 §4). Play, chips and diamond tables only:
+ * a real-money round is never settled by the club that runs the table, so its review goes to the
+ * PreFlop team (resolveReviewByPlatform, the console review path).
+ */
+export async function resolveReview(c: Tx, r: RoundRow, p: Extract<Principal, { kind: 'staff' }>, decision: ReviewDecision, t: Timing, ev: EventBatch): Promise<ReviewOutcome> {
   if (p.role !== 'floor_manager') throw new ApiError(403, 'forbidden_role', 'floor manager only');
-  if (r.state === 'EVIDENCE_REJECTED') throw conflict('invalid_round_state', 'rejected evidence can never be settled by hand');
-  if (r.state !== 'REVIEW') throw conflict('invalid_round_state', `round is ${r.state}`);
+  if (REAL_MODES.has(r.mode)) throw new ApiError(403, 'platform_review_required', 'a real-money round is reviewed by the PreFlop team');
+  assertReviewable(r);
   const entered = (await c.query('select 1 from flop_entries where round_id = $1 and person_id = $2', [r.id, p.personId])).rowCount;
   if (entered) throw new ApiError(403, 'forbidden_role', 'a person who entered the flop cannot resolve its review');
+  return decideReview(c, r, p.id, decision, t, ev);
+}
+
+/**
+ * The PreFlop team's decision on a REVIEW round of a real-money table, from the console. Other
+ * modes stay with the club's floor manager: the team may void any round, but settles only these.
+ */
+export async function resolveReviewByPlatform(c: Tx, r: RoundRow, userId: string, decision: ReviewDecision, t: Timing, ev: EventBatch): Promise<ReviewOutcome> {
+  if (!REAL_MODES.has(r.mode)) throw new ApiError(403, 'club_review_required', 'the club floor manager reviews rounds at this table');
+  assertReviewable(r);
+  return decideReview(c, r, `user:${userId}`, decision, t, ev);
+}
+
+function assertReviewable(r: RoundRow): void {
+  if (r.state === 'EVIDENCE_REJECTED') throw conflict('invalid_round_state', 'rejected evidence can never be settled by hand');
+  if (r.state !== 'REVIEW') throw conflict('invalid_round_state', `round is ${r.state}`);
+}
+
+/** Review deadline first, then the terminal transition from REVIEW. `by` is recorded in the audit. */
+async function decideReview(c: Tx, r: RoundRow, by: string, decision: ReviewDecision, t: Timing, ev: EventBatch): Promise<ReviewOutcome> {
   const now = (await c.query<{ now: Date }>('select clock_timestamp() as now')).rows[0]!.now.getTime();
   if (now >= ms(r.review_started_at)! + t.reviewSlaMs) {
     await voidRound(c, r, 'review deadline passed', 'system:review-deadline', ev, ['REVIEW']);
     return { status: 409, body: { type: 'review_expired', title: 'the review deadline passed; the round was voided and refunded', status: 409 } };
   }
   if (decision.action === 'void') {
-    const ok = await voidRound(c, r, `review: ${decision.reason}`, p.id, ev, ['REVIEW']);
+    const ok = await voidRound(c, r, `review: ${decision.reason}`, by, ev, ['REVIEW']);
     return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is not in a state that allows this', status: 409 } };
   }
   const cards = parseThreeCards(decision.cards);
-  const ok = await settleRound(c, r, cards, 'REVIEW', p.id, ev);
+  const ok = await settleRound(c, r, cards, 'REVIEW', by, ev);
   return ok ? { status: 200, body: { state: 'SETTLED' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is not in a state that allows this', status: 409 } };
 }

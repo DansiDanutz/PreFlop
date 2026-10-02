@@ -1,7 +1,7 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { Db, Tx } from '../lib/db.ts';
-import { unauthorized } from '../lib/errors.ts';
+import { forbidden, unauthorized } from '../lib/errors.ts';
 
 const scryptAsync = promisify(scrypt) as (pw: string, salt: Buffer, len: number, opts: { N: number; r: number; p: number }) => Promise<Buffer>;
 const PARAMS = { N: 16384, r: 8, p: 1 };
@@ -51,10 +51,13 @@ export function bearer(header: string | undefined): string | undefined {
 
 export async function userFromToken(db: Db, token: string | undefined): Promise<SessionUser> {
   if (!token) throw unauthorized('unauthorized', 'sign in required');
-  const u = (await db.query<SessionUser>(
-    `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id
-       from sessions s join users u on u.id = s.user_id
+  const row = (await db.query<SessionUser & { partner_status: string | null }>(
+    `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id, o.status as partner_status
+       from sessions s join users u on u.id = s.user_id left join organizations o on o.id = u.partner_id
       where s.token_sha256 = $1 and s.expires_at > now()`, [tokenHash(token)])).rows[0];
-  if (!u) throw unauthorized('unauthorized', 'session expired or invalid');
+  if (!row) throw unauthorized('unauthorized', 'session expired or invalid');
+  // A partner's player exists only through that partner: while it is suspended, the account is too.
+  const { partner_status, ...u } = row;
+  if (u.partner_id && partner_status !== 'active') throw forbidden('partner_suspended', 'the operator of this account is suspended');
   return u;
 }

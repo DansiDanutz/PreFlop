@@ -110,7 +110,10 @@ describe('concurrency and crash safety (docs/13 §8.2, §8.6, §8.10)', () => {
     for (const b of (await h.db.query(`select selection_id, stake_minor, odds_centi from bets where round_id = $1 and status = 'accepted'`, [rid])).rows)
       ex.tryAdd(statsFor(getSelection(b.selection_id)), b.stake_minor, b.odds_centi);
     await h.db.query('update poker_tables set max_round_loss_minor = $2 where id = $1', ['sim-1', ex.worstCase().lossMinor + 1]);
-    const next = await bet(h, p.token, rid, 'colour:all-red', 100);
+    // Another player: the first one's own payouts already reach the per-player cap (docs/04 §3),
+    // and this test is about the round's exposure.
+    const q = await h.register();
+    const next = await bet(h, q.token, rid, 'colour:all-red', 100);
     expect(next.status).toBe(422);
     expect(next.body.type).toBe('limit_exceeded');
     await h.db.query('update poker_tables set max_round_loss_minor = 5000000 where id = $1', ['sim-1']);
