@@ -146,6 +146,185 @@
       ]
     },
     {
+      "id": "hand-class",
+      "family": "rank-patterns",
+      "name": "Flop hand",
+      "description": "The best three-card poker hand the flop makes (the app's main prediction grid). Every flop is exactly one of these.",
+      "catalogueRefs": [
+        1,
+        2,
+        3,
+        31,
+        32
+      ],
+      "firstRelease": true,
+      "exhaustive": true,
+      "selections": [
+        {
+          "id": "hand-class:high-card",
+          "label": "High card: no pair, flush or straight",
+          "wins": 16440,
+          "probability": 0.743891,
+          "fairOdds": 1.344282,
+          "prices": {
+            "direct": {
+              "odds": 1.27,
+              "marginBps": 518,
+              "grossEdge": 0.055258,
+              "netEdge": 0.027431
+            },
+            "club": {
+              "odds": 1.23,
+              "marginBps": 806,
+              "grossEdge": 0.085014,
+              "netEdge": 0.027006
+            },
+            "partner": {
+              "odds": 1.26,
+              "marginBps": 560,
+              "grossEdge": 0.062697,
+              "netEdge": 0.028348
+            }
+          }
+        },
+        {
+          "id": "hand-class:pair",
+          "label": "Pair: two of a kind",
+          "wins": 3744,
+          "probability": 0.169412,
+          "fairOdds": 5.902778,
+          "prices": {
+            "direct": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.068235,
+              "netEdge": 0.036515
+            },
+            "club": {
+              "odds": 5.4,
+              "marginBps": 806,
+              "grossEdge": 0.085176,
+              "netEdge": 0.027079
+            },
+            "partner": {
+              "odds": 5.5,
+              "marginBps": 600,
+              "grossEdge": 0.068235,
+              "netEdge": 0.031118
+            }
+          }
+        },
+        {
+          "id": "hand-class:flush",
+          "label": "Flush: three of the same suit, not in sequence",
+          "wins": 1096,
+          "probability": 0.049593,
+          "fairOdds": 20.164234,
+          "prices": {
+            "direct": {
+              "odds": 18.5,
+              "marginBps": 800,
+              "grossEdge": 0.082534,
+              "netEdge": 0.046524
+            },
+            "club": {
+              "odds": 18.5,
+              "marginBps": 806,
+              "grossEdge": 0.082534,
+              "netEdge": 0.02589
+            },
+            "partner": {
+              "odds": 18.5,
+              "marginBps": 800,
+              "grossEdge": 0.082534,
+              "netEdge": 0.038267
+            }
+          }
+        },
+        {
+          "id": "hand-class:straight",
+          "label": "Straight: three in sequence, not all one suit",
+          "wins": 720,
+          "probability": 0.032579,
+          "fairOdds": 30.694444,
+          "prices": {
+            "direct": {
+              "odds": 28,
+              "marginBps": 800,
+              "grossEdge": 0.087783,
+              "netEdge": 0.050198
+            },
+            "club": {
+              "odds": 28,
+              "marginBps": 806,
+              "grossEdge": 0.087783,
+              "netEdge": 0.028252
+            },
+            "partner": {
+              "odds": 28,
+              "marginBps": 800,
+              "grossEdge": 0.087783,
+              "netEdge": 0.040891
+            }
+          }
+        },
+        {
+          "id": "hand-class:trips",
+          "label": "Three of a kind",
+          "wins": 52,
+          "probability": 0.002353,
+          "fairOdds": 425,
+          "prices": {
+            "direct": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.094162
+            },
+            "club": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.056515
+            },
+            "partner": {
+              "odds": 361,
+              "marginBps": 1500,
+              "grossEdge": 0.150588,
+              "netEdge": 0.072294
+            }
+          }
+        },
+        {
+          "id": "hand-class:straight-flush",
+          "label": "Straight flush",
+          "wins": 48,
+          "probability": 0.002172,
+          "fairOdds": 460.416667,
+          "prices": {
+            "direct": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.094288
+            },
+            "club": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.056596
+            },
+            "partner": {
+              "odds": 391,
+              "marginBps": 1500,
+              "grossEdge": 0.150769,
+              "netEdge": 0.072385
+            }
+          }
+        }
+      ]
+    },
+    {
       "id": "paired-board",
       "family": "rank-patterns",
       "name": "Paired board",

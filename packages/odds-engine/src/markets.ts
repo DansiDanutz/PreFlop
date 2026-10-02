@@ -131,6 +131,18 @@ function build(): readonly Market[] {
       ],
     }),
     market({
+      id: 'hand-class', family: 'rank-patterns', name: 'Flop hand', refs: [1, 2, 3, 31, 32], firstRelease: true, exhaustive: true,
+      description: 'The best three-card poker hand the flop makes (the app\'s main prediction grid). Every flop is exactly one of these.',
+      selections: [
+        ['high-card', 'High card: no pair, flush or straight', (f) => f.distinctRanks === 3 && f.distinctSuits > 1 && !isSequence(f)],
+        ['pair', 'Pair: two of a kind', (f) => f.distinctRanks === 2],
+        ['flush', 'Flush: three of the same suit, not in sequence', (f) => f.distinctSuits === 1 && !isSequence(f)],
+        ['straight', 'Straight: three in sequence, not all one suit', (f) => isSequence(f) && f.distinctSuits > 1],
+        ['trips', 'Three of a kind', (f) => f.distinctRanks === 1],
+        ['straight-flush', 'Straight flush', (f) => isSequence(f) && f.distinctSuits === 1],
+      ],
+    }),
+    market({
       id: 'paired-board', family: 'rank-patterns', name: 'Paired board', refs: [1, 2], exhaustive: true,
       description: 'Whether any rank appears at least twice (a pair or trips).',
       selections: [
