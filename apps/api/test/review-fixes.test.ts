@@ -88,6 +88,7 @@ describe('Greptile review of b2c9c1e', () => {
   it('5. the daily loss limit compares stablecoin stakes in EUR cents', async () => {
     const keys = await tx(h.db, (c) => seedSimTable(c, { clubId: 'club-sim', tableId: 'sim-usdt', name: 'USDT table', mode: 'real-crypto', currency: 'USDT' }));
     const t = new SimTable(h.send, keysToFile(keys));
+    expect((await h.api('PUT', '/v1/admin/tables/sim-usdt/real-money', admin, { approved: true })).status).toBe(200);
     await t.heartbeat();
     await h.work();
     const hand = (await t.openHand())!;

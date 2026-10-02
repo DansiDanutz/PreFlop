@@ -27,6 +27,10 @@ export interface TableRow {
   status: 'active' | 'paused' | 'retired';
   pause_reason: string | null;
   max_round_loss_minor: number;
+  max_user_round_payout_minor: number | null;
+  /** Set by the PreFlop team; real-money bets need it (migration 012). */
+  real_money_approved_at: Date | null;
+  real_money_approved_by: string | null;
   certification: Record<string, CertItem>;
   link: Omit<LinkSample, 'heartbeatAgeS'> | null;
   link_at: Date | null;

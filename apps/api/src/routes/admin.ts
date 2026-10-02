@@ -1,4 +1,4 @@
-import { RoundExposure } from '@preflop/odds-engine';
+import { type PlayMode, RoundExposure } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
@@ -8,13 +8,15 @@ import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { REAL_MODES } from '../lib/limits.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
-import { ensureOpenRound, lockRound, voidRound } from '../rounds/service.ts';
+import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
 import { RESERVED_SETTINGS } from './org.ts';
+import { endPartnerSessions } from './partner.ts';
 
 export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...roles: string[]) {
   const u = await ctx.user(req);
@@ -65,9 +67,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const outbox = await one<{ pending: number; oldest_age_s: number | null }>(
       `select count(*)::int as pending, extract(epoch from (now() - min(created_at)))::float8 as oldest_age_s from outbox where done_at is null`);
     const webhooks = await one<{ pending: number; failed: number; oldest_pending_age_s: number | null }>(
-      `select count(*) filter (where status = 'pending')::int as pending, count(*) filter (where status = 'failed')::int as failed,
-              extract(epoch from (now() - min(created_at) filter (where status = 'pending')))::float8 as oldest_pending_age_s
-         from webhook_deliveries where status in ('pending','failed')`);
+      `select count(*) filter (where status in ('pending','sending'))::int as pending, count(*) filter (where status = 'failed')::int as failed,
+              extract(epoch from (now() - min(created_at) filter (where status in ('pending','sending'))))::float8 as oldest_pending_age_s
+         from webhook_deliveries where status in ('pending','sending','failed')`);
     const alerts = await one<{ open: number; critical: number }>(
       `select count(*)::int as open, count(*) filter (where severity = 'critical')::int as critical from alerts where resolved_at is null`);
     const states = (await ctx.db.query<{ state: string; n: number }>('select state, count(*)::int as n from rounds group by state order by state')).rows;
@@ -135,7 +137,30 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     await requirePlatform(ctx, req);
     return evidenceOf(ctx, (req.params as { id: string }).id);
   });
-  /** The PreFlop team may VOID (refund) but never settle by hand: settlement of a review needs the floor manager's signed decision. */
+  /**
+   * Review of a REAL-MONEY round (docs/13 §4): the club running the table may not settle its own
+   * real-money rounds, so admin/ops decide here after viewing the evidence. Same rules as the floor
+   * manager's decision: review deadline first, then one terminal transition from REVIEW. Rounds of
+   * other modes are refused (403 club_review_required): their review stays with the club.
+   */
+  app.post('/v1/admin/rounds/:id/review', async (req, reply) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const decision = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('settle'), cards: z.array(z.string()).length(3) }),
+      z.object({ action: z.literal('void'), reason: z.string().min(3).max(200) }),
+    ]).parse(req.body);
+    const ev = new EventBatch();
+    const out = await tx(ctx.db, async (c) => {
+      const r = await lockRound(c, id);
+      const res = await resolveReviewByPlatform(c, r, u.id, decision, ctx.timing, ev);
+      await ensureOpenRound(c, r.table_id, ev);
+      return res;
+    });
+    publish(ev);
+    return reply.code(out.status).send(out.body);
+  });
+  /** The PreFlop team may VOID (refund) any round; it settles by hand only real-money reviews (above). */
   app.post('/v1/admin/rounds/:id/void', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'risk', 'ops');
     const { id } = req.params as { id: string };
@@ -260,7 +285,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     await tx(ctx.db, async (c) => {
       const r = await c.query('update organizations set status = $2 where id = $1', [id, status]);
       if (!r.rowCount) throw notFound('organization');
-      await audit(c, { type: 'org.status', orgId: id, status, by: u.id });
+      // A suspended partner's players are signed out at once; they cannot sign back in or bet
+      // (403 partner_suspended) until the partner is active again.
+      const ended = status === 'suspended' ? await endPartnerSessions(c, id) : 0;
+      await audit(c, { type: 'org.status', orgId: id, status, partnerSessionsEnded: ended, by: u.id });
     });
     return { ok: true };
   });
@@ -292,8 +320,31 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/admin/tables', async (req) => {
     await requirePlatform(ctx, req);
     const summaries = await tableSummaries(ctx);
-    const raw = new Map((await ctx.db.query('select id, certification, max_round_loss_minor, link, link_at, monitor_hands from poker_tables')).rows.map((r) => [r.id, r]));
+    const raw = new Map((await ctx.db.query(
+      `select id, certification, max_round_loss_minor, max_user_round_payout_minor, link, link_at, monitor_hands, real_money_approved_at, real_money_approved_by
+         from poker_tables`)).rows.map((r) => [r.id, r]));
     return { tables: summaries.map((t) => ({ ...t, ...raw.get(t.id) })) };
+  });
+  /**
+   * Real-money approval of one table (docs/14). A club's own certification is self-attested, so a
+   * real-fiat or real-crypto table takes real-money bets only after the PreFlop team approves it
+   * here. Revoking stops new real-money bets at once (bets take the table row lock); a club change
+   * of mode, currency or certification clears the approval too.
+   */
+  app.put('/v1/admin/tables/:id/real-money', async (req) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const b = z.object({ approved: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
+    return tx(ctx.db, async (c) => {
+      const t = (await c.query<{ mode: PlayMode }>('select mode from poker_tables where id = $1 for update', [id])).rows[0];
+      if (!t) throw notFound('table');
+      if (b.approved && !REAL_MODES.has(t.mode)) throw unprocessable('not_real_money', `table mode is ${t.mode}; only real-money tables need approval`);
+      const r = (await c.query<{ real_money_approved_at: Date | null; real_money_approved_by: string | null }>(
+        `update poker_tables set real_money_approved_at = case when $2 then now() end, real_money_approved_by = case when $2 then $3 end
+          where id = $1 returning real_money_approved_at, real_money_approved_by`, [id, b.approved, u.id])).rows[0]!;
+      await audit(c, { type: b.approved ? 'table.real_money_approved' : 'table.real_money_revoked', tableId: id, mode: t.mode, note: b.note ?? null, by: u.id });
+      return { id, ...r };
+    });
   });
   app.put('/v1/admin/tables/:id/status', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops', 'risk');

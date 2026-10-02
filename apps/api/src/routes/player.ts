@@ -1,10 +1,10 @@
-import { type Channel, payoutMinor } from '@preflop/odds-engine';
+import { type Channel } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { bearer, createSession, endSession, hashPassword, verifyPassword } from '../auth/players.ts';
 import { placeRoomBet } from '../bets/rooms.ts';
-import { placeBet, resetPlay } from '../bets/service.ts';
+import { placeBet, potentialPayoutMinor, resetPlay } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { ApiError, badRequest, conflict } from '../lib/errors.ts';
@@ -163,11 +163,12 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const limit = Math.min(200, Math.max(1, Number(q.limit ?? 50)));
     const rows = (await ctx.db.query(
       `select b.id as bet_id, b.round_id, b.room_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
-              r.hand_no, r.table_id, r.flop, t.name as table_name
+              b.at_risk_minor, b.house_kind, r.hand_no, r.table_id, r.flop, t.name as table_name
          from bets b join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.user_id = $1 and ($2::text is null or b.round_id = $2) and ($3::text is null or b.status = $3)
         order by b.placed_at desc limit $4`, [u.id, q.round_id ?? null, q.status ?? null, limit])).rows;
-    return { bets: rows.map((b) => ({ ...b, potential_payout_minor: payoutMinor(b.stake_minor, b.odds_centi) })) };
+    // Same amount settlement pays (the at-risk stake; a pool share is unknown until settlement: 0).
+    return { bets: rows.map(({ at_risk_minor, ...b }) => ({ ...b, potential_payout_minor: potentialPayoutMinor({ ...b, at_risk_minor }) })) };
   });
 
   app.get('/v1/me/ledger', async (req) => {

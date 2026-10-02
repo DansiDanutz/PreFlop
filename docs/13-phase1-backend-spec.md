@@ -400,6 +400,7 @@ LOCKED substates (procedure_step, enforced; each step is refused unless the prev
 - **REVIEW** is resolved only with a **`floor_manager` credential** belonging to a person who did **not** submit either entry for that round: `resolveReview(roundId, credentialId, settle(cards) | void(reason))`, audited with the person id. The floor manager decides after viewing the **verified** evidence image. In one transaction, under the round lock:
   1. **Review deadline first:** if `clock_timestamp() ≥ review_started_at + review SLA`, the decision is refused with `409 review_expired` and the round is **VOIDed** (refund) in that same transaction. A late decision can never pay.
   2. `settle(cards)` wins the terminal transition with `$expected = 'REVIEW'`, then posts payouts; `void(reason)` wins the void transition from REVIEW, then posts refunds. If no row is returned (the sweeper or another decision got there first), nothing is posted and the caller gets `409 invalid_round_state`.
+- **Real-money rounds are reviewed by PreFlop, not the club.** On a round in `real-fiat` or `real-crypto`, the club's floor manager gets `403 platform_review_required`. PreFlop `admin` or `ops` decide instead with `POST /v1/admin/rounds/:id/review` (same body, same deadline rule, audited as `user:<id>`). On play, chips and diamond rounds the team gets `403 club_review_required` and the floor manager decides as above.
 - **EVIDENCE_REJECTED is always voided, durably.** The transaction that enters EVIDENCE_REJECTED also enqueues `void_round` in `outbox`. The worker runs the void (terminal compare-and-set from EVIDENCE_REJECTED, then refunds); the sweeper re-voids any EVIDENCE_REJECTED round it finds, with no SLA. A crash after the rejection commits but before the refund therefore always ends in VOID with every bet refunded exactly once.
 - **EVIDENCE_REJECTED can never be settled by hand.** `resolveReview` refuses this state. Its only exit is **VOID** with a full refund, made automatically by the system and audited. A missing or mismatched image never reaches this state, because `resolve()` waits for image bytes that match the signed hash.
 - **Void** is allowed from OPEN, LOCKED, DEALT, REVIEW or EVIDENCE_REJECTED, and refunds every accepted bet. It can be requested **only by a `floor_manager` credential** (recorded in `voided_by`) or by the system (sweeper, procedure break, evidence rejection). A dealer cannot void.
@@ -411,19 +412,20 @@ Server timestamps use `clock_timestamp()`, never the client's clock.
 `POST /v1/bets` with an `Idempotency-Key` header.
 
 1. **Replay check:** the same `(user, key)` returns the original bet.
-2. **Validate:** the stake is an integer within limits, and the selection exists.
+2. **Validate:** the stake is an integer within limits, and the selection exists. The maximum stake is per currency (`docs/04` §3); a larger stake gets `422 invalid_stake`.
 3. **Queue per round in the process** with a keyed mutex. This only stops same-process bets from each holding a database connection while they wait; correctness comes from the row lock in step 6, so any number of API processes can take bets.
-4. **Check the round and table:** the round must be `OPEN` (otherwise `409 round_locked`), and `tableReadiness()` must pass (otherwise `409 table_not_ready`).
+4. **Check the round and table:** the round must be `OPEN` (otherwise `409 round_locked`), and `tableReadiness()` must pass (otherwise `409 table_not_ready`). A real-money bet also needs the table's PreFlop approval (`poker_tables.real_money_approved_at`, otherwise `403 table_not_approved`), and a partner's player needs an active partner (otherwise `403 partner_suspended`).
 5. **Check the price:** `price(statsFor(selection), round.channel)`. It must be offered, and must equal the client's `odds_centi` (otherwise `409 price_changed` with the new odds). The payout must be ≤ the maximum payout.
 6. **One database transaction, in the global lock order (§4): round first, then user, table and wallet:**
    1. `select state from rounds where id = $1 for update`, and re-check that it is `OPEN`, because a lock may have landed meanwhile. `FOR UPDATE` serialises the bets of one round **across every API process**, and conflicts with start, void and settlement as before;
-   2. re-check the account and the table (`for share`), and replay the idempotency key under the lock;
-   3. **check exposure** against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. The worst case is computed from the database, under the lock: the round's accepted PreFlop-house bets are summed per selection (stakes, and payouts with the engine's exact per-bet rounding), and the house net is evaluated on all 22,100 flops with the new bet added, exactly as `RoundExposure.lossIfAdded()` does;
-   4. `lockAccount(wallet)`;
-   5. check balance ≥ stake;
-   6. insert the bet;
-   7. post `bet.stake` (wallet → `PreFlop:bankroll`);
-   8. audit.
+   2. re-check the account, its partner, the table and (real money) its approval (`for share`), and replay the idempotency key under the lock;
+   3. **check the player's payouts on this round:** the potential payouts of the player's accepted PreFlop-house bets on the round, plus this one, must not exceed `poker_tables.max_user_round_payout_minor` (null = `max_round_loss_minor`), otherwise `403 user_round_limit`. The round lock serialises every such bet, in every mode, so the sum is exact;
+   4. **check exposure** against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. The worst case is computed from the database, under the lock: the round's accepted PreFlop-house bets are summed per selection (stakes, and payouts with the engine's exact per-bet rounding), and the house net is evaluated on all 22,100 flops with the new bet added, exactly as `RoundExposure.lossIfAdded()` does;
+   5. `lockAccount(wallet)`;
+   6. check balance ≥ stake;
+   7. insert the bet;
+   8. post `bet.stake` (wallet → `PreFlop:bankroll`);
+   9. audit.
 
    A deadlock or serialization failure rolls the whole transaction back and is retried per §4; the idempotency key makes the retry safe.
 7. **After commit** there is no in-memory exposure state to update, so a crash or error after the commit cannot make a later check under-count accepted bets.
@@ -475,9 +477,9 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
   3. the signature verifies;
   4. `insert into request_nonces (credential_id, nonce)` succeeds, meaning the nonce has never been used.
 
-  A reused nonce gets `401 replayed_request`. Nonces older than 5 minutes are pruned, which is safe because a request older than 30 s is refused anyway.
+  A reused nonce gets `401 replayed_request`. The worker prunes nonces older than 10 minutes once a minute, in batches. This is safe because a request older than 30 s is refused anyway.
 - **Legitimate retries** (for example after a timeout) use a **new nonce** with the **same `Idempotency-Key`**. The server returns the stored response for that key, so a retry is never mistaken for a replay and never runs twice. **Every write route requires an `Idempotency-Key`.** For bets the key lives on `bets`; for every other write (start, shuffle-complete, cut, deal-start, entries, void, review, admin writes) the response is stored in `idempotency_responses` **in the same transaction as the effect** and returned verbatim on retry. The same key with a different request body or route gets `422 idempotency_mismatch`. The capture route also has its own `(device_id, seq, signature)` replay rule (§4).
-- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`, `capture_conflict`, `replayed_request`, `forbidden_role`, `invalid_procedure_step`, `review_expired`, `idempotency_mismatch`, `retry_later`.
+- **Errors:** `application/problem+json` with stable `type` codes: `round_locked`, `price_changed`, `limit_exceeded`, `insufficient_funds`, `table_not_ready`, `invalid_round_state`, `invalid_flop`, `unknown_device`, `evidence_rejected`, `capture_conflict`, `replayed_request`, `forbidden_role`, `invalid_procedure_step`, `review_expired`, `idempotency_mismatch`, `retry_later`, `table_not_approved`, `platform_review_required`, `club_review_required`, `partner_suspended`, `user_round_limit`.
 
 ## 8. Acceptance criteria
 

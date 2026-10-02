@@ -99,7 +99,8 @@ describe('exposure cap across API instances', () => {
     const book = (await call(a.url, 'GET', '/v1/book')).body.markets.flatMap((m: any) => m.selections).filter((s: any) => s.offered);
     const picks = ['colour:all-red', 'colour:all-black', 'hand-class:pair', 'colour:mixed'].map((id) => book.find((s: any) => s.id === id)).filter(Boolean);
     const cap = 4_000;
-    await h.db.query('update poker_tables set max_round_loss_minor = $2 where id = $1', ['sim-1', cap]);
+    // Each player places three bets; lift the per-player payout cap (docs/04 §3) so only the round's exposure limits them.
+    await h.db.query('update poker_tables set max_round_loss_minor = $2, max_user_round_payout_minor = 1000000 where id = $1', ['sim-1', cap]);
     await h.sim.heartbeat();
     await h.work();
     const n = await h.sim.openHand();
@@ -114,7 +115,7 @@ describe('exposure cap across API instances', () => {
     for (const x of (await h.db.query(`select selection_id, stake_minor, odds_centi from bets where round_id = $1 and status = 'accepted'`, [rid])).rows)
       ex.tryAdd(statsFor(getSelection(x.selection_id)), x.stake_minor, x.odds_centi);
     expect(ex.worstCase().lossMinor).toBeLessThanOrEqual(cap);
-    await h.db.query('update poker_tables set max_round_loss_minor = 5000000 where id = $1', ['sim-1']);
+    await h.db.query('update poker_tables set max_round_loss_minor = 5000000, max_user_round_payout_minor = null where id = $1', ['sim-1']);
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'cleanup' });
   });
 });

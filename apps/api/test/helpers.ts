@@ -12,6 +12,9 @@ export const BASE_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@lo
 /** Prefix of the per-file test databases; set TEST_DB_PREFIX to run several checkouts against one server. */
 export const testDbName = (name: string) => `${process.env.TEST_DB_PREFIX ?? 'preflop_test'}_${name}`;
 
+/** Database name of a test file. TEST_DB_PREFIX keeps parallel runs (several checkouts, one server) apart. */
+export const testDbName = (name: string) => `${process.env.TEST_DB_PREFIX ?? 'preflop_test'}_${name}`;
+
 /** A fresh, migrated database per test file. */
 export async function freshDb(name: string): Promise<Db> {
   const admin = new pg.Client({ connectionString: BASE_URL });

@@ -71,10 +71,10 @@ describe('authorization review', () => {
     const client = (await h.api('POST', `/v1/org/${id}/api-clients`, owner.token, { name: 'c' })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
     const auth = { authorization: `Bearer ${tok}` };
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1_000_000 }, auth)).body.type).toBe('insufficient_treasury');
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1_000_000 }, { ...auth, 'idempotency-key': 'dep-key-0001' })).body.type).toBe('insufficient_treasury');
     expect((await h.api('POST', `/v1/org/${id}/chips/purchases`, owner.token, { chips: 500, pay_with: 'EUR' })).status).toBe(201);
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 500 }, auth)).status).toBe(201);
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1 }, auth)).body.type).toBe('insufficient_treasury');
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 500 }, { ...auth, 'idempotency-key': 'dep-key-0002' })).status).toBe(201);
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1 }, { ...auth, 'idempotency-key': 'dep-key-0003' })).body.type).toBe('insufficient_treasury');
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
   });
 
