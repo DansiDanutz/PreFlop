@@ -1,0 +1,19 @@
+{
+  "name": "PreFlop: predict the flop",
+  "short_name": "PreFlop",
+  "description": "Predict the next 3-card flop at live poker tables. Exact odds over all 22,100 flops.",
+  "id": "/app",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1311",
+  "theme_color": "#0e1311",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" },
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ]
+}
