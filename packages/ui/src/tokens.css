@@ -1,0 +1,76 @@
+/*
+ * PreFlop design tokens — taken from the Codex mobile concepts ("Mobile concept 01",
+ * "Clubs & tables", "Your favorite bets"): near-black surfaces, emerald accent, felt green,
+ * serif wordmark and headings, rounded cards with hairline borders.
+ * Import AFTER `@import "tailwindcss";` so the theme variables become utilities
+ * (bg-surface, text-muted, border-line, text-accent, font-serif, …).
+ */
+@theme {
+  --color-bg: #08090a;
+  --color-surface: #121514;
+  --color-surface-2: #181c1a;
+  --color-surface-3: #202523;
+  --color-line: #2a302d;
+  --color-line-strong: #3a423e;
+  --color-ink: #f3f5f4;
+  --color-muted: #9aa4a0;
+  --color-faint: #6b7571;
+  --color-accent: #1fd38b;
+  --color-accent-strong: #2cf0a0;
+  --color-accent-ink: #03130b;
+  --color-accent-soft: rgba(31, 211, 139, 0.12);
+  --color-felt: #0f3b2b;
+  --color-felt-2: #165a40;
+  --color-card: #fbfaf6;
+  --color-card-red: #d0312d;
+  --color-card-black: #121212;
+  --color-info: #3b82f6;
+  --color-warn: #f5a524;
+  --color-danger: #ef4444;
+  --color-live: #ff3b30;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "DM Serif Display", "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-card: 18px;
+  --radius-tile: 14px;
+  --radius-pill: 999px;
+  --shadow-glow: 0 0 0 1px rgba(31, 211, 139, 0.55), 0 8px 30px rgba(31, 211, 139, 0.12);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.felt {
+  background:
+    radial-gradient(120% 90% at 50% 20%, var(--color-felt-2) 0%, var(--color-felt) 45%, #071a13 100%);
+}
+
+.card-back-pattern {
+  background-color: #145a3f;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,0.10) 0 2px, transparent 2px 9px),
+    radial-gradient(circle at 50% 50%, #1d7a55 0 30%, #0f4a33 70%);
+}
+
+@keyframes pf-flip {
+  from { transform: rotateY(90deg); }
+  to { transform: rotateY(0deg); }
+}
+.pf-flip { animation: pf-flip 380ms ease-out both; }
+
+@keyframes pf-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pf-pulse { animation: pf-pulse 1.4s ease-in-out infinite; }
