@@ -83,6 +83,8 @@ Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database pl
 | [`docs/13`](docs/13-phase1-backend-spec.md) | Core backend spec (implemented in `apps/api`) |
 | [`docs/14`](docs/14-platform-api.md) | **Platform API reference** as built, and the money flows |
 | [`docs/15`](docs/15-app-design.md) | App design taken from Codex's mobile concepts |
+| [`docs/16`](docs/16-leaderboards-promotions-agents.md) · [`17`](docs/17-tournaments.md) | Leaderboards, prize pools, promotions and agents; tournaments |
+| [`docs/18`](docs/18-staging.md) | **Staging environment** (Vercel + Fly.io + Neon): setup, deploys, operations |
 | [`docs/screens/`](docs/screens) | Screenshots of the web app, console and club tablet |
 | [`docs/odds-book.md`](docs/odds-book.md) · [`docs/profitability.md`](docs/profitability.md) | The generated odds book and P&L for each participant |
 

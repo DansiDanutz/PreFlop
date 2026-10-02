@@ -1,0 +1,36 @@
+# Staging API (+ in-process worker) on Fly.io — docs/18-staging.md.
+# Deploy from the repo root: flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only
+app = "preflop-staging-api"
+primary_region = "fra"
+
+[build]
+  build-target = "api"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4000"
+  TRUST_PROXY = "true"
+  RUN_WORKER = "true"
+  LOG = "1"
+  CORS_ORIGINS = "https://preflop-staging-web.vercel.app,https://preflop-staging-console.vercel.app,https://preflop-staging-table.vercel.app"
+  # Secrets (fly secrets set): DATABASE_URL — Neon *direct* endpoint with ?sslmode=verify-full
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  # The worker (settlement sweeps, leaderboards, tournaments) and WebSockets must stay up.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/v1/health/ready"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

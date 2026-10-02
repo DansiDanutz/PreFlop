@@ -34,6 +34,17 @@ describe('validated config', () => {
     expect(() => loadConfig({ PORT: 'x' })).toThrow(/invalid configuration \(NODE_ENV=development\):\n {2}- PORT/);
   });
 
+  it('production requires TLS to a remote database and accepts a managed 16-character password', () => {
+    const neon = (q: string) => ({ ...PROD, DATABASE_URL: `postgres://neondb_owner:npg_A1b2C3d4E5f6@ep-cool-1.eu-central-1.aws.neon.tech/neondb${q}` });
+    expect(problemsOf(neon('?sslmode=verify-full'))).toEqual([]);
+    expect(problemsOf(neon(''))).toEqual([expect.stringMatching(/without TLS/)]);
+    expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://preflop:shortpw1@ep-x.neon.tech/db?sslmode=verify-full' })[0]).toMatch(/at least 16/);
+    // Private hosts (Docker, Fly private network) need no TLS.
+    for (const host of ['postgres', 'db.internal', 'preflop-db.flycast', 'localhost']) {
+      expect(problemsOf({ ...PROD, DATABASE_URL: `postgres://preflop:${'k'.repeat(20)}Q7@${host}:5432/preflop` })).toEqual([]);
+    }
+  });
+
   it('a safe production environment starts', () => {
     expect(problemsOf(PROD)).toEqual([]);
     expect(loadConfig(PROD).nodeEnv).toBe('production');
@@ -50,7 +61,7 @@ describe('validated config', () => {
   it('production refuses demo or short secrets', () => {
     expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://postgres:postgres@db:5432/preflop' })).toEqual([expect.stringMatching(/DATABASE_URL password is a known demo\/default value/)]);
     expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://u:changeme-please-0123456789012345678901@db/preflop' })).toEqual([expect.stringMatching(/known demo/)]);
-    expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://u:Short-But-Random-9@db/preflop' })).toEqual([expect.stringMatching(/DATABASE_URL password is 18 characters; secrets must be at least 32/)]);
+    expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://u:Rnd-9xQ2zL7@db/preflop' })).toEqual([expect.stringMatching(/DATABASE_URL password is 11 characters; it must be at least 16/)]);
     // no password (peer / IAM auth) is not a secret to check
     expect(problemsOf({ ...PROD, DATABASE_URL: 'postgres://preflop@db.internal/preflop' })).toEqual([]);
     const { DATABASE_URL: _, ...noDb } = PROD;
