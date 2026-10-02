@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import { type PlayMode } from '@preflop/odds-engine';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, LogController } from 'fastify';
 import { ZodError } from 'zod';
 import { type SessionUser, bearer, userFromToken } from './auth/players.ts';
 import type { Config } from './config.ts';
@@ -53,7 +53,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     bodyLimit: 12 * 1024 * 1024,
     // Every request carries an id: the caller's X-Request-Id when it is sane, otherwise a new
     // UUID. It is in every log line (request_id) and echoed back in the X-Request-Id header.
-    requestIdLogLabel: 'request_id',
+    logController: new LogController({ requestIdLogLabel: 'request_id' }),
     genReqId: (req) => {
       const h = req.headers['x-request-id'];
       return typeof h === 'string' && REQUEST_ID.test(h) ? h : randomUUID();
