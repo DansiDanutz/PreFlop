@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { TopBar } from '../components/AppShell.tsx';
+import { RealityCheck } from '../components/PlaySession.tsx';
 import { TableScreen } from '../components/table/TableScreen.tsx';
 import { Notice } from '../components/ui.tsx';
 import { setToken } from '../lib/api.ts';
@@ -32,6 +33,7 @@ export function EmbedTablePage() {
       <TopBar embed />
       {!token && <div className="px-5 pb-4"><Notice tone="warn">Sign-in required: this widget needs a player token from the partner site.</Notice></div>}
       <TableScreen key={id} tableId={id} embed />
+      {token && <RealityCheck embed />}
     </div>
   );
 }
