@@ -32,6 +32,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@preflop/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.5

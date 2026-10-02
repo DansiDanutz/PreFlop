@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
-import * as S from '../../../packages/client/src/schemas.ts';
+import * as S from '@preflop/client/schemas';
 import { buildApp, redactUrl } from '../src/app.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
