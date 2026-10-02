@@ -145,7 +145,7 @@ describe('pool room in virtual chips', () => {
     const black = out.cards.every((c) => c.endsWith('s') || c.endsWith('c'));
     // each stake 500: rake 50, PreFlop fee 7 (1.5%) → 443 in the pool each, 886 total
     const wa = await wallet(a.token, 'virtual-chips', orgId), wb = await wallet(b.token, 'virtual-chips', orgId);
-    if (black) expect([wa, wb]).toEqual([1000, 1000]); // nobody backed the winner: full refund
+    if (black) expect([wa, wb]).toEqual([1000, 1000]); // nobody backed the winner: full refund, including rake and fee
     else if (red) expect([wa, wb]).toEqual([500, 500 + 886]);
     else expect([wa, wb]).toEqual([500 + 886, 500]);
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);

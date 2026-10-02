@@ -460,13 +460,21 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
     const winning = new Set(pb.filter((b) => getSelection(b.selection_id).wins(flop)).map((b) => b.selection_id));
     const res = settleParimutuel(pb.map((b) => ({ betId: b.id, selectionId: b.selection_id, stakeMinor: b.at_risk_minor ?? b.stake_minor })), winning, 0);
     for (const b of pb) {
-      const pay = res.payouts.get(b.id) ?? 0;
       staked += b.stake_minor;
+      if (res.refunded) {
+        // Nobody backed the winning outcome: every stake is refunded IN FULL and no fee or rake
+        // is kept (engine rule) — reverse the whole placement, not just the pooled part.
+        await reverse(c, 'bet.stake', b.id, 'bet.refund');
+        paid += b.stake_minor;
+        await record(b, 'void', b.stake_minor);
+        continue;
+      }
+      const pay = res.payouts.get(b.id) ?? 0;
       if (pay > 0) {
-        await post(c, res.refunded ? 'bet.refund' : 'bet.payout', b.id, [{ from: poolAccount(roomId, b.mode, b.currency), to: walletOf(b), amountMinor: pay }]);
+        await post(c, 'bet.payout', b.id, [{ from: poolAccount(roomId, b.mode, b.currency), to: walletOf(b), amountMinor: pay }]);
         paid += pay;
       }
-      await record(b, res.refunded ? 'void' : pay > 0 ? 'won' : 'lost', pay);
+      await record(b, pay > 0 ? 'won' : 'lost', pay);
     }
   }
   await audit(c, { type: 'round.settled', roundId: r.id, cards, by, bets: bets.length, stakedMinor: staked, paidMinor: paid });
