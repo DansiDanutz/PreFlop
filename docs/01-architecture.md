@@ -37,6 +37,14 @@ pricing, settlement and exposure core that every service below reuses.
 
 Contest scoring (recommended): each participant gets a points stack, places points on markets each round, and a win pays points × **fair odds** (no margin, since nobody plays against the house). The final standings decide the prize schedule from P. This settles each flop's bets immediately (in points) while prizes depend on the whole event, which answers the plan's open question in §6.
 
+### Play modes and house models
+
+Every room runs in one **play mode** and one **house model**:
+- **Modes** (`docs/08`): real money in fiat, real money in crypto (USDT/USDC), play money, virtual chips, diamonds. Each mode is a separate currency with its own ledger accounts.
+- **House models** (`docs/10`): PreFlop is the house; an organizer is the house, paying from on-platform collateral; or there is no house (pool or contest).
+
+So exposure is tracked per round, house and mode, and every bet records its `mode` and `house_id`. Revenue shares are computed dynamically for each period (`docs/09`).
+
 ## 4. Round lifecycle (authoritative state machine)
 
 ```

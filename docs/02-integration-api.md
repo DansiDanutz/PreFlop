@@ -86,7 +86,23 @@ POST /v1/pools/{roundId}/entries   (parimutuel)
 PUT  /v1/me/limits (deposit / loss / session) · POST /v1/me/self-exclusion
 ```
 
-## 4. Versioning and SDKs
+## 4. Modes, houses, diamonds and chips
+
+```
+GET  /v1/modes                                     # enabled play modes per territory
+POST /v1/organizers/{id}/collateral/deposits       # organizer-as-house: fund collateral per mode
+GET  /v1/organizers/{id}/collateral                # balance, reserved (open rounds' worst case), available
+PUT  /v1/organizers/{id}/rules                     # rake %, min stake, rake shares — validated against global rules
+GET  /v1/diamonds/packs · POST /v1/diamonds/purchases {diamonds, pay_with: "EUR"|"USDT"|"USDC"}
+POST /v1/diamonds/transfers · POST /v1/chips/transfers   # club / organizer → player, online
+POST /v1/me/play/reset                             # player resets play money at any time
+GET  /v1/organizers/{id}/dilution?period=YYYY-MM   # diamonds bought, sunk, rake, house net, bets until empty
+GET  /v1/partners/me/statements?period=YYYY-MM     # dynamic shares: metrics, tier, rate, base, amount
+```
+
+Every bet and round carries `mode` and `house_id`. A diamond bet also returns its split: `preflop_fee`, `rake`, `rake_shares`, `at_risk`.
+
+## 5. Versioning and SDKs
 
 - Breaking changes go into `/v2`. Within a version, fields are only ever added.
 - Book versions are immutable. A bet records the `book_version` and `odds_centi` it was accepted at.

@@ -14,6 +14,10 @@ This repository holds the platform's design and its mathematical core:
 | [`docs/05-fees-pools-tournaments.md`](docs/05-fees-pools-tournaments.md) | P = B − F, Models A–D, parimutuel pools, tournament scoring |
 | [`docs/06-roadmap-and-decisions.md`](docs/06-roadmap-and-decisions.md) | Open decisions with recommendations; delivery phases |
 | [`docs/07-unit-economics.md`](docs/07-unit-economics.md) | Net expected-value model: costs, required margins, break-even |
+| [`docs/08-play-modes-and-currencies.md`](docs/08-play-modes-and-currencies.md) | Real fiat, real crypto (USDT/USDC), play money, virtual chips, diamonds |
+| [`docs/09-dynamic-revenue-sharing.md`](docs/09-dynamic-revenue-sharing.md) | Shares that grow with hands, players, turnover and pools created, capped to protect profit |
+| [`docs/10-who-pays-the-winnings.md`](docs/10-who-pays-the-winnings.md) | PreFlop house, organizer house (collateral), or pool |
+| [`docs/profitability.md`](docs/profitability.md) | **Generated** monthly P&L for every participant in 8 scenarios |
 | [`docs/odds-book.md`](docs/odds-book.md) | **Generated** odds book: every selection, its exact probability, odds and net EV |
 
 ## Odds engine (`packages/odds-engine`)
@@ -25,12 +29,16 @@ A TypeScript library with no runtime dependencies. It covers:
 - **Exposure.** It computes the house's worst-case loss over every possible flop for a round, and rejects bets that breach the limit.
 - **Settlement.** The same predicate that prices a selection also settles it. Payouts are integers in minor units.
 - **Fees and pools.** It implements P = B − F, role merging and exact largest-remainder splits, and parimutuel pools.
+- **Dynamic sharing.** Tier ladders by hands dealt, players, turnover and pools created, with a guardrail that keeps PreFlop's net EV on target.
+- **Modes and houses.** Five play modes, and ledger postings that show who pays the winnings. Organizer collateral covers the worst case for every open round.
+- **Diamonds.** The per-bet split (fixed PreFlop fee + rake + at-risk amount), pack pricing and the dilution tracker.
+- **Profitability.** Scenario P&L for PreFlop, clubs, organizers, partners and players.
 
 ```bash
 pnpm install
-pnpm test        # 50 tests: combinatorics, house-edge and net-EV invariants, exposure, settlement, fees
+pnpm test        # 84 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios
 pnpm typecheck
-pnpm book        # regenerate docs/odds-book.md and docs/odds-book.json after changing markets or costs
+pnpm book        # regenerate docs/odds-book.{md,json} and docs/profitability.md
 ```
 
 To change commercial assumptions, edit `packages/odds-engine/src/costModel.ts`, which holds the net target, revenue shares and costs. Then run `pnpm book`. The tests fail if any offered price would drop below the net target, or if the committed odds book is out of date.

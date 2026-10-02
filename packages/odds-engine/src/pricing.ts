@@ -83,13 +83,20 @@ export function price(stats: SelectionStats, channel: Channel = 'direct', model:
   if (fairOdds > MAX_FAIR_ODDS) return reject(`fair odds ${fairOdds.toFixed(0)} above cap ${MAX_FAIR_ODDS}`);
   if (marginBps >= 10000) return reject('costs exceed any achievable margin');
 
-  // Largest odds (hundredths) with oddsCenti * wins / 100 / N <= (10000 − marginBps) / 10000.
-  const maxCenti = Math.floor(((10000 - marginBps) * FLOP_COUNT) / (wins * 100));
-  const oddsCenti = floorToTick(maxCenti);
+  const oddsCenti = oddsForMargin(wins, marginBps);
   if (oddsCenti < MIN_ODDS_CENTI) return reject(`odds below minimum ${MIN_ODDS_CENTI / 100}`);
 
   const grossEdge = 1 - (oddsCenti * wins) / (100 * FLOP_COUNT);
   return { ...base, offered: true, oddsCenti, odds: oddsCenti / 100, grossEdge, netEdge: netEdge(grossEdge, ch) };
+}
+
+/**
+ * Largest ladder odds (hundredths) with oddsCenti · wins / 100 / N ≤ (10000 − marginBps) / 10000.
+ * Shared by PreFlop's book and by organizer-run books with their own margin.
+ */
+export function oddsForMargin(wins: number, marginBps: number): number {
+  if (!(wins > 0) || marginBps < 0 || marginBps >= 10000) throw new RangeError('invalid wins or margin');
+  return floorToTick(Math.floor(((10000 - marginBps) * FLOP_COUNT) / (wins * 100)));
 }
 
 /** Exact integer check of the house-edge invariant: p · odds ≤ 1 − margin. */
