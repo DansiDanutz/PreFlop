@@ -8,6 +8,7 @@ import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { newId } from '../lib/ids.ts';
+import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertPositive, buyChips, deposit, withdraw } from '../payments/sandbox.ts';
 
 const SELECTION_IDS = new Set(SELECTIONS.map((s) => s.id));
@@ -62,6 +63,16 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const { id } = req.params as { id: string };
     const r = (await ctx.db.query(`${roomSelect} where r.id = $1`, [id])).rows[0];
     if (!r) throw notFound('room');
+    if (r.visibility === 'invite') {
+      // Invite-only rooms are visible to their members, the organization's portal members and the PreFlop team.
+      let allowed = false;
+      try {
+        const u = await ctx.user(req);
+        allowed = u.platform_role !== null
+          || !!(await ctx.db.query('select 1 from room_members where room_id = $1 and user_id = $2 union all select 1 from memberships where org_id = $3 and user_id = $2', [id, u.id, r.org_id])).rowCount;
+      } catch { allowed = false; }
+      if (!allowed) throw notFound('room');
+    }
     // per-selection odds for this room's book
     const odds = Object.fromEntries(SELECTIONS.map((s) => [s.id, roomOdds(r as never, statsOf(s.id).wins)]));
     return { ...roomView(r), odds };
@@ -89,6 +100,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- responsible gaming
   app.get('/v1/me/limits', async (req) => {
     const u = await ctx.user(req);
+    await applyDueLimits(ctx.db, u.id);
     const l = (await ctx.db.query('select deposit_day_minor, loss_day_minor, session_minutes, pending, pending_effective_at from rg_limits where user_id = $1', [u.id])).rows[0];
     return l ?? { deposit_day_minor: null, loss_day_minor: null, session_minutes: null };
   });
@@ -98,6 +110,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const want = Limits.parse(req.body);
     return tx(ctx.db, async (c) => {
       await c.query('insert into rg_limits (user_id) values ($1) on conflict do nothing', [u.id]);
+      await applyDueLimits(c, u.id);
       const cur = (await c.query<Record<string, number | null>>('select deposit_day_minor, loss_day_minor, session_minutes from rg_limits where user_id = $1 for update', [u.id])).rows[0]!;
       const now: Record<string, number | null> = {};
       const later: Record<string, number | null> = {};
@@ -155,13 +168,17 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
     const out = await tx(ctx.db, async (c) => {
+      // Serialise this user's deposits: the daily total and the new payment are read and written
+      // under the user row lock, so concurrent deposits cannot both pass the limit.
+      await c.query('select id from users where id = $1 for update', [u.id]);
+      await applyDueLimits(c, u.id);
       const l = (await c.query<{ deposit_day_minor: number | null }>('select deposit_day_minor from rg_limits where user_id = $1', [u.id])).rows[0];
       if (l?.deposit_day_minor != null) {
         // Limits are in EUR cents; stablecoins (6 decimals) count 1:1 with EUR, so 10,000 micro-units = 1 cent.
         const today = Number((await c.query<{ n: number }>(
           `select coalesce(sum(case when currency = 'EUR' then amount_minor else amount_minor / 10000 end), 0)::bigint as n
              from payments where user_id = $1 and kind = 'deposit' and status = 'completed' and created_at > now() - interval '24 hours'`, [u.id])).rows[0]!.n);
-        const cents = b.currency === 'EUR' ? b.amount_minor : Math.ceil(b.amount_minor / 10_000);
+        const cents = toEurCents(b.currency, b.amount_minor);
         if (today + cents > l.deposit_day_minor) throw new ApiError(403, 'limit_reached', 'your daily deposit limit would be exceeded');
       }
       return deposit(c, u.id, b.mode, b.currency, b.amount_minor, b.method);

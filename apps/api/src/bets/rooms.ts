@@ -75,7 +75,11 @@ export function validateRoomRules(mode: PlayMode, house: 'organizer' | 'pool', r
     // At-risk part plays at the room margin; the 1 ◆ fee is paid by the player, not the house.
     organizer_ev = (r.margin_bps / 10000) * (1 - (r.provider_share_bps ?? 0) / 10000);
     fee_rate_bound = 0;
+    if (organizer_ev * 10000 < GLOBAL_RULES.organizerMinEvBps)
+      problems.push(`organizer EV ${(organizer_ev * 100).toFixed(2)}% is below the required ${(GLOBAL_RULES.organizerMinEvBps / 100).toFixed(2)}% — lower the provider share or raise the margin`);
   }
+  if (r.provider_share_bps !== undefined && (!Number.isInteger(r.provider_share_bps) || r.provider_share_bps < 0 || r.provider_share_bps > 10000))
+    problems.push('provider share must be 0–10000 bps');
   return { ok: problems.length === 0, problems, ...(organizer_ev !== undefined ? { organizer_ev } : {}), ...(fee_rate_bound !== undefined ? { fee_rate_bound } : {}) };
 }
 
@@ -129,6 +133,10 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
   const room = (await db.query<RoomRow>('select * from rooms where id = $1', [i.roomId])).rows[0];
   if (!room) throw notFound('room');
   if (room.status !== 'active') throw conflict('room_closed', `room is ${room.status}`);
+  // Rules are re-validated on every bet, so a room created under older rules can never take a bet
+  // that breaks the current global floors.
+  const valid = validateRoomRules(room.mode, room.house, room.rules);
+  if (!valid.ok) throw conflict('room_rules_invalid', `room rules no longer pass the global rules: ${valid.problems.join('; ')}`);
   const org = (await db.query<{ status: string }>('select status from organizations where id = $1', [room.org_id])).rows[0];
   if (org?.status !== 'active') throw conflict('room_closed', 'organizer is not active');
   if (room.visibility === 'invite') {

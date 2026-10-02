@@ -11,6 +11,7 @@ let h: Harness;
 let admin: string;
 let stopFanout: () => void;
 beforeAll(async () => {
+  process.env.WEBHOOK_ALLOW_PRIVATE = 'true'; // the test webhook receiver listens on 127.0.0.1
   h = await harness('platform');
   await tx(h.db, (c) => seedAdmin(c, 'admin@test.dev', 'admin-pass-1'));
   admin = (await h.api('POST', '/v1/auth/login', undefined, { email: 'admin@test.dev', password: 'admin-pass-1' })).body.token;
@@ -77,7 +78,7 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
   it('a diamond bet splits exactly into PreFlop fee + rake + at-risk, and settles from the collateral', async () => {
     const n = await open();
     const rid = `sim-1:h${n}`;
-    const roomInfo = (await h.api('GET', `/v1/rooms/${roomId}`)).body;
+    const roomInfo = (await h.api('GET', `/v1/rooms/${roomId}`, owner.token)).body;
     const odds = roomInfo.odds['hand-class:pair'];
     // invite-only: must join first
     const denied = await h.api('POST', '/v1/bets', player.token, { round_id: rid, selection_id: 'hand-class:pair', stake_minor: 100, odds_centi: odds, room_id: roomId }, { 'idempotency-key': 'room-bet-0001' });
@@ -103,7 +104,7 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
   it('the collateral must cover the worst-case outgo of every open round', async () => {
     const n = await open();
     const rid = `sim-1:h${n}`;
-    const odds = (await h.api('GET', `/v1/rooms/${roomId}`)).body.odds['hand-class:straight-flush'];
+    const odds = (await h.api('GET', `/v1/rooms/${roomId}`, owner.token)).body.odds['hand-class:straight-flush'];
     // 6,000 collateral (+/- the last result) cannot pay a ~390x straight flush on 900 at risk
     const r = await h.api('POST', '/v1/bets', player.token, { round_id: rid, selection_id: 'hand-class:straight-flush', stake_minor: 900, odds_centi: odds, room_id: roomId }, { 'idempotency-key': 'room-bet-0003' });
     expect(r.status).toBe(422);
@@ -114,7 +115,7 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
     const n = await open();
     const rid = `sim-1:h${n}`;
     const before = await wallet(player.token, 'diamonds', orgId);
-    const odds = (await h.api('GET', `/v1/rooms/${roomId}`)).body.odds['colour:mixed'];
+    const odds = (await h.api('GET', `/v1/rooms/${roomId}`, owner.token)).body.odds['colour:mixed'];
     expect((await h.api('POST', '/v1/bets', player.token, { round_id: rid, selection_id: 'colour:mixed', stake_minor: 40, odds_centi: odds, room_id: roomId }, { 'idempotency-key': 'room-bet-0004' })).status).toBe(201);
     expect(await wallet(player.token, 'diamonds', orgId)).toBe(before - 40);
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'test' });

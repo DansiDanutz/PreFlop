@@ -10,6 +10,7 @@ import { type Db, tx } from '../lib/db.ts';
 import { badRequest, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { type DomainEvent, EventBatch, bus, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { assertPublicUrl } from '../lib/safeUrl.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
 
@@ -45,9 +46,12 @@ async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: s
   const id = newId('u');
   // Partner players never log in with a password: they get sessions from their operator.
   const hash = await hashPassword(randomBytes(24).toString('base64url'));
+  // The placeholder email is derived from a hash of (org, ref), so distinct refs never collide.
+  const email = `p_${sha(`${orgId}\u0000${ref}`).slice(0, 32)}@${orgId}.partner.preflop`;
   await tx(db, async (c) => {
-    await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref) values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
-      [id, `${ref.replace(/[^a-zA-Z0-9._-]/g, '_')}@${orgId}.partner.preflop`, hash, displayName ?? ref, orgId, ref]);
+    const created = await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref) values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
+      [id, email, hash, displayName ?? ref, orgId, ref]);
+    if (created.rowCount !== 1) return; // a concurrent request created this player: no second grant
     await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: 10_000 }]);
     await audit(c, { type: 'partner.player', userId: id, orgId, ref });
   });
@@ -96,7 +100,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/webhooks`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
     const b = z.object({ url: z.string().url().max(500), events: z.array(z.enum(WEBHOOK_EVENTS)).min(1) }).parse(req.body);
-    if (!/^https?:\/\//.test(b.url)) throw unprocessable('invalid_url', 'http(s) URLs only');
+    await assertPublicUrl(b.url);
     const id = newId('wh');
     const secret = `whsec_${randomBytes(24).toString('base64url')}`;
     await tx(ctx.db, async (c) => {
@@ -246,8 +250,11 @@ export async function deliverDue(db: Db, limit = 20): Promise<number> {
     const body = JSON.stringify(d.payload);
     let error: string | null = null;
     try {
-      const res = await fetch(d.url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-preflop-signature': signWebhook(d.secret, body) }, body, signal: AbortSignal.timeout(5000) });
-      if (!res.ok) error = `HTTP ${res.status}`;
+      // Re-checked at delivery (DNS can change after registration); redirects are never followed.
+      await assertPublicUrl(d.url);
+      const res = await fetch(d.url, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', 'x-preflop-signature': signWebhook(d.secret, body) }, body, signal: AbortSignal.timeout(5000) });
+      if (res.status >= 300 && res.status < 400) error = `redirect refused (HTTP ${res.status})`;
+      else if (!res.ok) error = `HTTP ${res.status}`;
     } catch (e) {
       error = (e as Error).message;
     }

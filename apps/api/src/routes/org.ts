@@ -34,6 +34,7 @@ export async function requireOrg(ctx: AppContext, req: FastifyRequest, orgId: st
   return { user: u, org, role: m?.role ?? `platform:${u.platform_role}` };
 }
 
+const RESERVED_SETTINGS = new Set(['owner_email', 'application_id', 'demo', 'widget']);
 const PER_SHIFT = new Set(['shufflerSealsVerifiedThisShift', 'boardCameraCalibrated', 'privacyMasksVerified']);
 
 const RoomBody = z.object({
@@ -81,6 +82,9 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.put(`${P}`, async (req) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { write: true });
     const b = z.object({ name: z.string().min(2).max(120).optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
+    // Ownership and provenance keys are set only by the PreFlop team (admin org creation / applications).
+    const reserved = Object.keys(b.settings ?? {}).filter((k) => RESERVED_SETTINGS.has(k));
+    if (reserved.length) throw forbidden('reserved_setting', `these settings cannot be changed here: ${reserved.join(', ')}`);
     await tx(ctx.db, async (c) => {
       if (b.name) await c.query('update organizations set name = $2 where id = $1', [org.id, b.name]);
       if (b.settings) await c.query('update organizations set settings = settings || $2::jsonb where id = $1', [org.id, JSON.stringify(b.settings)]);
