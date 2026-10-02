@@ -9,9 +9,11 @@ import { SimTable, type Send, keysToFile } from '../src/sim/tableSim.ts';
 import { runOutboxOnce, sweepOnce } from '../src/worker.ts';
 
 export const BASE_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5432/postgres';
+/** Database name prefix, so parallel checkouts can share one Postgres (TEST_DB_PREFIX=agent_x). */
+export const DB_PREFIX = (process.env.TEST_DB_PREFIX ?? 'preflop_test').replace(/[^a-z0-9_]/gi, '_').toLowerCase();
 
-/** Database name of a test file. TEST_DB_PREFIX keeps parallel runs (several checkouts, one server) apart. */
-export const testDbName = (name: string) => `${process.env.TEST_DB_PREFIX ?? 'preflop_test'}_${name}`;
+/** Database name of a test file. */
+export const testDbName = (name: string) => `${DB_PREFIX}_${name}`;
 
 /** A fresh, migrated database per test file. */
 export async function freshDb(name: string): Promise<Db> {
@@ -73,7 +75,7 @@ export async function harness(name: string, overrides: Partial<Config> = {}): Pr
       await sweepOnce(db, timing);
     },
     register: async (dn = 'Player') => {
-      const r = await api('POST', '/v1/auth/register', undefined, { email: `p${++userN}-${Date.now()}@test.dev`, password: 'correct horse', display_name: dn });
+      const r = await api('POST', '/v1/auth/register', undefined, { email: `p${++userN}-${Date.now()}@test.dev`, password: 'correct horse', display_name: dn, date_of_birth: '1990-01-01', country: 'MT' });
       if (r.status !== 201) throw new Error(JSON.stringify(r.body));
       return { token: r.body.token, id: r.body.user.id };
     },
@@ -82,6 +84,15 @@ export async function harness(name: string, overrides: Partial<Config> = {}): Pr
       await db.end();
     },
   };
+}
+
+/**
+ * Everything real money needs besides KYC and the mode switch: a verified email and the player's
+ * country (MT, from register()) allowed in settings.territories.
+ */
+export async function realMoneyReady(h: Harness, ...userIds: string[]): Promise<void> {
+  await h.db.query('update users set email_verified_at = now() where id = any($1)', [userIds]);
+  await h.db.query(`update settings set value = jsonb_set(value, '{real_money_allowed}', (select coalesce(jsonb_agg(distinct x), '[]'::jsonb) from (select jsonb_array_elements_text(value->'real_money_allowed') x union select 'MT') s)) where key = 'territories'`);
 }
 
 let betN = 0;

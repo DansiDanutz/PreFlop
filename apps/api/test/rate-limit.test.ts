@@ -45,7 +45,7 @@ describe('in-process rate limiter', () => {
 describe('rate limits (problem+json, 429, Retry-After)', () => {
   it('register is limited per IP', async () => {
     const res = [];
-    for (let i = 0; i < 4; i++) res.push(await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', display_name: 'R' }, '203.0.113.10'));
+    for (let i = 0; i < 4; i++) res.push(await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'R' }, '203.0.113.10'));
     expect(res.slice(0, 3).map((r) => r.statusCode)).toEqual([201, 201, 201]);
     const r = res[3]!;
     expect(r.statusCode).toBe(429);
@@ -53,7 +53,7 @@ describe('rate limits (problem+json, 429, Retry-After)', () => {
     expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
     expect(r.json()).toMatchObject({ type: 'rate_limited', status: 429 });
     // another client address is not affected
-    expect((await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', display_name: 'R' }, '203.0.113.11')).statusCode).toBe(201);
+    expect((await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'R' }, '203.0.113.11')).statusCode).toBe(201);
   });
 
   it('login is limited per IP, before any password check', async () => {
@@ -69,8 +69,8 @@ describe('rate limits (problem+json, 429, Retry-After)', () => {
   });
 
   it('POST /v1/bets is limited per user, not per IP', async () => {
-    const a = (await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', display_name: 'A' }, '203.0.113.40')).json().token as string;
-    const b = (await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', display_name: 'B' }, '203.0.113.41')).json().token as string;
+    const a = (await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'A' }, '203.0.113.40')).json().token as string;
+    const b = (await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'B' }, '203.0.113.41')).json().token as string;
     await h.sim.heartbeat();
     await h.work();
     const hand = await h.sim.openHand();
@@ -87,7 +87,7 @@ describe('rate limits (problem+json, 429, Retry-After)', () => {
 describe('login lockout (Postgres, across instances)', () => {
   it('5 failures for an email lock it for 15 minutes on every instance; a later success clears the count', async () => {
     const e = email();
-    expect((await call(other, '/v1/auth/register', { email: e, password: 'correct horse', display_name: 'L' })).statusCode).toBe(201);
+    expect((await call(other, '/v1/auth/register', { email: e, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'L' })).statusCode).toBe(201);
     for (let i = 0; i < 5; i++) {
       const r = await call(other, '/v1/auth/login', { email: e, password: `wrong-${i}` }, `198.51.100.${i}`);
       expect(r.statusCode).toBe(401);
@@ -107,7 +107,7 @@ describe('login lockout (Postgres, across instances)', () => {
     expect(viaH.json().type).toBe('login_locked');
     // other accounts are unaffected
     const e2 = email();
-    await call(other, '/v1/auth/register', { email: e2, password: 'correct horse', display_name: 'M' });
+    await call(other, '/v1/auth/register', { email: e2, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'M' });
     expect((await call(other, '/v1/auth/login', { email: e2, password: 'correct horse' })).statusCode).toBe(200);
 
     // 15 minutes later the lock has lifted; a success clears the failures
@@ -118,7 +118,7 @@ describe('login lockout (Postgres, across instances)', () => {
 
   it('the window slides: 4 old failures plus 1 new one do not lock', async () => {
     const e = email();
-    await call(other, '/v1/auth/register', { email: e, password: 'correct horse', display_name: 'S' });
+    await call(other, '/v1/auth/register', { email: e, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'S' });
     for (let i = 0; i < 4; i++) await call(other, '/v1/auth/login', { email: e, password: 'wrong' });
     await h.db.query(`update login_failures set at = at - interval '16 minutes' where email = $1`, [e]);
     expect((await call(other, '/v1/auth/login', { email: e, password: 'wrong' })).statusCode).toBe(401);
@@ -127,7 +127,7 @@ describe('login lockout (Postgres, across instances)', () => {
 
   it('concurrent guesses cannot slip past the limit', async () => {
     const e = email();
-    await call(other, '/v1/auth/register', { email: e, password: 'correct horse', display_name: 'C' });
+    await call(other, '/v1/auth/register', { email: e, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'C' });
     const res = await Promise.all(Array.from({ length: 12 }, (_, i) => call(other, '/v1/auth/login', { email: e, password: `guess-${i}` })));
     const codes = res.map((r) => r.statusCode);
     expect(codes.filter((c) => c === 401)).toHaveLength(5);

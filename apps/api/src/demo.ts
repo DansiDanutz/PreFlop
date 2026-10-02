@@ -21,7 +21,7 @@ await migrate(db);
 await tx(db, async (c) => {
   const adminId = await seedAdmin(c, process.env.ADMIN_EMAIL ?? 'admin@preflop.local', ADMIN_PASSWORD);
   const player = 'u_demo_player';
-  await c.query(`insert into users (id, email, password_hash, display_name) values ($1, 'player@preflop.local', $2, 'Demo Player') on conflict (id) do update set password_hash = excluded.password_hash`, [player, await hashPassword(PLAYER_PASSWORD)]);
+  await c.query(`insert into users (id, email, password_hash, display_name, date_of_birth, country, email_verified_at) values ($1, 'player@preflop.local', $2, 'Demo Player', '1990-01-01', 'MT', now()) on conflict (id) do update set password_hash = excluded.password_hash`, [player, await hashPassword(PLAYER_PASSWORD)]);
   await post(c, 'play.grant', player, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(player, 'wallet', 'play', 'PLAY'), amountMinor: 10_000 }]);
   for (const [id, kind, name] of [['atlas', 'club', 'Atlas Poker Club'], ['betco', 'partner', 'BetCo (demo partner)'], ['diamond-nights', 'organizer', 'Diamond Nights (demo organizer)']] as const) {
     await c.query(`insert into organizations (id, kind, name, settings) values ($1, $2, $3, '{"city":"Bucharest","demo":true}') on conflict (id) do nothing`, [id, kind, name]);

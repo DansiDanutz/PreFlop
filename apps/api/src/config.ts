@@ -24,6 +24,20 @@ export interface Config {
   rateLimit: RateLimitConfig;
   /** GET /v1/health/ready fails when the freshest worker heartbeat is older than this. */
   workerHeartbeatMaxAgeMs: number;
+  /** Outgoing email (verification and password-reset links). See lib/mailer.ts. */
+  mail: MailConfig;
+}
+
+export interface MailConfig {
+  /** Sender address (MAIL_FROM). */
+  from: string;
+  /** Base URL of the player web app; links in emails point here (WEB_URL). */
+  webUrl: string;
+  /**
+   * SMTP_URL, when set. No SMTP transport ships in this build (no mail dependency): a provider is
+   * plugged in lib/mailer.ts. Without one, production keeps messages queued in email_outbox.
+   */
+  smtpUrl: string | null;
 }
 
 export interface RateLimitConfig {
@@ -98,6 +112,9 @@ const Env = z.object({
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_PARTNER_TOKEN_PER_MIN: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_BETS_PER_MIN: z.coerce.number().int().positive().default(120),
+  WEB_URL: z.string().url().default('http://localhost:5173'),
+  MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
+  SMTP_URL: z.string().url().optional(),
 });
 type Env = z.infer<typeof Env>;
 
@@ -204,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       betsPerMinute: e.RATE_LIMIT_BETS_PER_MIN,
     },
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
+    mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
   };
 }
 

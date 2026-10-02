@@ -9,6 +9,7 @@ import { tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { newId } from '../lib/ids.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
+import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { assertPositive, buyChips, deposit, withdraw } from '../payments/sandbox.ts';
 
 const SELECTION_IDS = new Set(SELECTIONS.map((s) => s.id));
@@ -173,6 +174,8 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const u = await ctx.user(req);
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
+    // Deposits only: a withdrawal returns the player's own money and is never held back by these.
+    await assertRealMoneyAccount(ctx.db, u.id); // age, verified email, territory
     const out = await tx(ctx.db, async (c) => {
       // Serialise this user's deposits: the daily total and the new payment are read and written
       // under the user row lock, so concurrent deposits cannot both pass the limit.

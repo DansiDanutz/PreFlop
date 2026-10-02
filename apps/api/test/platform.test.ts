@@ -7,7 +7,7 @@ import { EventBatch } from '../src/lib/events.ts';
 import { signWebhook, deliverDue } from '../src/routes/partner.ts';
 import { resolve } from '../src/rounds/service.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
 
 let h: Harness;
 let admin: string;
@@ -30,7 +30,7 @@ async function open(): Promise<number> {
 }
 async function userWithEmail(name: string) {
   const email = `${name}-${Date.now()}@test.dev`;
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
 async function createOrg(kind: 'club' | 'partner' | 'organizer', owner: { token: string; email: string }, name = `${kind} org`) {
@@ -300,7 +300,7 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     const app = await h.api('POST', '/v1/applications', undefined, { kind: 'organizer', name: 'Home Game League', email, details: { owner_email: 'x@evil.dev', city: 'Cluj' } });
     expect(app.status).toBe(201);
     // Someone registers the applicant's address first: it gains nothing.
-    const squatter = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: 'Squatter' });
+    const squatter = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Squatter' });
     const d = await h.api('POST', `/v1/admin/applications/${app.body.id}/decision`, admin, { decision: 'approved' });
     expect(d.body).toMatchObject({ org_id: expect.any(String), owner_user_id: null, owner_claim: { token: expect.any(String) } });
     expect((await h.api('GET', '/v1/me', squatter.body.token)).body.memberships).toEqual([]);
@@ -308,7 +308,7 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     expect(settings).toMatchObject({ city: 'Cluj', application_id: app.body.id });
     expect(settings).not.toHaveProperty('owner_email');
     // The real owner redeems the link once.
-    const owner = await h.api('POST', '/v1/auth/register', undefined, { email: `owner-${Date.now()}@test.dev`, password: 'correct horse', display_name: 'Owner' });
+    const owner = await h.api('POST', '/v1/auth/register', undefined, { email: `owner-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Owner' });
     expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: d.body.owner_claim.token })).body).toMatchObject({ org_id: d.body.org_id, kind: 'organizer' });
     expect((await h.api('GET', '/v1/me', owner.body.token)).body.memberships[0]).toMatchObject({ org_id: d.body.org_id, role: 'owner' });
     expect((await h.api('POST', '/v1/me/org-claims', squatter.body.token, { token: d.body.owner_claim.token })).body.type).toBe('claim_used');
@@ -319,7 +319,7 @@ describe('applications, real-money sandbox and responsible gaming', () => {
   });
 
   it('an application sent while signed in makes the applicant the owner at once', async () => {
-    const r = await h.api('POST', '/v1/auth/register', undefined, { email: `signed-${Date.now()}@test.dev`, password: 'correct horse', display_name: 'Signed' });
+    const r = await h.api('POST', '/v1/auth/register', undefined, { email: `signed-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Signed' });
     const app = await h.api('POST', '/v1/applications', r.body.token, { kind: 'club', name: 'Signed Club', email: 'anything@else.dev' });
     const d = await h.api('POST', `/v1/admin/applications/${app.body.id}/decision`, admin, { decision: 'approved' });
     expect(d.body).toMatchObject({ owner_user_id: r.body.user.id, owner_claim: null });
@@ -333,6 +333,11 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     await h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': true, 'real-crypto': true } });
     expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('kyc_required');
     expect((await h.api('POST', '/v1/me/kyc', p.token, {})).body.kyc_status).toBe('verified');
+    // verified email, then a licensed territory (docs/14 "Accounts and security")
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('email_unverified');
+    await h.db.query('update users set email_verified_at = now() where id = $1', [p.id]);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('territory_not_licensed');
+    await realMoneyReady(h, p.id);
     expect((await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 8_000 })).body.deposit_day_minor).toBe(8_000);
     expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).status).toBe(201);
     expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('limit_reached');

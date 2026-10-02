@@ -101,7 +101,8 @@ The tokens live in `packages/ui/src/tokens.css` and the shared components in `pa
 - **Balance card:** the chip, "YOUR PRACTICE BALANCE", a large serif number and **Reset free chips**.
 - **A game on your terms.** and **Your six favorites**, with **Manage favorites ›**.
 - Organizer wallets.
-- Collapsible sections: Join a room · Become an organizer · Responsible play · Identity & payments.
+- Collapsible sections: Join a room · Become an organizer · Sign-in & security (change password; add a missing date of birth or country once) · Responsible play (limits, session time limit, self-exclusion) · Identity & payments.
+- In every app screen: a banner until the email is confirmed (with **Send the link again**), a session clock in the top bar, and a reality check every session limit (or 60 minutes) with the time played, the net result of the session, **Continue** and **Take a break**.
 - **Sign out**.
 
 ## Odds

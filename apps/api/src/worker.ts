@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { pruneNonces } from './auth/envelope.ts';
 import { type Db, tx } from './lib/db.ts';
+import { type MailTransport, deliverMail } from './lib/mailer.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -83,7 +84,9 @@ export async function beat(db: Db, workerId: string): Promise<void> {
 export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
 
 /** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
-export function startWorker(db: Db, t: Timing, everyMs = 1000): () => Promise<void> {
+export interface WorkerMail { transport: MailTransport | null; from: string }
+
+export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail): () => Promise<void> {
   let stopped = false;
   let current: Promise<void> | null = null;
   const workerId = newWorkerId();
@@ -95,6 +98,7 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000): () => Promise<vo
       await runOutboxOnce(db, t);
       await sweepOnce(db, t);
       await deliverDue(db);
+      if (mail) await deliverMail(db, mail.transport, mail.from);
       // Housekeeping once a minute: consumed request nonces past the replay window.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();

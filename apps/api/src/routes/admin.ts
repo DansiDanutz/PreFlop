@@ -9,6 +9,7 @@ import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
+import { Territories } from '../lib/accounts.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound } from '../rounds/service.ts';
@@ -104,11 +105,19 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const { value, note } = Setting.parse(req.body);
     if (key === 'physical_play_enabled' && value !== false && value !== true) throw unprocessable('invalid_value', 'physical_play_enabled is true or false');
     if (key === 'modes_enabled' && (typeof value !== 'object' || value === null)) throw unprocessable('invalid_value', 'modes_enabled is an object of mode → boolean');
+    if (key === 'require_staff_mfa' && value !== false && value !== true) throw unprocessable('invalid_value', 'require_staff_mfa is true or false');
+    let stored = value;
+    if (key === 'territories') {
+      // {"blocked": ["US"], "real_money_allowed": ["MT"]}: ISO 3166-1 alpha-2 codes, upper case, no overlap.
+      const t = Territories.safeParse(value);
+      if (!t.success) throw unprocessable('invalid_value', `territories: ${t.error.issues.map((i) => `${i.path.join('.') || 'value'} ${i.message}`).join('; ')}`);
+      stored = { blocked: [...new Set(t.data.blocked)].sort(), real_money_allowed: [...new Set(t.data.real_money_allowed)].sort() };
+    }
     return tx(ctx.db, async (c) => {
-      const r = await c.query('update settings set value = $2, updated_at = now(), updated_by = $3 where key = $1 returning key', [key, JSON.stringify(value), u.id]);
+      const r = await c.query('update settings set value = $2, updated_at = now(), updated_by = $3 where key = $1 returning key', [key, JSON.stringify(stored), u.id]);
       if (!r.rowCount) throw notFound('setting');
-      await audit(c, { type: 'settings.changed', key, value: value as never, note: note ?? null, by: u.id });
-      return { key, value };
+      await audit(c, { type: 'settings.changed', key, value: stored as never, note: note ?? null, by: u.id });
+      return { key, value: stored };
     });
   });
 

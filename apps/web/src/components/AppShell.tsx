@@ -3,6 +3,7 @@ import { Building2, CircleHelp, FileText, Gift, House, Info, Swords, Trophy, Use
 import { type ReactNode, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useSearchParams } from 'react-router';
 import { useBalance, useMe, useRealMoney } from '../lib/queries.ts';
+import { RealityCheck, SessionClock, VerifyEmailBanner } from './PlaySession.tsx';
 import { Sheet, Skeleton } from './ui.tsx';
 
 export function initials(name: string | undefined | null) {
@@ -80,6 +81,7 @@ export function TopBar({ embed = false }: { embed?: boolean }) {
       {!embed && <span className="hidden text-[13px] font-medium uppercase tracking-[0.14em] text-muted lg:inline">{sectionOf(loc.pathname)}</span>}
       {practice && <PracticePill className={embed ? 'inline-flex' : 'hidden lg:inline-flex'} />}
       <div className="flex-1" />
+      <SessionClock />
       {practice && <ChipBalance />}
       {embed ? <Avatar /> : <Link to="/app/profile" aria-label="Your profile" className="hidden rounded-full lg:block"><Avatar /></Link>}
     </header>
@@ -185,6 +187,7 @@ export function AppLayout() {
       <Rail onHelp={() => setHelp(true)} />
       <div className="min-w-0">
         <TopBar />
+        <VerifyEmailBanner />
         <main id="main" className="mx-auto max-w-[1240px] px-5 pb-28 pt-8 lg:px-10 lg:pb-10 lg:pt-10">
           <Outlet context={{ openHelp: () => setHelp(true) }} />
           <AppFooter />
@@ -192,6 +195,7 @@ export function AppLayout() {
       </div>
       <TabBar />
       <HowToPlay open={help} onClose={() => setHelp(false)} />
+      <RealityCheck />
     </div>
   );
 }

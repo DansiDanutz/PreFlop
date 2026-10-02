@@ -10,6 +10,7 @@ import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { REAL_MODES, maxStakeMinor } from '../lib/limits.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
+import { assertRealMoneyAccount } from '../lib/accounts.ts';
 
 /**
  * Bet placement where PreFlop is the house (docs/13 §5).
@@ -185,6 +186,7 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
     if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot bet');
     if (u.partner_id && u.partner_status !== 'active') throw partnerSuspended();
     if (real && u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required for real money');
+    if (real) await assertRealMoneyAccount(db, i.userId); // age, verified email, territory
 
     // 5. price
     const p = price(stats, i.channel ?? 'direct');

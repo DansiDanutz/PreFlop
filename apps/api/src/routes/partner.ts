@@ -7,7 +7,8 @@ import { createSession, hashPassword } from '../auth/players.ts';
 import { placeBet } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
-import { badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
+import { DateOfBirth, isAdult } from '../lib/accounts.ts';
+import { ApiError, badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
@@ -53,17 +54,21 @@ export async function endPartnerSessions(c: Tx, orgId: string): Promise<number> 
   return r.rowCount ?? 0;
 }
 
-async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: string): Promise<string> {
+async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: string, dob?: string): Promise<string> {
   const existing = (await db.query<{ id: string }>('select id from users where partner_id = $1 and external_ref = $2', [orgId, ref])).rows[0];
-  if (existing) return existing.id;
+  if (existing) {
+    // The licensed partner verifies age; a date of birth it sends is recorded once (never overwritten).
+    if (dob) await db.query('update users set date_of_birth = $2 where id = $1 and date_of_birth is null', [existing.id, dob]);
+    return existing.id;
+  }
   const id = newId('u');
   // Partner players never log in with a password: they get sessions from their operator.
   const hash = await hashPassword(randomBytes(24).toString('base64url'));
   // The placeholder email is derived from a hash of (org, ref), so distinct refs never collide.
   const email = `p_${sha(`${orgId}\u0000${ref}`).slice(0, 32)}@${orgId}.partner.preflop`;
   await tx(db, async (c) => {
-    const created = await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref) values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
-      [id, email, hash, displayName ?? ref, orgId, ref]);
+    const created = await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref, date_of_birth) values ($1, $2, $3, $4, $5, $6, $7) on conflict do nothing`,
+      [id, email, hash, displayName ?? ref, orgId, ref, dob ?? null]);
     if (created.rowCount !== 1) return; // a concurrent request created this player: no second grant
     await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: 10_000 }]);
     await audit(c, { type: 'partner.player', userId: id, orgId, ref });
@@ -183,15 +188,18 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.post('/v1/partner/players', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
-    const b = z.object({ player_ref: z.string().min(1).max(100), display_name: z.string().max(60).optional() }).parse(req.body);
-    const id = await partnerPlayer(ctx.db, p.orgId, b.player_ref, b.display_name);
+    const b = z.object({ player_ref: z.string().min(1).max(100), display_name: z.string().max(60).optional(), date_of_birth: DateOfBirth.optional() }).parse(req.body);
+    if (b.date_of_birth && !isAdult(b.date_of_birth)) throw new ApiError(403, 'underage', 'players must be 18 or over');
+    const id = await partnerPlayer(ctx.db, p.orgId, b.player_ref, b.display_name, b.date_of_birth);
     return reply.code(201).send({ player_ref: b.player_ref, user_id: id });
   });
   /** A player session for the widget iframe (?token=…). Never expose the partner token to browsers. */
   app.post('/v1/partner/players/:ref/session', async (req) => {
     const p = await partnerFromToken(ctx.db, req);
     const { ref } = req.params as { ref: string };
-    const id = await partnerPlayer(ctx.db, p.orgId, ref);
+    const { date_of_birth: dob } = z.object({ date_of_birth: DateOfBirth.optional() }).parse(req.body ?? {});
+    if (dob && !isAdult(dob)) throw new ApiError(403, 'underage', 'players must be 18 or over');
+    const id = await partnerPlayer(ctx.db, p.orgId, ref, undefined, dob);
     return { token: await createSession(ctx.db, id), user_id: id };
   });
   /**

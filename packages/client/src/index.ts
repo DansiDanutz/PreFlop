@@ -5,6 +5,8 @@
  * Money is always integer minor units with a currency. Odds are integer hundredths.
  */
 
+export { COUNTRY_CODES, isCountryCode } from './countries.ts';
+
 // ======================================================================================= types
 
 export type PlayMode = 'real-fiat' | 'real-crypto' | 'play' | 'virtual-chips' | 'diamonds';
@@ -36,9 +38,36 @@ export interface User {
   id: string; email: string; display_name: string; status: 'active' | 'suspended' | 'self_excluded' | 'closed';
   kyc_status: 'none' | 'pending' | 'verified' | 'rejected'; platform_role: PlatformRole | null; country: string | null; partner_id: string | null;
 }
+/** The signed-in account (GET /v1/me). */
+export interface SessionUser extends User {
+  /** YYYY-MM-DD; null for accounts created before the age gate (they can add it once with updateMe). */
+  date_of_birth: string | null;
+  email_verified: boolean;
+  /** Two-factor authentication (TOTP) is on for sign-in. */
+  mfa_enabled: boolean;
+}
 export interface Membership { org_id: string; kind: OrgKind; name: string; role: OrgRole; status: string }
 export interface Wallet { mode: PlayMode; currency: string; balance_minor: number; org_id?: string | null; org_name?: string | null }
-export interface Me extends User { memberships: Membership[]; wallets: Wallet[]; agent?: { status: AgentStatus; code: string } | null }
+export interface Me extends SessionUser {
+  /** A PreFlop team account while settings.require_staff_mfa is on and 2FA is off: only enrolment works. */
+  mfa_enrollment_required: boolean;
+  memberships: Membership[]; wallets: Wallet[]; agent?: { status: AgentStatus; code: string } | null;
+}
+
+/** settings.territories: ISO 3166-1 alpha-2 codes. */
+export interface Territories { blocked: string[]; real_money_allowed: string[] }
+
+/** GET /v1/me/session: the play session of this sign-in (session_minutes and reality checks). */
+export interface PlaySession {
+  started_at: string; minutes_played: number;
+  /** The player's session_minutes limit, or null. Bets are refused (403 session_limit) from ends_at until a new sign-in. */
+  limit_minutes: number | null; ends_at: string | null; limit_reached: boolean;
+  /** Show a reality check every this many minutes (session_minutes, else 60). */
+  reality_check_minutes: number;
+  /** Bets placed in this session, per wallet. net_minor = returned - staked over settled bets. */
+  results: { mode: PlayMode; currency: string; bets: number; staked_minor: number; returned_minor: number; open_stake_minor: number; net_minor: number }[];
+}
+export interface MfaSetup { secret: string; otpauth_uri: string }
 
 export interface BookSelection { id: string; label: string; probability: number; wins: number; offered: boolean; odds_centi: number; reason?: string }
 export interface BookMarket { id: string; family: string; name: string; description: string; first_release: boolean; exhaustive: boolean; selections: BookSelection[] }
@@ -286,13 +315,29 @@ export function createClient(o: ClientOptions) {
     apply: (a: { kind: OrgKind; name: string; email: string; details?: Record<string, unknown> }) => post<{ id: string }>('/v1/applications', a),
 
     // ---------- auth
-    register: (b: { email: string; password: string; display_name: string; country?: string; ref?: string }) => post<{ token: string; user: Pick<User, 'id' | 'email' | 'display_name'> }>('/v1/auth/register', b),
-    login: (b: { email: string; password: string }) => post<{ token: string }>('/v1/auth/login', b),
+    /** 403 underage (under 18), 403 territory_blocked; country is ISO 3166-1 alpha-2, date_of_birth YYYY-MM-DD. Sends a verification email. */
+    register: (b: { email: string; password: string; display_name: string; date_of_birth: string; country: string; ref?: string }) => post<{ token: string; user: Pick<User, 'id' | 'email' | 'display_name'> }>('/v1/auth/register', b),
+    /** With 2FA on, a call without `otp` answers 401 mfa_required (no session); a wrong code is 401 invalid_otp. */
+    login: (b: { email: string; password: string; otp?: string }) => post<{ token: string }>('/v1/auth/login', b),
     logout: () => post<{ ok: true }>('/v1/auth/logout'),
+    verifyEmail: (token: string) => post<{ ok: true; email_verified: true }>('/v1/auth/verify-email', { token }),
+    /** Always { ok: true }, whether or not the address has an account. */
+    forgotPassword: (email: string) => post<{ ok: true }>('/v1/auth/forgot-password', { email }),
+    /** Signs the account out everywhere. 400 invalid_token for an unknown, used or expired link. */
+    resetPassword: (token: string, password: string) => post<{ ok: true }>('/v1/auth/reset-password', { token, password }),
 
     // ---------- player
     me: () => get<Me>('/v1/me'),
-    updateMe: (b: { display_name: string }) => req<{ id: string; display_name: string }>('PATCH', '/v1/me', b),
+    /** date_of_birth and country can only be added when missing (409 already_set otherwise). */
+    updateMe: (b: { display_name?: string; date_of_birth?: string; country?: string }) =>
+      req<{ id: string; display_name: string; date_of_birth: string | null; country: string | null }>('PATCH', '/v1/me', b),
+    resendVerification: () => post<{ ok: true }>('/v1/me/resend-verification'),
+    /** Signs out every other session. 401 invalid_credentials when `current` is wrong. */
+    changePassword: (current: string, next: string) => post<{ ok: true }>('/v1/me/password', { current, new: next }),
+    mfaSetup: () => post<MfaSetup>('/v1/me/mfa/setup'),
+    mfaEnable: (code: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code }),
+    mfaDisable: (code: string) => post<{ mfa_enabled: false }>('/v1/me/mfa/disable', { code }),
+    mySession: () => get<PlaySession>('/v1/me/session'),
     wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets'),
     resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset'),
     placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }),

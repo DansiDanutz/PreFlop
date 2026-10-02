@@ -35,7 +35,7 @@ async function playHand(bets: [token: string, selection: string, stake: number][
 let un = 0;
 async function user(name: string) {
   const email = `${name}-${++un}-${Date.now()}@test.dev`;
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
 

@@ -12,7 +12,7 @@ import { defaultRoundLossMinor, maxStakeMinor, minorDigits } from '../src/lib/li
 import { deliverDue } from '../src/routes/partner.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
 
 /**
  * Money and integrity fixes from the external audit (migration 012): per-table real-money approval,
@@ -36,7 +36,8 @@ afterAll(async () => {
 let n = 0;
 async function user(name: string) {
   const email = `${name}-${++n}-${Date.now()}@mi.dev`;
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name, date_of_birth: '1990-01-01', country: 'MT' });
+  await realMoneyReady(h, r.body.user.id); // verified email, licensed country: these tests are about the table gates
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
 const odds = async (sel: string) => (await h.api('GET', '/v1/book')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === sel).odds_centi as number;

@@ -7,7 +7,7 @@ import { ZodError } from 'zod';
 import { type SessionUser, bearer, userFromToken } from './auth/players.ts';
 import { type Config, corsOrigin } from './config.ts';
 import type { Db } from './lib/db.ts';
-import { ApiError } from './lib/errors.ts';
+import { ApiError, forbidden } from './lib/errors.ts';
 import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
@@ -19,6 +19,7 @@ import { partnerRoutes } from './routes/partner.ts';
 import { playerRoutes } from './routes/player.ts';
 import { providerRoutes } from './routes/provider.ts';
 import { publicRoutes } from './routes/public.ts';
+import { mfaEnrolmentAllowed, securityRoutes, staffMfaRequired } from './routes/security.ts';
 import { streamRoutes } from './routes/stream.ts';
 import type { Timing } from './rounds/service.ts';
 
@@ -36,7 +37,15 @@ export interface AppContext {
   user(req: FastifyRequest): Promise<SessionUser>;
   modeEnabled(mode: PlayMode): Promise<boolean>;
   /** In-process rate limiters (one set per app instance; see lib/rateLimit.ts). */
-  limits: { login: Limiter; register: Limiter; partnerToken: Limiter; bets: Limiter };
+  limits: {
+    login: Limiter; register: Limiter; partnerToken: Limiter; bets: Limiter;
+    /** Per IP: verify-email, forgot-password and reset-password. */
+    emailLinks: Limiter;
+    /** Per account or address: emails we send on request (3 per 15 minutes). */
+    accountEmail: Limiter;
+    /** Per user: one-time codes tried on 2FA enable/disable (10 per 15 minutes). */
+    otp: Limiter;
+  };
   /** Live counters of this instance, for GET /v1/admin/metrics. */
   stats: { wsClients: number; startedAt: Date };
 }
@@ -96,12 +105,19 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   });
 
   const rl = config.rateLimit;
-  const limiter = (name: string, perMinute: number): Limiter => (rl.enabled ? new RateLimiter(name, perMinute, 60_000) : unlimited(name));
+  const limiter = (name: string, perMinute: number, windowMs = 60_000): Limiter => (rl.enabled ? new RateLimiter(name, perMinute, windowMs) : unlimited(name));
   const ctx: AppContext = {
     db,
     config,
     timing: { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs },
-    user: (req) => userFromToken(db, bearer(req.headers.authorization)),
+    async user(req) {
+      const u = await userFromToken(db, bearer(req.headers.authorization));
+      // require_staff_mfa: a PreFlop team account without 2FA may only enrol (docs/14).
+      if (u.platform_role && !u.mfa_enabled && !mfaEnrolmentAllowed(req) && (await staffMfaRequired(db))) {
+        throw forbidden('mfa_enrollment_required', 'set up two-factor authentication before using the console');
+      }
+      return u;
+    },
     async modeEnabled(mode) {
       const v = (await db.query<{ value: Record<string, boolean> }>("select value from settings where key = 'modes_enabled'")).rows[0]?.value;
       return !!v?.[mode];
@@ -111,12 +127,16 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
       register: limiter('register', rl.authPerMinute),
       partnerToken: limiter('partner token', rl.partnerTokenPerMinute),
       bets: limiter('bets', rl.betsPerMinute),
+      emailLinks: limiter('email links', rl.authPerMinute),
+      accountEmail: limiter('account email', 3, 15 * 60_000),
+      otp: limiter('one-time codes', 10, 15 * 60_000),
     },
     stats: { wsClients: 0, startedAt: new Date() },
   };
 
   await publicRoutes(app, ctx);
   await playerRoutes(app, ctx);
+  await securityRoutes(app, ctx);
   await providerRoutes(app, ctx);
   await accountRoutes(app, ctx);
   await growthRoutes(app, ctx);
