@@ -25,7 +25,7 @@ export function BackButton({ to, label = 'Back', onClick }: { to?: string; label
 
 export function SearchField({ value, onChange, placeholder, label }: { value: string; onChange: (v: string) => void; placeholder: string; label: string }) {
   return (
-    <label className="flex h-12 items-center gap-3 rounded-[14px] border border-line bg-surface px-4 focus-within:border-accent">
+    <label className="flex h-12 items-center gap-3 rounded-[8px] border border-line-strong/70 bg-surface px-4 focus-within:border-accent">
       <Search className="h-5 w-5 shrink-0 text-muted" aria-hidden />
       <span className="sr-only">{label}</span>
       <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
@@ -42,11 +42,33 @@ export function SearchField({ value, onChange, placeholder, label }: { value: st
 export function Pill({ active, children, onClick, className }: { active: boolean; children: ReactNode; onClick: () => void; className?: string }) {
   return (
     <button type="button" aria-pressed={active} onClick={onClick}
-      className={cx('inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition-colors',
-        active ? 'border-accent bg-accent text-accent-ink' : 'border-line-strong text-ink hover:border-accent/60', className)}>
+      className={cx('inline-flex h-10 shrink-0 items-center gap-1.5 rounded-[8px] border px-3.5 text-[14px] transition-colors',
+        active ? 'border-accent bg-accent font-semibold text-accent-ink' : 'border-line-strong text-ink/90 hover:border-accent/60', className)}>
       {children}
     </button>
   );
+}
+
+/** Text tabs with a raised active state (lobby and activity filters). */
+export function Tabs<T extends string>({ options, value, onChange, label, className }: {
+  options: readonly { id: T; label: ReactNode }[]; value: T; onChange: (v: T) => void; label: string; className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={cx('flex gap-1', className)}>
+      {options.map((o) => (
+        <button key={o.id} type="button" aria-pressed={value === o.id} onClick={() => onChange(o.id)}
+          className={cx('inline-flex h-11 shrink-0 items-center gap-2 rounded-[8px] border px-4 text-[15px] transition-colors',
+            value === o.id ? 'border-line-strong bg-surface-3 text-ink' : 'border-transparent text-ink/80 hover:text-ink')}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Uppercase accent label above a serif heading. */
+export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cx('text-[11px] font-bold uppercase tracking-[0.2em] text-accent', className)}>{children}</p>;
 }
 
 export function ErrorState({ title = 'Something went wrong', children, onRetry }: { title?: string; children?: ReactNode; onRetry?: () => void }) {
@@ -67,7 +89,7 @@ export function Notice({ tone = 'info', children, className }: { tone?: 'info' |
 
 // ------------------------------------------------------------------ form fields
 
-const inputCls = 'h-12 w-full rounded-[12px] border border-line-strong bg-surface-2 px-4 text-[15px] text-ink placeholder:text-faint focus:border-accent focus:outline-none';
+const inputCls = 'h-12 w-full rounded-[8px] border border-line-strong bg-surface-2 px-4 text-[15px] text-ink placeholder:text-faint focus:border-accent focus:outline-none';
 
 export function Field({ label, hint, error, className, ...p }: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: ReactNode; error?: string | null }) {
   const id = useId();
@@ -103,13 +125,13 @@ export function Select({ label, className, children, ...p }: SelectHTMLAttribute
 // ------------------------------------------------------------------ sheet / dialog
 
 /** Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. */
-export function Sheet({ open, onClose, title, children, labelledBy }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string }) {
+export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
-    const first = ref.current?.querySelector<HTMLElement>('button, [href], input, select, textarea');
-    first?.focus();
+    // Focus the dialog itself; Tab then moves into its controls.
+    ref.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => {
@@ -119,9 +141,9 @@ export function Sheet({ open, onClose, title, children, labelledBy }: { open: bo
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={ref} role="dialog" aria-modal="true" aria-label={labelledBy ? undefined : title} aria-labelledby={labelledBy}
-        className="pf-sheet-in max-h-[92dvh] w-full max-w-[440px] overflow-y-auto rounded-t-[24px] border border-line bg-bg p-5 pb-[max(20px,env(safe-area-inset-bottom))] sm:rounded-[24px]">
+    <div className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={labelledBy ? undefined : title} aria-labelledby={labelledBy}
+        className={cx('pf-sheet-in max-h-[92dvh] w-full overflow-y-auto outline-none rounded-t-[16px] border border-line-strong/70 bg-surface p-5 pb-[max(20px,env(safe-area-inset-bottom))] sm:rounded-[14px] sm:p-7', wide ? 'max-w-[640px]' : 'max-w-[460px]')}>
         {children}
       </div>
     </div>

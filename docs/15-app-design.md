@@ -1,104 +1,108 @@
-# 15 — App design (from the Codex mobile concepts)
+# 15 — App design
 
-The player app follows three concept sheets prepared by Codex: **"Mobile concept 01"**, **"Clubs & tables"** and **"Your favorite bets"**. They are mobile-first, dark, and calm. This document records what they show so every frontend matches them. The tokens live in `packages/ui/src/tokens.css`; the shared components live in `packages/ui/src/index.tsx`.
+The player app follows the approved **charcoal, emerald and ivory** design. It started from Codex's three concept sheets ("Mobile concept 01", "Clubs & tables", "Your favorite bets") and was then aligned with Codex's practice app (`codex/play-money-app`, `web/`). The practice app's layout is the reference for every screen below. The PreFlop app keeps its own backend: live simulated tables over WebSocket, the server ledger, rooms, and the signed table protocol.
+
+The tokens live in `packages/ui/src/tokens.css` and the shared components in `packages/ui/src/index.tsx`. The console and the club tablet use the same tokens. Screenshots are in [`docs/screens/web`](screens/web).
 
 ## Visual language
 
-- **Surfaces:** near-black background (`bg`). Cards are `surface`, with a hairline `line` border and 18 px radius. Tiles use 14 px.
-- **Accent:** emerald green (`accent`, #1fd38b) for primary buttons, selected states (glow ring plus a check badge), "Predictions open" dots and active tabs. Text on accent is `accent-ink` (dark).
-- **Felt:** a radial green felt gradient (`.felt`) behind the face-down flop and the table hero image.
+- **Surfaces:** charcoal-green background (`bg` #0e1311). Cards are `surface` with a hairline `line-strong` border and a 12 px radius. Tiles and inputs use 8–10 px.
+- **Accent:** mint (`accent` #53e6a7) for primary buttons, the selected favorite, "Ready to play" dots, the active nav item and eyebrows. Text on accent is `accent-ink`. `accent-deep` (#173b2a) fills the PRACTICE pill, the active nav item and the selected stake.
 - **Type:**
-  - The **"PreFlop" wordmark is serif** (`font-serif`).
-  - Large headings ("Find your table", "Atlas Poker Club", "Club tables", "Predict the next flop", "Favorite bets", "Browse bets", "Replace a favorite") are serif.
-  - Everything else is sans (Inter).
-- **Top bar** on every screen:
-  - the serif wordmark at left;
-  - an outlined **PRACTICE** pill in accent (shown while the user is in play-money mode);
-  - a round avatar at right.
-- **Balance card** under the top bar:
-  - a poker-chip icon (`ChipIcon`) and a big number, e.g. "10,000";
-  - the label "Free chips";
-  - a muted two-line tagline at right ("Play. Practice. Get better." / "Same hands. More experience." / "Good instincts add up.").
-  - Inside a table, the card shows the table name ("Table 04 · Atlas Poker Club · Example organizer") with the balance at right.
-- **Bottom tab bar**, 5 tabs: **Lobby · Clubs · Table · Activity · Profile**. The active tab is accent with a filled icon. "Table" uses a chip icon. An earlier concept had three tabs (Play · Activity · Profile); the five-tab version is the target.
-- **Footer microcopy** under primary actions: "Free chips. No cash value." (play money). Wording must never suggest cash value in play mode.
-- **Demo labels:** "DEMO STREAM" badge with a red live dot on stream thumbnails; "Simulated table" subtitle for practice tables. Physical-table play is disabled for now (`docs/06` #7), so every live table in the app today is a **simulated table**, and it must say so.
+  - Georgia serif for the wordmark (**PreFlop ♠**, with a small mint spade) and the large headings ("Find your table.", "Your activity.", "What will the next three cards bring?").
+  - Inter for everything else.
+  - Each page header has three lines: an uppercase mint **eyebrow** ("YOUR NEXT THREE CARDS"), the serif title, and a one-line subtitle.
+- **Felt:** a radial felt with a fine noise and an oval rail (`.felt`, `.felt-noise`, `.felt-ring`).
+  - Each club has its own colour: green, blue or violet (`feltTheme`). An offline table is grey and dimmed.
+  - The felt carries a **SIMULATED TABLE** tag, an italic "PreFlop" watermark and a small "TABLE 04" emboss.
+  - Physical-table play is disabled (`docs/06` #7), so every table says it is simulated. There is never a fake video.
+- **Cards:** ivory faces (#f5f3e9) with Georgia indices, red #b23237, and a 6 px radius.
+
+## Layout
+
+- **Wide screens** (≥ 1024 px):
+  - A **left rail**: the wordmark, "THE FLOP IS JUST THE BEGINNING", then Lobby · Clubs · Activity · Profile. At the foot: "All instinct. Zero real money.", **How to play**, and "Free chips · No cash value".
+  - A **top bar**: the section name ("LOBBY", "THE TABLE"…) and the **PRACTICE** pill at left; the chip balance ("10,000 free chips") and the avatar at right.
+- **Phones:**
+  - The top bar shows the wordmark and the balance.
+  - A **bottom tab bar** has the same four items.
+  - Dialogs become bottom sheets.
+- **Footer** on every app page: "Simulated tables while physical-table play is switched off." and "Free chips. No purchases, prizes or cash-out."
+- **How to play** (a sheet): 1 Choose, 2 Lock, 3 Reveal. It explains that decimal odds include the stake, and that there is no auto-replay or countdown pressure.
 
 ## Screens
 
-### 1. Choose your table (concept 01, screen 1)
-- The heading is **"Choose your table"**, with the small muted note "Two tables. Same game. Your pace."
-- Large table cards:
-  - **The Green Room**: "Simulated table", "24k+ plays today", a felt image with three fanned card backs, the copy "Sharpen your instincts with a classic table." and a big green **Play ›** button;
-  - **Midnight Room**: "Practice at your pace", "A relaxed table for casual play." and a chevron button.
+### Lobby — "Find your table."
+- Header: the eyebrow "YOUR NEXT THREE CARDS" and a **How to play** button.
+- A search field ("Search tables or clubs") and the text tabs **All tables · Available · ☆ Saved**. Saved tables are kept on the device.
+- An **All clubs** select.
+- "N tables" with "Choose your atmosphere. Play at your pace."
+- A grid of **table cards** (1, 2 or 3 columns):
+  - a felt with the table's last real flop, a save star, and the code;
+  - "Ready to play" or "Offline";
+  - the serif name and the club link;
+  - "City / Practice", then **Take a seat ›**, or "Check back later" when offline.
+- The banner "A little intuition. A lot of possibilities." with **Explore the bets ›**.
+- **Organizer rooms** (chips or diamonds, no cash value).
 
-### 2. Find your table / Lobby (clubs & tables, screen 1)
-- Serif heading **"Find your table"**.
-- A search field: "Search clubs or tables".
-- Filter pills: **All clubs** (selected, filled accent), **Available**, **☆ Favorites**.
-- Table cards:
-  - a stream thumbnail with the last flop, a "DEMO STREAM" badge and a "PreFlop" watermark on the felt;
-  - the title "Table 04" and "Organized by Atlas Poker Club";
-  - the location with a pin ("Bucharest");
-  - a status dot: green **"Predictions open"** or blue **"Round in progress"**;
-  - a CTA: **Open table ›** (filled) or **View table ›** (outlined).
+### Clubs and club page
+- **Clubs** ("The clubs."): one card per club, with a monogram, the city, the table count and how many tables are open now, a favorite star, and **Visit club ›**.
+- **Club page:**
+  - "‹ All clubs";
+  - a large ringed monogram, the eyebrow "ORGANIZER", the serif club name and "City · Country";
+  - a table-count chip and a star;
+  - then **Choose a table** ("Simulated play · No live club connection") with the same table cards as the lobby.
 
-### 3. Club page (clubs & tables, screen 2)
-- A back arrow and the balance card.
-- The club header: a circular monogram ("A") with an accent ring, the serif name "Atlas Poker Club", "Bucharest · Example club", "Organizer", and a star (favorite) button.
-- **"Club tables"** with a count ("3 tables").
-- Rows: a thumbnail at left (a DEMO badge and the last flop, or a struck-camera icon for "Stream unavailable"), the title, a status dot, the city, and a CTA (**View table ›**).
+### Table
+- Header: "‹ Club", the serif table name, the club and city, the PRACTICE pill, and an ⓘ button that opens How to play.
+- **Left column, the table card:**
+  - a large felt with the **previous flop**, an expand button, and "Previous flop · Round N · High card" / "Simulated · Not a live stream";
+  - the numbered steps **1 Choose · 2 Lock · 3 Reveal**, which follow the live round state;
+  - the prompt: the eyebrow "A FRESH FLOP AWAITS" and **"What will the next three cards bring?"**, with a line saying the round is open and that the cards shown are the previous flop;
+  - "Your predictions in play" while bets are open.
+- **Recent flops at this table:** the last five flops, with their result and round number.
+- **Right column, the bet panel:**
+  - **Favorite bets** with a count badge and **Edit**.
+  - Six tiles in 2 columns. Each tile has an icon, the name, the family and the odds ("5.50×"). The selected tile has the accent border and a check; the others show a small star.
+  - **Browse all N bets ›**.
+  - **Your prediction** (with a Rules link) and the odds in accent.
+  - **Amount:** the min–max range, a − / input / + stepper, and the presets **50 · 100 · 250 · 500**.
+  - **Total return if correct** ("550 chips"), with "Decimal odds include your original chips."
+  - **Confirm · 100 chips**, then "Free chips. No purchases, prizes or cash-out."
+  - In a room the panel shows the room's currency and fees, or the pool rake.
+- **Order:** on phones the bet panel comes right after the table card. On wide containers it sits beside the table and recent flops. This uses container queries, so the partner iframe (`/embed/table/:id`) uses the same component.
 
-### 4. Table: predict the next flop (clubs & tables, screen 3, and concept 01, screen 2)
-- The top card shows the table name and organizer.
-- A **stream area**: the felt with the **previous flop** face up, a "DEMO STREAM" badge, the "PreFlop" watermark and an expand button.
-- Under it: "Previous flop · Round 024".
-- A **stepper: Open → Locked → Reveal** (`RoundStepper`).
-- The serif heading **"Predict the next flop"**, with "Round 025 · Predictions open" under it.
-- A **2×2 grid of prediction tiles**, each with an outline icon, a title and a subtitle:
-  - Pair: "Two of a kind";
-  - Flush: "Three of the same suit";
-  - Straight: "Three in sequence";
-  - High card: "No pair, flush or straight".
+### Catalogue — "Find your next favorite."
+- A dialog over the table. `/app/table/:id/bets` opens it directly.
+- Header: the eyebrow "YOUR TABLE, YOUR WAY" and the subtitle "Explore the complete catalogue."
+- A search field ("Search bets, cards or rules").
+- Chips for the engine's seven families: **All bets · Rank patterns · Suits & colors · High & low · Faces & ranks · Sequences · Totals & parity · Combinations**.
+- A count line ("250 selections · 247 offered" with "Decimal odds · Stake included"), then rows grouped by family. Each row shows the icon, the name, the market and probability, the odds, and a star.
+- Tapping a row makes it the prediction. The star adds or removes it as a favorite.
+- When all six slots are full, **Replace a favorite.** shows the new bet, a radio grid of the six, a strike-through preview and **Replace favorite**.
 
-  The selected tile has an accent border with a glow and a check badge.
-- **"Free chips"** stake selector: **50 · 100 · 250** pills (`Segmented`).
-- A big **Confirm prediction** button, then "Free chips. No cash value."
-- The concept 01 variant also has a **"Your prediction"** summary card (an icon, the title, the subtitle and an "Edit" link) above the stake.
+### Round complete
+- The eyebrow "THE FLOP IS OUT" and **Round complete**.
+- The revealed flop on felt.
+- The serif result line ("High card."), then the winnings in accent, or a calm "Not this time" line.
+- A receipt: Prediction · Used · Returned.
+- **Next round** and **View activity**.
 
-### 5. Favorite bets (favorite bets, screen 1)
-- **"Favorite bets 6 / 6"** with an **Edit** button.
-- A 2×3 grid of tiles. Each tile shows: an icon, the name ("Any pair"), the category ("Rank pattern"), **odds as "5.20×"**, and a filled accent star. The selected tile has a check badge.
-- **Browse all bets ›** (an outlined, full-width button with a search icon).
-- The stake pills, then **"Confirm · 100 free chips"**, then "No cash value."
+### Activity — "Your activity."
+- The eyebrow "EVERY ROUND, IN THE OPEN".
+- A four-cell stat strip: Predictions · Correct predictions · Hit rate · Net chips.
+- Tabs: **All rounds · Correct · Not matched · Ledger**.
+- Round cards: the table, round, time and result, a mini flop, and each bet with its stake, locked odds and Won/Lost/Void.
+- Empty state: "Your story starts with three cards." with **Find a table**.
 
-### 6. Browse bets (favorite bets, screen 2)
-- A back arrow, then the heading **"Browse bets"** with the subtitle "Choose a bet, then save it to a favorite slot."
-- A search field: "Search bets".
-- Category pills:
-  - **All** (selected), **Patterns**, **Colors**, **Suits**;
-  - **Ranks**, **Sequences**, **More ▾**.
-- A sectioned list (COLOR, RANK PATTERN, SUIT…). Each row has:
-  - an icon, the name and a muted description;
-  - **odds "7.50×"**;
-  - a star (filled = favorite), then a chevron.
-- Tapping an unstarred row highlights it, with the hint "ⓘ Tap star to add to favorites".
-- Footer: "Decimal odds include your chip stake."
-
-### 7. Replace a favorite (favorite bets, screen 3)
-- Shown when all 6 slots are full.
-- The heading **"Replace a favorite"**, then "All 6 slots are full. Choose which one to replace."
-- The new bet's card at the top.
-- A grid of the current favorites, each with a radio. The selected one is labelled **Replace this**.
-- A preview row: "Any flush 18.00× → Exactly two red 2.40×".
-- **Replace favorite** (filled), **Cancel** (outlined), then "Your other favorites stay unchanged."
-
-### 8. Round complete (concept 01, screen 3)
-- Header: **"Round complete"**.
-- The revealed flop, large and face up on felt.
-- A big result line: **"A pair."**, then **"+200 free chips"** in accent. A loss shows a neutral line instead.
-- A summary card: **Prediction** (Pair), **Used** (100), **Returned** (300).
-- **Next round** (filled), **View activity** (outlined), then "Free chips. No cash value."
+### Profile — "Your profile."
+- The eyebrow "MAKE YOURSELF AT HOME".
+- **Identity card:** the avatar, the name and **PRACTICE PLAYER**, and an editable **Display name** (`PATCH /v1/me`).
+- **Balance card:** the chip, "YOUR PRACTICE BALANCE", a large serif number and **Reset free chips**.
+- **A game on your terms.** and **Your six favorites**, with **Manage favorites ›**.
+- Organizer wallets.
+- Collapsible sections: Join a room · Become an organizer · Responsible play · Identity & payments.
+- **Sign out**.
 
 ## Odds
 

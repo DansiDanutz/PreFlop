@@ -28,7 +28,7 @@ export function EmbedTablePage() {
 
   if (!ready) return null;
   return (
-    <div className="mx-auto min-h-dvh max-w-[480px]">
+    <div className="mx-auto min-h-dvh max-w-[560px]">
       <TopBar embed />
       {!token && <div className="px-5 pb-4"><Notice tone="warn">Sign-in required: this widget needs a player token from the partner site.</Notice></div>}
       <TableScreen key={id} tableId={id} embed />

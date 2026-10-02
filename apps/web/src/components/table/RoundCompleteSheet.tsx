@@ -17,10 +17,11 @@ export function RoundCompleteSheet({ summary, nameOf, voidReason, onNext, onActi
   const names = [...new Set(s.selections.map(nameOf))];
   return (
     <Sheet open onClose={onNext} labelledBy="round-complete-title">
-      <h2 id="round-complete-title" className="font-serif text-[30px] leading-tight">Round complete</h2>
+      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">The flop is out</p>
+      <h2 id="round-complete-title" className="mt-2 font-serif text-[30px] leading-tight tracking-[-0.04em]">Round complete</h2>
       <p className="text-sm text-muted">{s.tableName} · {roundLabel(s.handNo)}</p>
 
-      <StreamView cards={s.flop} size="md" revealKey={s.roundId} className="mt-4 h-[190px] rounded-[18px]" />
+      <StreamView cards={s.flop} size="md" revealKey={s.roundId} className="mt-4 h-[190px] rounded-[12px]" />
 
       <div className="mt-5 text-center" aria-live="polite">
         {isVoid ? (

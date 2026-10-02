@@ -220,6 +220,18 @@ describe('partner API and webhooks (docs/02 §2)', () => {
   });
 });
 
+describe('player profile', () => {
+  it('a player renames themselves; blank or over-long names are refused', async () => {
+    const p = await userWithEmail('rename');
+    const r = await h.api('PATCH', '/v1/me', p.token, { display_name: '  River Rat ' });
+    expect(r.status).toBe(200);
+    expect((await h.api('GET', '/v1/me', p.token)).body.display_name).toBe('River Rat');
+    expect((await h.api('PATCH', '/v1/me', p.token, { display_name: '   ' })).status).toBe(400);
+    expect((await h.api('PATCH', '/v1/me', p.token, { display_name: 'x'.repeat(61) })).status).toBe(400);
+    expect((await h.api('PATCH', '/v1/me', undefined, { display_name: 'Nobody' })).status).toBe(401);
+  });
+});
+
 describe('applications, real-money sandbox and responsible gaming', () => {
   it('an approved application becomes an organization owned by the applicant once they register', async () => {
     const email = `applicant-${Date.now()}@test.dev`;

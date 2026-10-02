@@ -29,7 +29,7 @@ export function CardPicker({ value, onChange, disabled }: { value: string[]; onC
                 <button key={code} type="button" data-card={code} aria-pressed={sel} aria-label={`${r === 'T' ? '10' : r} of ${SUIT_NAME[s]}`}
                   disabled={disabled || (full && !sel)} onClick={() => toggle(code)}
                   className={cx('relative flex h-full min-h-[60px] min-w-0 flex-col items-center justify-center gap-1 rounded-[10px] font-serif leading-none transition-[transform,opacity,box-shadow]',
-                    sel ? 'bg-card -translate-y-0.5 shadow-[0_0_0_3px_var(--color-accent),0_8px_20px_rgba(31,211,139,0.35)]'
+                    sel ? 'bg-card -translate-y-0.5 shadow-[0_0_0_3px_var(--color-accent),0_8px_20px_rgba(83,230,167,0.35)]'
                       : 'bg-card/95 shadow-[0_2px_6px_rgba(0,0,0,0.4)] active:scale-95',
                     full && !sel && 'opacity-30')}
                   style={{ color: isRed(code) ? 'var(--color-card-red)' : 'var(--color-card-black)' }}>

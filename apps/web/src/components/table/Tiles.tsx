@@ -1,39 +1,10 @@
 import { cx, formatOdds } from '@preflop/ui';
 import { Check, Plus, Star, X } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { Link } from 'react-router';
-import type { BetOption, GridTile } from '../../lib/bets.ts';
-import { HandIcon, OptionIcon } from '../icons.tsx';
+import type { BetOption } from '../../lib/bets.ts';
+import { familyLabel } from '../../lib/bets.ts';
+import { OptionIcon } from '../icons.tsx';
 
-export function CheckBadge() {
-  return (
-    <span aria-hidden className="absolute right-2.5 top-2.5 grid h-5 w-5 place-items-center rounded-full bg-accent text-accent-ink">
-      <Check className="h-3.5 w-3.5" strokeWidth={3} />
-    </span>
-  );
-}
-
-const tileBase = 'relative flex flex-col rounded-[14px] border bg-surface text-left transition-[border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50';
-const tileState = (selected: boolean) => (selected ? 'border-accent shadow-[var(--shadow-glow)] bg-accent-soft/40' : 'border-line hover:border-line-strong');
-
-/** One of the four main prediction tiles (Pair / Flush / Straight / High card). */
-export function PredictionTile({ tile, option, selected, onSelect, pool = false }: { tile: GridTile; option: BetOption | undefined; selected: boolean; onSelect: () => void; pool?: boolean }) {
-  const offered = !!option?.offered;
-  const price = offered ? (pool ? 'Pool' : formatOdds(option!.oddsCenti)) : '';
-  return (
-    <button type="button" onClick={onSelect} disabled={!offered} aria-pressed={selected}
-      aria-label={`${tile.title}: ${tile.subtitle}${offered ? `, ${pool ? 'pool payout' : `odds ${price}`}` : ', not offered'}`}
-      className={cx(tileBase, tileState(selected), 'min-h-[132px] p-4')}>
-      {selected && <CheckBadge />}
-      <HandIcon kind={tile.icon} className={cx('h-8 w-8', selected ? 'text-accent' : 'text-ink/85')} />
-      <span className="mt-auto pt-3 text-[17px] font-semibold leading-tight">{tile.title}</span>
-      <span className="mt-0.5 text-[13px] leading-snug text-muted">{tile.subtitle}</span>
-      <span className={cx('mt-1.5 text-sm font-semibold', offered ? 'text-accent' : 'text-faint')}>{offered ? price : 'Not offered'}</span>
-    </button>
-  );
-}
-
-/** Favorite bet tile (concept "Your favorite bets", screen 1). */
+/** A favorite bet: icon, name, family, decimal odds; the selected one carries the accent border. */
 export function FavoriteTile({ id, option, selected, editing, onSelect, onRemove, pool = false }: {
   id: string; option: BetOption | undefined; selected: boolean; editing: boolean; onSelect: () => void; onRemove: () => void; pool?: boolean;
 }) {
@@ -43,15 +14,18 @@ export function FavoriteTile({ id, option, selected, editing, onSelect, onRemove
     <div className="relative">
       <button type="button" onClick={onSelect} disabled={editing || !offered} aria-pressed={selected}
         aria-label={`${option?.name ?? id}${offered ? `, ${pool ? 'pool payout' : `odds ${price}`}` : ', not offered'}`}
-        className={cx(tileBase, tileState(selected), 'h-full min-h-[116px] w-full p-3', editing && 'disabled:opacity-100')}>
-        {selected && !editing && <CheckBadge />}
-        {option ? <OptionIcon option={option} className={cx('h-6 w-6', selected ? 'text-accent' : 'text-ink/85')} /> : <Star className="h-6 w-6 text-faint" />}
-        <span className="mt-2 line-clamp-2 text-[14px] font-semibold leading-tight">{option?.name ?? 'Unavailable'}</span>
-        <span className="mt-0.5 truncate text-[11px] text-muted">{option?.marketName ?? id}</span>
-        <span className="mt-auto flex items-center justify-between pt-1.5">
-          <span className={cx('text-[13px] font-semibold', offered ? 'text-ink' : 'text-faint')}>{price}</span>
-          {!editing && <Star className="h-3.5 w-3.5 fill-accent text-accent" aria-hidden />}
+        className={cx('relative flex h-full min-h-[118px] w-full gap-3 rounded-[10px] border p-3.5 text-left transition-[border-color,background-color] disabled:cursor-not-allowed',
+          selected && !editing ? 'border-accent bg-accent-deep/35' : 'border-line-strong/60 bg-surface-2/40 hover:border-line-strong',
+          !offered && !editing && 'opacity-50')}>
+        {option ? <OptionIcon option={option} className={cx('mt-0.5 h-6 w-6 shrink-0', selected ? 'text-accent' : 'text-ink/80')} /> : <Star className="mt-0.5 h-6 w-6 shrink-0 text-faint" />}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="line-clamp-2 text-[15px] font-bold leading-tight">{option?.name ?? 'Unavailable'}</span>
+          <span className="mt-1 truncate text-[12px] text-ink/70">{option ? familyLabel(option.family) : id}</span>
+          <span className={cx('mt-auto pt-2.5 text-[17px] font-bold', offered ? 'text-ink' : 'text-faint')}>{price}</span>
         </span>
+        {!editing && (selected
+          ? <Check className="absolute bottom-2.5 right-2.5 h-3.5 w-3.5 text-accent" strokeWidth={2.5} aria-hidden />
+          : <Star className="absolute bottom-2.5 right-2.5 h-3 w-3 fill-ink/45 text-ink/45" aria-hidden />)}
       </button>
       {editing && (
         <button type="button" onClick={onRemove} aria-label={`Remove ${option?.name ?? id} from favorites`}
@@ -63,19 +37,10 @@ export function FavoriteTile({ id, option, selected, editing, onSelect, onRemove
   );
 }
 
-export function EmptyFavoriteSlot({ to }: { to: string }) {
+export function EmptyFavoriteSlot({ onClick }: { onClick: () => void }) {
   return (
-    <Link to={to} className="grid min-h-[116px] place-items-center rounded-[14px] border border-dashed border-line-strong text-muted hover:border-accent hover:text-accent">
+    <button type="button" onClick={onClick} className="grid min-h-[118px] place-items-center rounded-[10px] border border-dashed border-line-strong text-muted hover:border-accent hover:text-accent">
       <span className="flex flex-col items-center gap-1 text-sm"><Plus className="h-5 w-5" aria-hidden /> Add a bet</span>
-    </Link>
-  );
-}
-
-export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between">
-      <h2 className="font-serif text-[24px] leading-tight">{children}</h2>
-      {right}
-    </div>
+    </button>
   );
 }

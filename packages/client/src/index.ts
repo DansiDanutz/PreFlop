@@ -160,6 +160,7 @@ export function createClient(o: ClientOptions) {
 
     // ---------- player
     me: () => get<Me>('/v1/me'),
+    updateMe: (b: { display_name: string }) => req<{ id: string; display_name: string }>('PATCH', '/v1/me', b),
     wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets'),
     resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset'),
     placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }),

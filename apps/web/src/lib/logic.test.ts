@@ -9,7 +9,7 @@ import { amountLabel, roomOption, roomWallet, stakePresets } from './rooms.ts';
 import { groupByRound, summarizeRound } from './rounds.ts';
 
 describe('rooms', () => {
-  const opt = { id: 'hand-class:pair', name: 'Any pair', marketId: 'hand-class', marketName: 'Flop hand', description: '', category: 'patterns' as const, oddsCenti: 550, probability: 0.169, offered: true };
+  const opt = { id: 'hand-class:pair', name: 'Any pair', marketId: 'hand-class', marketName: 'Flop hand', description: '', category: 'patterns' as const, family: 'rank-patterns', oddsCenti: 550, probability: 0.169, offered: true };
   const room = { id: 'r', org_id: 'dn', org_name: 'DN', name: 'R', table_id: 'atlas-04', table_name: 'Table 04', mode: 'diamonds' as const, currency: 'DIAMOND', house: 'organizer' as const,
     rules: { margin_bps: 600, min_stake_minor: 20 }, status: 'active' as const, visibility: 'public' as const, odds: { 'hand-class:pair': 540, 'colour:all-red': null } };
 

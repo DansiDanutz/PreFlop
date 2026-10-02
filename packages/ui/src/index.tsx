@@ -12,16 +12,20 @@ export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Bool
 
 export function Wordmark({ className, size = 'md' }: { className?: string; size?: 'sm' | 'md' | 'lg' }) {
   const s = size === 'lg' ? 'text-4xl' : size === 'sm' ? 'text-xl' : 'text-[28px]';
-  return <span className={cx('font-serif tracking-tight text-ink', s, className)}>PreFlop</span>;
+  return (
+    <span className={cx('inline-flex items-baseline gap-[0.18em] font-serif font-bold tracking-[-0.06em] text-ink', s, className)}>
+      PreFlop<span aria-hidden className="text-[0.5em] tracking-normal text-accent">♠</span>
+    </span>
+  );
 }
 
 /** The poker-chip balance icon from the concepts. */
 export function ChipIcon({ size = 28, className }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" className={className} aria-hidden>
-      <circle cx="16" cy="16" r="15" fill="#1fd38b" />
-      <circle cx="16" cy="16" r="10.5" fill="#0b2a1d" />
-      <circle cx="16" cy="16" r="8" fill="none" stroke="#1fd38b" strokeWidth="1.6" strokeDasharray="3 2.2" />
+      <circle cx="16" cy="16" r="15" fill="#53e6a7" />
+      <circle cx="16" cy="16" r="10.5" fill="#0f2a1e" />
+      <circle cx="16" cy="16" r="8" fill="none" stroke="#53e6a7" strokeWidth="1.6" strokeDasharray="3 2.2" />
       {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
         <rect key={a} x="14.6" y="1.5" width="2.8" height="4.6" rx="0.8" fill="#e9fff5" transform={`rotate(${a} 16 16)`} />
       ))}
@@ -40,11 +44,11 @@ export function Button({ variant = 'primary', size = 'md', className, ...p }: Bu
     danger: 'bg-danger text-white hover:brightness-110',
   }[variant];
   const s = { sm: 'h-9 px-3 text-sm', md: 'h-11 px-5 text-[15px]', lg: 'h-14 px-6 text-lg' }[size];
-  return <button className={cx('inline-flex items-center justify-center gap-2 rounded-[12px] font-semibold transition-colors disabled:cursor-not-allowed', v, s, className)} {...p} />;
+  return <button className={cx('inline-flex items-center justify-center gap-2 rounded-[8px] font-semibold transition-colors disabled:cursor-not-allowed', v, s, className)} {...p} />;
 }
 
 export function Card({ className, ...p }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cx('rounded-[18px] border border-line bg-surface', className)} {...p} />;
+  return <div className={cx('rounded-[12px] border border-line-strong/60 bg-surface', className)} {...p} />;
 }
 
 export function Badge({ children, tone = 'accent', className }: { children: ReactNode; tone?: 'accent' | 'muted' | 'live' | 'info' | 'warn' | 'danger'; className?: string }) {
@@ -95,34 +99,34 @@ export function Segmented<T extends string | number>({ options, value, onChange,
 
 const SUIT: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
 
-/** A face-up playing card from a code like "Kh", "Td", "7c". */
+const CARD_DIMS = { sm: 'h-[64px] w-[44px] text-[12px]', md: 'h-[87px] w-[59px] text-[15px]', lg: 'h-[136px] w-[92px] text-[22px]' } as const;
+
+/** A face-up playing card from a code like "Kh", "Td", "7c": ivory face, Georgia indices. */
 export function PlayingCard({ code, size = 'md', className, flip = false }: { code: string; size?: 'sm' | 'md' | 'lg'; className?: string; flip?: boolean }) {
   const rank = code.slice(0, -1).replace('T', '10');
   const suit = code.slice(-1).toLowerCase();
   const red = suit === 'h' || suit === 'd';
-  const dims = { sm: 'h-16 w-11 text-sm', md: 'h-28 w-20 text-xl', lg: 'h-40 w-28 text-3xl' }[size];
   return (
-    <div className={cx('relative select-none rounded-[10px] bg-card shadow-[0_6px_18px_rgba(0,0,0,0.45)] ring-1 ring-black/20', dims, flip && 'pf-flip', className)}
+    <div className={cx('relative shrink-0 select-none rounded-[6px] border border-white/85 bg-card font-serif shadow-[0_5px_12px_rgba(0,0,0,0.25)]', CARD_DIMS[size], flip && 'pf-flip', className)}
       style={{ color: red ? 'var(--color-card-red)' : 'var(--color-card-black)' }} aria-label={code}>
-      <div className="absolute left-1.5 top-1 flex flex-col items-center font-serif leading-none">
+      <div className="absolute left-[0.4em] top-[0.3em] flex flex-col items-center font-bold leading-[1.05]">
         <span>{rank}</span>
-        <span className="text-[0.8em]">{SUIT[suit]}</span>
+        <span className="text-[0.78em] leading-none">{SUIT[suit]}</span>
       </div>
-      <div className="absolute inset-0 grid place-items-center text-[2.2em] leading-none">{SUIT[suit]}</div>
-      <div className="absolute bottom-1 right-1.5 flex rotate-180 flex-col items-center font-serif leading-none">
+      <div className="absolute inset-0 grid place-items-center text-[2.4em] leading-none">{SUIT[suit]}</div>
+      <div className="absolute bottom-[0.3em] right-[0.4em] flex rotate-180 flex-col items-center font-bold leading-[1.05]">
         <span>{rank}</span>
-        <span className="text-[0.8em]">{SUIT[suit]}</span>
+        <span className="text-[0.78em] leading-none">{SUIT[suit]}</span>
       </div>
     </div>
   );
 }
 
-/** Green patterned card back (the concepts' face-down flop). */
+/** Green patterned card back (a face-down flop). */
 export function CardBack({ size = 'md', className }: { size?: 'sm' | 'md' | 'lg'; className?: string }) {
-  const dims = { sm: 'h-16 w-11', md: 'h-28 w-20', lg: 'h-40 w-28' }[size];
   return (
-    <div className={cx('rounded-[10px] bg-card p-1 shadow-[0_6px_18px_rgba(0,0,0,0.45)]', dims, className)}>
-      <div className="card-back-pattern h-full w-full rounded-[7px] ring-1 ring-black/30" />
+    <div className={cx('shrink-0 rounded-[6px] bg-card p-[3px] shadow-[0_5px_12px_rgba(0,0,0,0.3)]', CARD_DIMS[size], className)}>
+      <div className="card-back-pattern h-full w-full rounded-[4px] ring-1 ring-black/30" />
     </div>
   );
 }
@@ -150,7 +154,7 @@ export function RoundStepper({ phase, className }: { phase: RoundPhase; classNam
       <div className="absolute left-10 top-[9px] h-[2px] bg-accent transition-all" style={{ width: `calc(${(at / 2) * 100}% - ${at === 2 ? 80 : at === 1 ? 40 : 0}px)` }} />
       {steps.map((s, i) => (
         <div key={s.key} className="relative z-10 flex w-16 flex-col items-center gap-1.5">
-          <span className={cx('h-[18px] w-[18px] rounded-full border-2', i < at ? 'border-accent bg-accent' : i === at ? 'border-accent bg-accent shadow-[0_0_0_4px_rgba(31,211,139,0.2)]' : 'border-line-strong bg-surface')} />
+          <span className={cx('h-[18px] w-[18px] rounded-full border-2', i < at ? 'border-accent bg-accent' : i === at ? 'border-accent bg-accent shadow-[0_0_0_4px_rgba(83,230,167,0.2)]' : 'border-line-strong bg-surface')} />
           <span className={cx('text-xs', i === at ? 'text-accent' : 'text-muted')}>{s.label}</span>
         </div>
       ))}
@@ -193,7 +197,7 @@ export function BalanceCard({ amount, label, tagline, className, children }: { a
 
 export function EmptyState({ title, children }: { title: ReactNode; children?: ReactNode }) {
   return (
-    <div className="rounded-[18px] border border-dashed border-line-strong p-8 text-center">
+    <div className="rounded-[12px] border border-dashed border-line-strong p-8 text-center">
       <div className="font-serif text-xl">{title}</div>
       {children && <div className="mt-2 text-sm text-muted">{children}</div>}
     </div>

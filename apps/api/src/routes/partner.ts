@@ -141,7 +141,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const table = String(settings.default_table ?? 'green-room');
     return {
       settings,
-      snippet: `<iframe src="${web}/embed/table/${table}?token=PLAYER_SESSION_TOKEN&accent=${encodeURIComponent(String(settings.accent ?? '#1fd38b'))}" style="width:100%;max-width:440px;height:820px;border:0;border-radius:18px" allow="autoplay" title="PreFlop"></iframe>\n<!-- Get PLAYER_SESSION_TOKEN server-side: POST /v1/partner/players/{player_ref}/session (partner ${orgId}) -->`,
+      snippet: `<iframe src="${web}/embed/table/${table}?token=PLAYER_SESSION_TOKEN&accent=${encodeURIComponent(String(settings.accent ?? '#53e6a7'))}" style="width:100%;max-width:440px;height:820px;border:0;border-radius:18px" allow="autoplay" title="PreFlop"></iframe>\n<!-- Get PLAYER_SESSION_TOKEN server-side: POST /v1/partner/players/{player_ref}/session (partner ${orgId}) -->`,
     };
   };
   app.get(`${P}/widget`, async (req) => {

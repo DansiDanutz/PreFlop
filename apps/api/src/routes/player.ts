@@ -105,6 +105,17 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     return { ...u, memberships: await memberships(ctx, u.id), wallets: await wallets(ctx, u.id) };
   });
 
+  // Display name only; email and password changes need their own verified flows.
+  app.patch('/v1/me', async (req) => {
+    const u = await ctx.user(req);
+    const b = z.object({ display_name: z.string().trim().min(1).max(60) }).parse(req.body);
+    await tx(ctx.db, async (c) => {
+      await c.query('update users set display_name = $2 where id = $1', [u.id, b.display_name]);
+      await audit(c, { type: 'user.renamed', userId: u.id });
+    });
+    return { id: u.id, display_name: b.display_name };
+  });
+
   app.get('/v1/me/wallets', async (req) => ({ wallets: await wallets(ctx, (await ctx.user(req)).id) }));
 
   app.post('/v1/me/play/reset', async (req) => {

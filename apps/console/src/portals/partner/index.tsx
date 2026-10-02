@@ -174,7 +174,7 @@ export function Widget() {
   const q = useQuery({ queryKey: ['org', id, 'widget'], queryFn: () => api.partnerWidget(id) });
   const lobby = useQuery({ queryKey: ['lobby'], queryFn: api.lobby, staleTime: 60_000 });
   const book = useQuery({ queryKey: ['book', 'partner'], queryFn: () => api.book('partner'), staleTime: 5 * 60_000 });
-  const [accent, setAccent] = useState('#1fd38b');
+  const [accent, setAccent] = useState('#53e6a7');
   const [table, setTable] = useState('');
   const [markets, setMarkets] = useState<string[]>([]);
   const [presets, setPresets] = useState(DEFAULT_PRESETS);
@@ -191,7 +191,7 @@ export function Widget() {
   const tableId = table || lobby.data?.tables[0]?.id || '';
   const presetList = presets.split(',').map((x) => x.trim()).filter(Boolean);
   const errs = {
-    accent: !/^#[0-9a-fA-F]{6}$/.test(accent) ? 'Use a 6-digit hex colour like #1fd38b.' : null,
+    accent: !/^#[0-9a-fA-F]{6}$/.test(accent) ? 'Use a 6-digit hex colour like #53e6a7.' : null,
     presets: presetList.length < 1 || presetList.length > 5 || presetList.some((x) => !/^\d+$/.test(x) || Number(x) < 1) ? 'Enter 1–5 positive whole stakes, comma-separated.' : null,
   };
   const save = useAction(() => api.partnerSaveWidget(id, { accent, default_table_id: table || null, markets, stake_presets: presetList.map(Number) }), {
@@ -211,7 +211,7 @@ export function Widget() {
                 <form noValidate className="grid gap-4" onSubmit={(e) => { e.preventDefault(); if (!errs.accent && !errs.presets) save.mutate(undefined); }}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="Accent colour" error={errs.accent}>{(p) => (
-                      <div className="flex gap-2"><input type="color" aria-label="Pick accent colour" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : '#1fd38b'} onChange={(e) => setAccent(e.target.value)} className="h-10 w-12 shrink-0 cursor-pointer rounded-[10px] border border-line-strong bg-surface-2" disabled={!write} /><TextInput {...p} value={accent} onChange={(e) => setAccent(e.target.value)} disabled={!write} /></div>
+                      <div className="flex gap-2"><input type="color" aria-label="Pick accent colour" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : '#53e6a7'} onChange={(e) => setAccent(e.target.value)} className="h-10 w-12 shrink-0 cursor-pointer rounded-[10px] border border-line-strong bg-surface-2" disabled={!write} /><TextInput {...p} value={accent} onChange={(e) => setAccent(e.target.value)} disabled={!write} /></div>
                     )}</Field>
                     <Field label="Default table">{(p) => (
                       <Select {...p} value={table} onChange={(e) => setTable(e.target.value)} disabled={!write}>

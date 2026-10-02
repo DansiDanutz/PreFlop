@@ -35,6 +35,18 @@ export function categoryOf(marketId: string, family: string): Category {
   }
 }
 
+/** The engine's seven bet families, as chips in the catalogue. */
+export const FAMILIES: readonly { id: string; label: string }[] = [
+  { id: 'rank-patterns', label: 'Rank patterns' },
+  { id: 'suits-colours', label: 'Suits & colors' },
+  { id: 'high-low', label: 'High & low' },
+  { id: 'face-named', label: 'Faces & ranks' },
+  { id: 'sequences', label: 'Sequences' },
+  { id: 'totals-parity', label: 'Totals & parity' },
+  { id: 'combined', label: 'Combinations' },
+];
+export const familyLabel = (id: string) => FAMILIES.find((f) => f.id === id)?.label ?? 'More';
+
 // ------------------------------------------------------------------ catalogue
 
 export interface BetOption {
@@ -44,6 +56,8 @@ export interface BetOption {
   marketName: string;
   description: string;
   category: Category;
+  /** Engine family id (rank-patterns, suits-colours, …), for the catalogue's family chips. */
+  family: string;
   oddsCenti: number;
   probability: number;
   offered: boolean;
@@ -91,6 +105,7 @@ function toOption(m: BookMarket, s: BookSelection): BetOption {
     marketName: m.name,
     description: m.description,
     category: categoryOf(m.id, m.family),
+    family: m.family,
     oddsCenti: s.odds_centi,
     probability: s.probability,
     offered: s.offered,

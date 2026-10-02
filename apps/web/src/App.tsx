@@ -4,7 +4,6 @@ import { AppLayout } from './components/AppShell.tsx';
 import { SiteLayout } from './components/site/SiteLayout.tsx';
 import { RequireAuth, useSessionGuard } from './lib/auth.tsx';
 import { ActivityPage } from './pages/app/Activity.tsx';
-import { BrowseBetsPage } from './pages/app/BrowseBets.tsx';
 import { ClubPage } from './pages/app/Club.tsx';
 import { ClubsPage } from './pages/app/Clubs.tsx';
 import { LobbyPage } from './pages/app/Lobby.tsx';
@@ -48,7 +47,7 @@ export function App() {
           <Route path="clubs" element={<ClubsPage />} />
           <Route path="clubs/:id" element={<ClubPage />} />
           <Route path="table/:id" element={<TablePage />} />
-          <Route path="table/:id/bets" element={<BrowseBetsPage />} />
+          <Route path="table/:id/bets" element={<TablePage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="*" element={<NotFoundPage inApp />} />

@@ -6,7 +6,7 @@
 
 html, body, #root { min-height: 100%; }
 /* Keep focused or scrolled-to controls clear of the fixed tab bar. */
-html { scroll-padding-bottom: 96px; scroll-padding-top: 72px; }
+html { scroll-padding-bottom: 96px; scroll-padding-top: 96px; }
 body { overscroll-behavior-y: none; }
 
 :focus-visible {
@@ -14,6 +14,8 @@ body { overscroll-behavior-y: none; }
   outline-offset: 2px;
   border-radius: 6px;
 }
+/* Dialogs take focus themselves on open; their controls show the ring, the panel does not. */
+[role="dialog"]:focus-visible { outline: none; }
 
 /* The faint serif "PreFlop" watermark on stream thumbnails. */
 .pf-watermark {

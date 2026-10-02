@@ -48,6 +48,7 @@ export const KEYS = {
   embedToken: 'pf.embed.token',
   favorites: 'pf.favorites',
   favoriteClubs: 'pf.favoriteClubs',
+  savedTables: 'pf.savedTables',
   lastTable: 'pf.lastTable',
   stake: 'pf.stake',
 } as const;

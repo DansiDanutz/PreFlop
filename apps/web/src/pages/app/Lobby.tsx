@@ -1,87 +1,93 @@
 import { EmptyState } from '@preflop/ui';
-import { Star } from 'lucide-react';
+import { ChevronRight, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { FreeChipsCard } from '../../components/AppShell.tsx';
-import { CompactTableCard, FeaturedTableCard, TableCard } from '../../components/TableCards.tsx';
-import { ErrorState, Pill, SearchField, SerifHeading, Skeleton } from '../../components/ui.tsx';
-import { tableStatus } from '../../lib/live.ts';
-import { useFavoriteClubs, useLobby, useRooms, useWallets } from '../../lib/queries.ts';
+import { Link, useOutletContext } from 'react-router';
+import { HelpButton, PageHeader, type ShellContext } from '../../components/AppShell.tsx';
 import { RoomCard } from '../../components/RoomCard.tsx';
-import { Link } from 'react-router';
+import { TableCard, tableGrid } from '../../components/TableCards.tsx';
+import { ErrorState, SearchField, Skeleton, Tabs } from '../../components/ui.tsx';
+import { tableStatus } from '../../lib/live.ts';
+import { useLobby, useRooms, useSavedTables, useWallets } from '../../lib/queries.ts';
+import { KEYS, readString } from '../../lib/storage.ts';
 
-type Filter = 'all' | 'available' | 'favorites';
+type Filter = 'all' | 'available' | 'saved';
 
 export function LobbyPage() {
   const lobby = useLobby();
-  const favs = useFavoriteClubs();
+  const saved = useSavedTables();
+  const shell = useOutletContext<ShellContext | undefined>();
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [club, setClub] = useState('all');
 
   const tables = lobby.data?.tables ?? [];
-  const green = tables.find((t) => t.id === 'green-room');
-  const midnight = tables.find((t) => t.id === 'midnight-room');
+  const clubs = useMemo(() => (lobby.data?.clubs ?? []).filter((c) => tables.some((t) => t.club_id === c.id)), [lobby.data, tables]);
 
   const list = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return tables.filter((t) => {
-      if (filter === 'available' && !tableStatus(t).open) return false;
-      if (filter === 'favorites' && !favs.has(t.club_id)) return false;
+      if (filter === 'available' && (t.status !== 'active' || tableStatus(t).label === 'Stream unavailable')) return false;
+      if (filter === 'saved' && !saved.has(t.id)) return false;
+      if (club !== 'all' && t.club_id !== club) return false;
       const hay = `${t.name} ${t.club_name} ${t.city ?? ''}`.toLowerCase();
       return words.every((w) => hay.includes(w));
     });
-  }, [tables, q, filter, favs]);
+  }, [tables, q, filter, club, saved]);
+
+  const lastTable = readString(KEYS.lastTable) ?? tables.find((t) => t.status === 'active')?.id;
 
   return (
-    <div className="space-y-6 px-5 pb-6">
-      <FreeChipsCard tagline={0} />
+    <div>
+      <PageHeader eyebrow="Your next three cards" title="Find your table." subtitle="Different rooms. The same feeling when the cards turn."
+        action={shell && <HelpButton onClick={shell.openHelp} />} />
 
-      {(lobby.isLoading || green || midnight) && (
-        <section aria-labelledby="choose" className="space-y-3">
-          <div>
-            <SerifHeading as="h1" className="text-[28px]"><span id="choose">Choose your table</span></SerifHeading>
-            <p className="mt-1 text-sm text-muted">Two tables. Same game. Your pace.</p>
-          </div>
-          {lobby.isLoading ? (
-            <>
-              <Skeleton className="h-[330px]" />
-              <Skeleton className="h-24" />
-            </>
-          ) : (
-            <>
-              {green && <FeaturedTableCard t={green} copy="Sharpen your instincts with a classic table." />}
-              {midnight && <CompactTableCard t={midnight} title="Practice at your pace" copy="A relaxed table for casual play." />}
-            </>
-          )}
-        </section>
-      )}
-
-      <section aria-labelledby="find" className="space-y-4">
-        <SerifHeading as="h2" className="text-[28px]"><span id="find">Find your table</span></SerifHeading>
-        <SearchField value={q} onChange={setQ} placeholder="Search clubs or tables" label="Search clubs or tables" />
-        <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5" role="group" aria-label="Filter tables">
-          <Pill active={filter === 'all'} onClick={() => setFilter('all')}>All clubs</Pill>
-          <Pill active={filter === 'available'} onClick={() => setFilter('available')}>Available</Pill>
-          <Pill active={filter === 'favorites'} onClick={() => setFilter('favorites')}>
-            <Star className="h-4 w-4" aria-hidden /> Favorites
-          </Pill>
+      <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="min-w-0 flex-1"><SearchField value={q} onChange={setQ} placeholder="Search tables or clubs" label="Search tables or clubs" /></div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Tabs label="Filter tables" value={filter} onChange={setFilter} options={[
+            { id: 'all', label: 'All tables' },
+            { id: 'available', label: 'Available' },
+            { id: 'saved', label: <><Star className="h-4 w-4" aria-hidden /> Saved</> },
+          ]} />
+          <label className="sr-only" htmlFor="club-filter">Club</label>
+          <select id="club-filter" value={club} onChange={(e) => setClub(e.target.value)}
+            className="h-11 min-w-[170px] rounded-[8px] border border-line-strong/70 bg-surface px-3.5 text-[14px] text-ink focus:border-accent focus:outline-none">
+            <option value="all">All clubs</option>
+            {clubs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
+      </div>
 
-        {lobby.isLoading && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[138px]" />)}
+      <div className="mt-6 flex items-baseline justify-between gap-4 border-t border-line pt-6 text-[13px]">
+        <span className="font-semibold">{lobby.data ? `${list.length} ${list.length === 1 ? 'table' : 'tables'}` : 'Tables'}</span>
+        <span className="hidden text-ink/80 sm:inline">Choose your atmosphere. Play at your pace.</span>
+      </div>
+
+      <div className="mt-4">
         {lobby.isError && <ErrorState title="Could not load tables" onRetry={() => void lobby.refetch()}>The lobby is not reachable right now.</ErrorState>}
         {lobby.data && list.length === 0 && (
-          <EmptyState title={filter === 'favorites' ? 'No favorite clubs yet' : 'No tables match'}>
-            {filter === 'favorites' ? 'Open a club and tap the star to keep it here.' : 'Try another search or filter.'}
+          <EmptyState title={filter === 'saved' ? 'No saved tables yet' : 'No tables match'}>
+            {filter === 'saved' ? 'Tap the star on a table to keep it here.' : 'Try another search or filter.'}
           </EmptyState>
         )}
-        <ul className="space-y-3">
-          {list.map((t) => (
-            <li key={t.id}><TableCard t={t} /></li>
-          ))}
+        <ul className={tableGrid}>
+          {lobby.isLoading && [0, 1, 2].map((i) => <li key={i}><Skeleton className="h-[388px]" /></li>)}
+          {list.map((t) => <li key={t.id} className="flex"><TableCard t={t} saved={saved.has(t.id)} onToggleSave={() => saved.toggle(t.id)} /></li>)}
         </ul>
-        {lobby.data && (
-          <p className="text-center text-xs text-faint">All live tables are simulated while physical-table play is switched off.</p>
-        )}
-      </section>
+      </div>
+
+      {lastTable && (
+        <section className="mt-8 flex flex-col gap-4 rounded-[12px] border border-line-strong/60 bg-gradient-to-r from-accent-deep/40 to-surface px-6 py-6 sm:flex-row sm:items-center sm:px-10">
+          <span aria-hidden className="text-[28px] text-accent/80">♠</span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-serif text-[20px] tracking-[-0.03em]">A little intuition. A lot of possibilities.</h2>
+            <p className="mt-1 text-[13px] text-ink/80">Save six favorite predictions and explore every offered selection. The next flop is yours to read.</p>
+          </div>
+          <Link to={`/app/table/${lastTable}/bets`} className="inline-flex items-center gap-1.5 text-[14px] text-accent hover:underline">
+            Explore the bets <ChevronRight className="h-4 w-4" aria-hidden />
+          </Link>
+        </section>
+      )}
 
       <RoomsSection />
     </div>
@@ -93,14 +99,17 @@ function RoomsSection() {
   const wallets = useWallets();
   if (rooms.isError || (rooms.data && rooms.data.rooms.length === 0)) return null;
   return (
-    <section aria-labelledby="rooms" className="space-y-3">
-      <div className="flex items-baseline justify-between">
-        <SerifHeading as="h2" className="text-[28px]"><span id="rooms">Rooms</span></SerifHeading>
-        <Link to="/app/profile" className="text-sm text-accent hover:underline">Have a code?</Link>
+    <section aria-labelledby="rooms" className="mt-12">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">Organizer rooms</p>
+          <h2 id="rooms" className="mt-2 font-serif text-[28px] tracking-[-0.04em]">Rooms</h2>
+          <p className="mt-1 text-[14px] text-ink/80">Organizers run these books in chips or diamonds. No cash value.</p>
+        </div>
+        <Link to="/app/profile" className="shrink-0 text-[14px] text-accent hover:underline">Have a code?</Link>
       </div>
-      <p className="-mt-1 text-sm text-muted">Organizers run these books in chips or diamonds. No cash value.</p>
-      {rooms.isLoading && <Skeleton className="h-24" />}
-      <ul className="space-y-3">
+      <ul className="mt-5 grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2 [&>li]:min-w-0">
+        {rooms.isLoading && <li><Skeleton className="h-24" /></li>}
         {rooms.data?.rooms.map((r) => <li key={r.id}><RoomCard room={r} wallets={wallets.data?.wallets} /></li>)}
       </ul>
     </section>

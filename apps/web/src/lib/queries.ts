@@ -162,3 +162,16 @@ export function useFavoriteClubs() {
   }, []);
   return { ids, toggle, has: (id: string) => ids.includes(id) };
 }
+
+/** Tables the player starred in the lobby (a per-device convenience, like favorite clubs). */
+export function useSavedTables() {
+  const [ids, setIds] = useState<string[]>(() => sanitizeFavorites(readJson(KEYS.savedTables), 100) ?? []);
+  const toggle = useCallback((id: string) => {
+    setIds((cur) => {
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      writeJson(KEYS.savedTables, next);
+      return next;
+    });
+  }, []);
+  return { ids, toggle, has: (id: string) => ids.includes(id) };
+}

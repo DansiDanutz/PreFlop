@@ -25,7 +25,7 @@ export function RoomCard({ room, wallets }: { room: Room; wallets: readonly Wall
         </div>
       </div>
       <Link to={`/app/table/${room.table_id}?room=${encodeURIComponent(room.id)}`}
-        className="inline-flex h-9 shrink-0 items-center gap-0.5 rounded-[12px] border border-line-strong px-3 text-sm font-semibold hover:border-accent hover:text-accent">
+        className="inline-flex h-9 shrink-0 items-center gap-0.5 rounded-[8px] border border-line-strong px-3 text-sm font-semibold hover:border-accent hover:text-accent">
         Enter <ChevronRight className="h-4 w-4" aria-hidden />
       </Link>
     </Card>

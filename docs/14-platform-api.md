@@ -26,6 +26,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 |---|---|
 | `POST /v1/auth/register` · `login` · `logout` | Sessions. A new account gets 10,000 free play chips |
 | `GET /v1/me` · `/v1/me/wallets` | Profile, memberships, and wallets. Wallets cover play, chips, diamonds per organization, fiat and stablecoins |
+| `PATCH /v1/me` | Change the display name (1–60 characters). Email and password changes are not part of this route |
 | `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool |
 | `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History |
 | `POST /v1/me/play/reset` | Resets play money at any time |

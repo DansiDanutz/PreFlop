@@ -1,91 +1,60 @@
 import type { TableSummary } from '@preflop/client';
-import { Card, CardBack, StatusDot, cx } from '@preflop/ui';
-import { ChevronRight, MapPin } from 'lucide-react';
+import { cx } from '@preflop/ui';
+import { ChevronRight, Star } from 'lucide-react';
 import { Link } from 'react-router';
-import { roundLabel } from '../lib/flop.ts';
-import { openHandNo, tableStatus } from '../lib/live.ts';
-import { StreamView } from './StreamView.tsx';
+import { tableStatus } from '../lib/live.ts';
+import { StreamView, feltLabel, feltTheme } from './StreamView.tsx';
 
-export const PRACTICE_TABLES = ['green-room', 'midnight-room'] as const;
-
-const linkBtn = 'inline-flex h-9 items-center justify-center gap-1 whitespace-nowrap rounded-[12px] px-3.5 text-sm font-semibold transition-colors';
-
-/** Lobby table card (concept "Clubs & tables", screen 1). */
-export function TableCard({ t }: { t: TableSummary }) {
-  const st = tableStatus(t);
-  const unavailable = st.label === 'Stream unavailable';
-  return (
-    <Card className="flex gap-3.5 p-3">
-      <StreamView cards={t.last_flop?.cards} size="sm" cardScale={0.74} unavailable={unavailable} className="min-h-[112px] w-[128px] shrink-0 self-stretch rounded-[12px]" />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h3 className="truncate text-[17px] font-semibold leading-tight">{t.name}</h3>
-        <p className="mt-0.5 truncate text-[13px] text-muted">Organized by {t.club_name}</p>
-        <p className="mt-1 flex items-center gap-1 text-[13px] text-muted">
-          <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span className="truncate">{t.city ?? 'Online'}{t.kind === 'simulated' ? ' · Simulated table' : ''}</span>
-        </p>
-        <div className="mt-1 whitespace-nowrap"><StatusDot tone={st.tone} label={<span className="text-[13px]">{st.label}</span>} /></div>
-        <div className="mt-auto flex justify-end pt-2">
-          <Link to={`/app/table/${t.id}`}
-            className={cx(linkBtn, st.open ? 'bg-accent text-accent-ink hover:bg-accent-strong' : 'border border-line-strong text-ink hover:border-accent hover:text-accent')}>
-            {st.open ? 'Open table' : 'View table'} <ChevronRight className="h-4 w-4" aria-hidden />
-          </Link>
-        </div>
-      </div>
-    </Card>
-  );
+/** Two-digit table number for the card heading: "Table 04" → "TABLE 04", otherwise the city. */
+function tableCode(t: TableSummary) {
+  const code = feltLabel(t.name);
+  return code && !/^table\s*\d+$/i.test(t.name.trim()) ? code : t.kind === 'simulated' ? 'PRACTICE TABLE' : 'LIVE TABLE';
 }
 
-/** Large "Choose your table" card (concept 01, screen 1) — The Green Room. */
-export function FeaturedTableCard({ t, copy }: { t: TableSummary; copy: string }) {
+/** A table in the lobby or a club: felt with the last flop, name, club, status and Take a seat. */
+export function TableCard({ t, saved, onToggleSave }: { t: TableSummary; saved: boolean; onToggleSave: () => void }) {
   const st = tableStatus(t);
-  const hand = openHandNo(t);
+  // Any active table with a live feed can be joined; predictions open with each new round.
+  const unavailable = t.status !== 'active' || st.label === 'Stream unavailable';
+  const ready = !unavailable;
   return (
-    <Card className="overflow-hidden">
-      <div className="felt felt-vignette relative h-[150px]">
-        <span aria-hidden className="pf-watermark absolute bottom-2 left-1/2 -translate-x-1/2 text-[40px]">PreFlop</span>
-        <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
-          <CardBack size="md" className="-mr-6 -rotate-[14deg] translate-y-2" />
-          <CardBack size="md" className="z-10" />
-          <CardBack size="md" className="-ml-6 rotate-[14deg] translate-y-2" />
+    <article className="flex w-full flex-col overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface">
+      <StreamView cards={t.last_flop?.cards} size="md" unavailable={unavailable} theme={feltTheme(t.club_id)} label={feltLabel(t.name)}
+        className="h-[190px] border-b border-white/5"
+        action={
+          <button type="button" onClick={onToggleSave} aria-pressed={saved} aria-label={saved ? `Remove ${t.name} from saved tables` : `Save ${t.name}`}
+            className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/40 text-white/90 hover:bg-black/60">
+            <Star className={cx('h-[18px] w-[18px]', saved && 'fill-accent text-accent')} strokeWidth={1.7} />
+          </button>
+        } />
+      <div className="flex flex-1 flex-col px-[18px] pb-[18px] pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[13px] tracking-[0.06em] text-ink/85">{tableCode(t)}</span>
+          <span className={cx('inline-flex items-center gap-1.5 text-[12px]', ready ? 'text-accent' : 'text-muted')}>
+            <span className={cx('h-1.5 w-1.5 rounded-full', ready ? 'bg-accent' : 'bg-faint')} />
+            {ready ? 'Ready to play' : t.status === 'paused' ? 'Paused' : 'Offline'}
+          </span>
         </div>
-      </div>
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-serif text-[26px] leading-tight">{t.name}</h3>
-            <p className="text-sm text-muted">Simulated table</p>
-          </div>
-          <span className="pt-1 text-right text-[13px] text-muted">{st.open && hand ? roundLabel(hand) : st.label}</span>
-        </div>
-        <p className="mt-3 text-[15px] text-ink/90">{copy}</p>
-        <Link to={`/app/table/${t.id}`} className="mt-4 flex h-14 items-center justify-center gap-1 rounded-[14px] bg-accent text-lg font-semibold text-accent-ink hover:bg-accent-strong">
-          Play <ChevronRight className="h-5 w-5" aria-hidden />
+        <h3 className="mt-2.5 font-serif text-[21px] leading-tight tracking-[-0.03em]">{t.name}</h3>
+        <Link to={`/app/clubs/${t.club_id}`} className="mt-2 inline-flex w-fit items-center gap-0.5 text-[14px] text-muted hover:text-ink">
+          {t.club_name} <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
+        <div className="mt-4 flex flex-1 items-end justify-between gap-3 border-t border-line pt-4">
+          <span className="pb-0.5 text-[12px] text-ink/80">
+            {t.city ?? 'Online'} <span className="mx-1 text-faint">/</span> {t.kind === 'simulated' ? 'Practice' : 'Live'}
+          </span>
+          {unavailable ? (
+            <span className="pb-0.5 text-[12px] text-ink/80">Check back later</span>
+          ) : (
+            <Link to={`/app/table/${t.id}`}
+              className="inline-flex h-11 items-center gap-2 rounded-[8px] bg-accent px-3.5 text-[14px] font-bold text-accent-ink hover:bg-accent-strong">
+              Take a seat <ChevronRight className="h-4 w-4" aria-hidden />
+            </Link>
+          )}
+        </div>
       </div>
-    </Card>
+    </article>
   );
 }
 
-/** Compact practice card (concept 01, screen 1) — Midnight Room. */
-export function CompactTableCard({ t, title, copy }: { t: TableSummary; title: string; copy: string }) {
-  const st = tableStatus(t);
-  return (
-    <Link to={`/app/table/${t.id}`} className="block rounded-[18px] focus-visible:outline-2">
-      <Card className="flex items-center gap-4 p-4 hover:border-line-strong">
-        <div className="felt relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[12px]" aria-hidden>
-          <CardBack size="sm" className="h-12 w-8 -rotate-6" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-serif text-xl leading-tight">{t.name}</h3>
-          <p className="truncate text-[13px] text-muted">{title}</p>
-          <p className="mt-0.5 truncate text-sm text-ink/80">{copy}</p>
-          <div className="mt-1"><StatusDot tone={st.tone} label={<span className="text-[12px]">{st.label}</span>} /></div>
-        </div>
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line-strong text-ink" aria-hidden>
-          <ChevronRight className="h-5 w-5" />
-        </span>
-      </Card>
-    </Link>
-  );
-}
+export const tableGrid = 'grid grid-cols-[minmax(0,1fr)] gap-5 sm:grid-cols-2 xl:grid-cols-3 [&>li]:min-w-0';
