@@ -1,0 +1,35 @@
+{
+  "name": "@preflop/table",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PreFlop club tablet (dealer, floor, floor manager): signed Ed25519 requests from a non-extractable WebCrypto key",
+  "scripts": {
+    "dev": "vite --port 5175 --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5175 --host",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run",
+    "e2e:setup": "tsx --conditions=preflop-source scripts/e2e-setup.ts",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "@preflop/ui": "workspace:*",
+    "lucide-react": "^0.544.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "playwright-core": "1.56.1",
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.3.6",
+    "vitest": "^3.0.0"
+  }
+}
