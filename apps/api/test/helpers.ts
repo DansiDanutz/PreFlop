@@ -9,12 +9,14 @@ import { SimTable, type Send, keysToFile } from '../src/sim/tableSim.ts';
 import { runOutboxOnce, sweepOnce } from '../src/worker.ts';
 
 export const BASE_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5432/postgres';
+/** Prefix of the per-file test databases; set TEST_DB_PREFIX to run several checkouts against one server. */
+export const testDbName = (name: string) => `${process.env.TEST_DB_PREFIX ?? 'preflop_test'}_${name}`;
 
 /** A fresh, migrated database per test file. */
 export async function freshDb(name: string): Promise<Db> {
   const admin = new pg.Client({ connectionString: BASE_URL });
   await admin.connect();
-  const db = `preflop_test_${name}`;
+  const db = testDbName(name);
   await admin.query(`drop database if exists ${db} with (force)`);
   await admin.query(`create database ${db}`);
   await admin.end();

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RoundExposure, getSelection, payoutMinor, statsFor } from '@preflop/odds-engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Harness, harness } from './helpers.ts';
+import { type Harness, harness, testDbName } from './helpers.ts';
 
 /**
  * Two API processes on one database (docs/13 §5): the exposure cap must hold although each process
@@ -42,7 +42,7 @@ async function call(base: string, method: string, path: string, token?: string, 
 beforeAll(async () => {
   h = await harness('multi_instance');
   const u = new URL(process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5432/postgres');
-  u.pathname = '/preflop_test_multi_instance';
+  u.pathname = `/${testDbName('multi_instance')}`;
   instances.push(...(await Promise.all([startInstance(u.toString()), startInstance(u.toString())])));
 });
 afterAll(async () => {
