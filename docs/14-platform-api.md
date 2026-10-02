@@ -22,7 +22,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `GET /v1/tables/:id/rounds/current` · `GET /v1/rounds/:id` | Round state |
 | `GET /v1/rooms` · `GET /v1/rooms/:id` | Public rooms run by organizers. A room's `odds` map shows its own book |
 | `POST /v1/applications` | Website application forms for a club, partner or organizer |
-| `WS /v1/stream` | Subscribe with `{"subscribe":["lobby","table:<id>"]}`. Add `?token=` to receive your own bet events |
+| `WS /v1/stream` | Subscribe with `{"subscribe":["lobby","table:<id>"]}`. To receive your own bet events, send `{"type":"auth","token":"<session>"}` as the **first** frame (answered with `{"type":"auth","ok":true}`). Tokens in the URL are ignored |
 
 ## Player
 | Route | Purpose |

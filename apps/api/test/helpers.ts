@@ -10,11 +10,15 @@ import { runOutboxOnce, sweepOnce } from '../src/worker.ts';
 
 export const BASE_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5432/postgres';
 
+/** Database name prefix, so parallel checkouts sharing one Postgres never drop each other's databases. */
+export const DB_PREFIX = (process.env.TEST_DB_PREFIX ?? 'preflop_test').replace(/[^a-z0-9_]/gi, '_');
+export const testDbName = (name: string) => `${DB_PREFIX}_${name}`;
+
 /** A fresh, migrated database per test file. */
 export async function freshDb(name: string): Promise<Db> {
   const admin = new pg.Client({ connectionString: BASE_URL });
   await admin.connect();
-  const db = `preflop_test_${name}`;
+  const db = testDbName(name);
   await admin.query(`drop database if exists ${db} with (force)`);
   await admin.query(`create database ${db}`);
   await admin.end();
