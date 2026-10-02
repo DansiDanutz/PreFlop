@@ -7,9 +7,11 @@ import { placeRoomBet } from '../bets/rooms.ts';
 import { placeBet, resetPlay } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
-import { ApiError, badRequest, conflict, unauthorized } from '../lib/errors.ts';
+import { ApiError, badRequest, conflict } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
+import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
 
@@ -66,7 +68,7 @@ async function assertRgAllows(ctx: AppContext, userId: string, roundId: string, 
 }
 
 export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
-  app.post('/v1/auth/register', async (req, reply) => {
+  app.post('/v1/auth/register', { preHandler: perIp(ctx.limits.register) }, async (req, reply) => {
     const b = Register.parse(req.body);
     const id = newId('u');
     const hash = await hashPassword(b.password);
@@ -84,10 +86,13 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send({ token, user: { id, email: b.email, display_name: b.display_name } });
   });
 
-  app.post('/v1/auth/login', async (req) => {
+  app.post('/v1/auth/login', { preHandler: perIp(ctx.limits.login) }, async (req) => {
     const b = Login.parse(req.body);
-    const u = (await ctx.db.query<{ id: string; password_hash: string; status: string }>('select id, password_hash, status from users where email = $1 and partner_id is null', [b.email])).rows[0];
-    if (!u || !(await verifyPassword(b.password, u.password_hash))) throw unauthorized('invalid_credentials', 'wrong email or password');
+    // Per-email lockout in Postgres (all instances): 5 failures in 15 min → 429 login_locked.
+    const u = await guardedLogin(ctx.db, b.email, req.ip, LOGIN_LOCKOUT, async (c) => {
+      const row = (await c.query<{ id: string; password_hash: string; status: string }>('select id, password_hash, status from users where email = $1 and partner_id is null', [b.email])).rows[0];
+      return row && (await verifyPassword(b.password, row.password_hash)) ? row : null;
+    });
     // A self-exclusion lifts itself only once its period has ended.
     await ctx.db.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
     if (u.status === 'closed' || u.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${u.status}`);
@@ -125,6 +130,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/v1/bets', async (req, reply) => {
     const u = await ctx.user(req);
+    ctx.limits.bets.consume(`user:${u.id}`);
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
     const b = Bet.parse(req.body);

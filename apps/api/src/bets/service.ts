@@ -1,5 +1,5 @@
 import {
-  type Channel, type PlayMode, RoundExposure, getSelection, payoutMinor, price, statsFor,
+  type Channel, FLOP_COUNT, type PlayMode, type SelectionStats, getSelection, payoutMinor, price, statsFor,
 } from '@preflop/odds-engine';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
@@ -12,9 +12,12 @@ import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 /**
  * Bet placement where PreFlop is the house (docs/13 §5).
  *
- * Serialised per round by an in-process keyed mutex; exposure is checked against an exact
- * per-round cache that is rebuilt from the database whenever it is missing or its bet count
- * disagrees with the database. ONE API process per region (see the scaling note in docs/13).
+ * Correct with any number of API processes: the exposure check runs INSIDE the bet transaction,
+ * after `select … for update` on the round row (first in the global lock order), and is computed
+ * from the round's accepted bets in the database. Two bets on one round — from any process — are
+ * therefore strictly serialised, and each sees every bet committed before it. The in-process
+ * keyed mutex only queues same-process bets so they do not each hold a pool connection while
+ * waiting for the row lock; correctness does not depend on it.
  */
 
 const STATS = new Map<string, ReturnType<typeof statsFor>>();
@@ -27,7 +30,7 @@ export function statsOf(selectionId: string) {
   return s;
 }
 
-// ---- keyed mutex
+// ---- keyed mutex (in-process queueing only; the database lock is what serialises)
 const chains = new Map<string, Promise<unknown>>();
 export async function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(key) ?? Promise.resolve();
@@ -44,31 +47,34 @@ export async function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise
   }
 }
 
-// ---- exposure cache
-interface Cached { exposure: RoundExposure; count: number }
-const exposureCache = new Map<string, Cached>();
-export const evictExposure = (roundId: string) => exposureCache.delete(roundId);
-/** Test hook: lets a test inject a failure between commit and cache update. */
+/** Test hook: lets a test inject a failure between commit and the response. */
 export const hooks: { afterCommit?: ((betId: string) => void) | undefined } = {};
 
-// The cache holds every accepted bet (no limit inside it); the round limit is applied to NEW bets
-// with lossIfAdded(), so a lowered limit can never make the cache drop an accepted bet.
-async function loadExposure(db: Db, roundId: string): Promise<Cached> {
-  const rows = (await db.query<{ selection_id: string; stake_minor: number; odds_centi: number }>(
-    `select selection_id, stake_minor, odds_centi from bets where round_id = $1 and status = 'accepted' and house_kind = 'preflop'`, [roundId])).rows;
-  const exposure = new RoundExposure(Number.MAX_SAFE_INTEGER);
-  for (const b of rows) exposure.tryAdd(statsOf(b.selection_id), b.stake_minor, b.odds_centi);
-  return { exposure, count: rows.length };
-}
-
-async function exposureFor(db: Db, roundId: string): Promise<Cached> {
-  const dbCount = (await db.query<{ n: number }>(`select count(*)::int as n from bets where round_id = $1 and status = 'accepted' and house_kind = 'preflop'`, [roundId])).rows[0]!.n;
-  let c = exposureCache.get(roundId);
-  if (!c || c.count !== dbCount) {
-    c = await loadExposure(db, roundId);
-    exposureCache.set(roundId, c);
+/**
+ * Exact worst-case loss of a round's PreFlop book if one more bet were added (the same arithmetic
+ * as RoundExposure.lossIfAdded): houseNet[flop] = Σ stakes − Σ payouts of the bets that win on
+ * that flop. Accepted bets are aggregated per selection in SQL — payouts with the engine's exact
+ * rounding, floor(stake × odds / 100) per bet — so the cost is per distinct selection, not per bet.
+ * Call it with the round row locked FOR UPDATE, so no other bet can commit in between.
+ */
+export async function roundLossIfAdded(c: Tx, roundId: string, stats: SelectionStats, stakeMinor: number, oddsCenti: number): Promise<number> {
+  const rows = (await c.query<{ selection_id: string; stake: number; pay: number }>(
+    `select selection_id, sum(stake_minor)::bigint as stake, sum(stake_minor * odds_centi / 100)::bigint as pay
+       from bets where round_id = $1 and status = 'accepted' and house_kind = 'preflop' group by selection_id`, [roundId])).rows;
+  const pay = payoutMinor(stakeMinor, oddsCenti);
+  let stakes = stakeMinor, gross = stakeMinor + pay;
+  const owed = new Float64Array(FLOP_COUNT);
+  for (const f of stats.winningFlops) owed[f]! += pay;
+  for (const r of rows) {
+    stakes += r.stake;
+    gross += r.stake + r.pay;
+    for (const f of statsOf(r.selection_id).winningFlops) owed[f]! += r.pay;
   }
-  return c;
+  // Every partial sum is bounded by gross; within MAX_SAFE_INTEGER, Float64 stays exact.
+  if (gross > Number.MAX_SAFE_INTEGER) throw unprocessable('limit_exceeded', 'round totals would exceed the safe integer range');
+  let maxOwed = 0;
+  for (let f = 0; f < FLOP_COUNT; f++) if (owed[f]! > maxOwed) maxOwed = owed[f]!;
+  return Math.max(0, maxOwed - stakes);
 }
 
 export interface PlaceBetInput {
@@ -125,11 +131,11 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
   let stats;
   try { stats = statsOf(i.selectionId); } catch { throw unprocessable('unknown_selection', `no selection ${i.selectionId}`); }
 
-  // 3. serialise per round
+  // 3. queue same-process bets on this round (the row lock below is what serialises across processes)
   return withKeyLock(`round:${i.roundId}`, async () => {
     const r = (await db.query<{ id: string; table_id: string; state: string; mode: PlayMode; currency: string }>('select id, table_id, state, mode, currency from rounds where id = $1', [i.roundId])).rows[0];
     if (!r) throw notFound('round');
-    // 4. round and table
+    // 4. round and table (fast pre-checks; the round state is re-checked under the lock)
     if (r.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
     const table = (await db.query<TableRow>('select * from poker_tables where id = $1', [r.table_id])).rows[0]!;
     const ready = await tableReadiness(db, table);
@@ -144,55 +150,39 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
     if (!p.offered) throw unprocessable('not_offered', p.reason ?? 'selection not offered');
     if (p.oddsCenti !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
     const odds = p.oddsCenti;
-    const maxLoss = table.max_round_loss_minor;
-    if (payoutMinor(i.stakeMinor, odds) > maxLoss) throw unprocessable('limit_exceeded', 'payout above the table maximum');
+    if (payoutMinor(i.stakeMinor, odds) > table.max_round_loss_minor) throw unprocessable('limit_exceeded', 'payout above the table maximum');
 
-    // 6. exposure (read-only)
-    const cache = await exposureFor(db, r.id);
-    if (cache.exposure.lossIfAdded(stats, i.stakeMinor, odds) > maxLoss) throw unprocessable('limit_exceeded', 'the round has reached its risk limit for this selection');
-
-    // 7. one transaction, round first, then the wallet
+    // 6. one transaction in the global lock order: round → user → table → wallet
     const betId = newId('bet');
     const wallet = acct(i.userId, 'wallet', r.mode, r.currency);
-    let committed = false;
-    let countMatched = false;
-    try {
-      const out = await tx(db, async (c: Tx) => {
-        const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for share', [r.id])).rows[0]!;
-        if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
-        await assertEligibleInTx(c, i.userId, r.table_id);
-        await lockAccount(c, wallet);
-        if ((await balance(c, wallet)) < i.stakeMinor) throw unprocessable('insufficient_funds', 'balance too low');
-        const ins = await c.query(
-          `insert into bets (id, idempotency_key, user_id, round_id, selection_id, stake_minor, odds_centi, mode, currency, status, channel, partner_id)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'accepted', $10, $11)
-           on conflict (user_id, idempotency_key) do nothing returning *`,
-          [betId, i.idempotencyKey, i.userId, r.id, i.selectionId, i.stakeMinor, odds, r.mode, r.currency, i.channel ?? 'direct', i.partnerId ?? null]);
-        if (ins.rowCount !== 1) return { replay: true as const };
-        await post(c, 'bet.stake', betId, [{ from: wallet, to: acct('PreFlop', 'bankroll', r.mode, r.currency), amountMinor: i.stakeMinor }]);
-        await audit(c, { type: 'bet.accepted', betId, roundId: r.id, userId: i.userId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds });
-        const n = (await c.query<{ n: number }>(`select count(*)::int as n from bets where round_id = $1 and status = 'accepted' and house_kind = 'preflop'`, [r.id])).rows[0]!.n;
-        countMatched = n === cache.count + 1;
-        return { replay: false as const, row: ins.rows[0] };
-      });
-      committed = true;
-      if (out.replay) {
-        evictExposure(r.id);
-        const again = (await db.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
-        return view(again);
-      }
-      // 8. update or evict the cache
-      hooks.afterCommit?.(betId);
-      if (countMatched) {
-        cache.exposure.tryAdd(stats, i.stakeMinor, odds);
-        cache.count += 1;
-      } else evictExposure(r.id);
-      ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: null } });
-      return view(out.row);
-    } catch (e) {
-      if (!committed || !(e instanceof ApiError)) evictExposure(r.id);
-      throw e;
-    }
+    const out = await tx(db, async (c: Tx) => {
+      // FOR UPDATE (not FOR SHARE): bets on one round run one at a time on every instance, so
+      // the exposure computed below includes every bet committed before this one.
+      const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for update', [r.id])).rows[0]!;
+      if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
+      await assertEligibleInTx(c, i.userId, r.table_id);
+      const replay = (await c.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
+      if (replay) return { replay: true as const, row: replay };
+      // exposure, from the database, under the round lock; the table's limit as of now
+      const maxLoss = (await c.query<{ max_round_loss_minor: number }>('select max_round_loss_minor from poker_tables where id = $1', [r.table_id])).rows[0]!.max_round_loss_minor;
+      if ((await roundLossIfAdded(c, r.id, stats, i.stakeMinor, odds)) > maxLoss) throw unprocessable('limit_exceeded', 'the round has reached its risk limit for this selection');
+      await lockAccount(c, wallet);
+      if ((await balance(c, wallet)) < i.stakeMinor) throw unprocessable('insufficient_funds', 'balance too low');
+      const ins = await c.query(
+        `insert into bets (id, idempotency_key, user_id, round_id, selection_id, stake_minor, odds_centi, mode, currency, status, channel, partner_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'accepted', $10, $11)
+         on conflict (user_id, idempotency_key) do nothing returning *`,
+        [betId, i.idempotencyKey, i.userId, r.id, i.selectionId, i.stakeMinor, odds, r.mode, r.currency, i.channel ?? 'direct', i.partnerId ?? null]);
+      if (ins.rowCount !== 1) return { replay: true as const, row: (await c.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0] };
+      await post(c, 'bet.stake', betId, [{ from: wallet, to: acct('PreFlop', 'bankroll', r.mode, r.currency), amountMinor: i.stakeMinor }]);
+      await audit(c, { type: 'bet.accepted', betId, roundId: r.id, userId: i.userId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds });
+      return { replay: false as const, row: ins.rows[0] };
+    });
+    if (out.replay) return view(out.row);
+    // 7. committed: nothing in memory to update, so a failure from here on cannot skew exposure
+    hooks.afterCommit?.(betId);
+    ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: null } });
+    return view(out.row);
   });
 }
 

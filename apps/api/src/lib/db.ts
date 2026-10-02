@@ -38,12 +38,15 @@ export async function tx<T>(db: Db, fn: (c: Tx) => Promise<T>): Promise<T> {
       await c.query('rollback').catch(() => {});
       const code = (e as { code?: string }).code;
       if (code && RETRYABLE.has(code)) {
-        retryCount.value++;
         const window = BACKOFF[attempt];
         if (window) {
+          retryCount.value++;
+          if (code === '40P01') retryStats.deadlocks++;
+          else retryStats.serializationFailures++;
           await sleep(window[0] + Math.random() * (window[1] - window[0]));
           continue;
         }
+        retryStats.exhausted++;
         throw new ApiError(503, 'retry_later', 'database contention, retry later');
       }
       throw e;
@@ -55,6 +58,8 @@ export async function tx<T>(db: Db, fn: (c: Tx) => Promise<T>): Promise<T> {
 
 /** Number of deadlock/serialization retries since start (exported for metrics and tests). */
 export const retryCount = { value: 0 };
+/** The same retries split by cause, plus transactions that gave up after the last retry (503). */
+export const retryStats = { deadlocks: 0, serializationFailures: 0, exhausted: 0 };
 
 export async function one<T extends pg.QueryResultRow>(c: Tx | Db, sql: string, params: unknown[] = []): Promise<T | undefined> {
   return (await c.query<T>(sql, params)).rows[0];

@@ -1,7 +1,7 @@
 import { type Channel, FAMILY_NAMES, FIXED_ODDS_CHANNELS, buildBook } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../app.ts';
-import { notFound } from '../lib/errors.ts';
+import { ApiError, notFound } from '../lib/errors.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 
 const BOOK = buildBook();
@@ -48,8 +48,38 @@ export async function tableSummaries(ctx: AppContext, where = 'true', params: un
   return out;
 }
 
+const withTimeout = <T>(p: Promise<T>, ms: number) =>
+  Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms).unref())]);
+
+/** Database round trip and freshest worker heartbeat, each bounded so a hung database fails fast. */
+export async function readinessChecks(ctx: AppContext) {
+  const maxAgeMs = ctx.config.workerHeartbeatMaxAgeMs;
+  try {
+    const r = (await withTimeout(ctx.db.query<{ age_ms: number | null }>(
+      `select (extract(epoch from (clock_timestamp() - max(beat_at))) * 1000)::bigint as age_ms from worker_heartbeats`), 2000)).rows[0];
+    const age = r?.age_ms ?? null;
+    return {
+      database: { ok: true },
+      worker: { ok: age !== null && age <= maxAgeMs, last_beat_age_ms: age, max_age_ms: maxAgeMs },
+    };
+  } catch (e) {
+    return { database: { ok: false, error: (e as Error).message }, worker: { ok: false, last_beat_age_ms: null, max_age_ms: maxAgeMs } };
+  }
+}
+
 export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
+  // Liveness: the process answers. Never touches the database.
   app.get('/v1/health', async () => ({ ok: true, time: new Date().toISOString() }));
+
+  // Readiness: the database answers and a worker loop has beaten recently. 503 otherwise.
+  app.get('/v1/health/ready', async () => {
+    const checks = await readinessChecks(ctx);
+    if (!checks.database.ok || !checks.worker.ok) {
+      const why = [!checks.database.ok && 'database unreachable', checks.database.ok && !checks.worker.ok && 'no fresh worker heartbeat'].filter(Boolean).join('; ');
+      throw new ApiError(503, 'not_ready', `not ready: ${why}`, { checks });
+    }
+    return { ready: true, checks };
+  });
 
   app.get('/v1/book', async (req) => {
     const ch = ((req.query as { channel?: string }).channel ?? 'direct') as Channel;

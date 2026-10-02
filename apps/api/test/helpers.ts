@@ -41,7 +41,9 @@ let userN = 0;
 
 export async function harness(name: string, overrides: Partial<Config> = {}): Promise<Harness> {
   const db = await freshDb(name);
-  const config: Config = { ...loadConfig({}), runWorker: false, ...overrides };
+  const base = loadConfig({});
+  // Rate limits are off unless a test opts in: the suites register and bet far faster than a person.
+  const config: Config = { ...base, runWorker: false, rateLimit: { ...base.rateLimit, enabled: false }, ...overrides };
   const app = await buildApp(db, config);
   const send: Send = async (r) => {
     const res = await app.inject({ method: r.method as 'GET', url: r.url, headers: r.headers, ...(r.body !== undefined ? { payload: r.body } : {}) });

@@ -412,27 +412,23 @@ Server timestamps use `clock_timestamp()`, never the client's clock.
 
 1. **Replay check:** the same `(user, key)` returns the original bet.
 2. **Validate:** the stake is an integer within limits, and the selection exists.
-3. **Serialise per round** with an in-process keyed mutex. The exposure cache is per round and is rebuilt from the round's accepted bets in the database whenever it is missing, or when its bet count differs from the database's.
+3. **Queue per round in the process** with a keyed mutex. This only stops same-process bets from each holding a database connection while they wait; correctness comes from the row lock in step 6, so any number of API processes can take bets.
 4. **Check the round and table:** the round must be `OPEN` (otherwise `409 round_locked`), and `tableReadiness()` must pass (otherwise `409 table_not_ready`).
 5. **Check the price:** `price(statsFor(selection), round.channel)`. It must be offered, and must equal the client's `odds_centi` (otherwise `409 price_changed` with the new odds). The payout must be ≤ the maximum payout.
-6. **Check exposure:** `RoundExposure.canAccept()` against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. This is a read-only check; the cache is not changed yet.
-7. **One database transaction, in the global lock order (§4): round first, then the wallet:**
-   1. `select state from rounds where id = $1 for share`, and re-check that it is `OPEN`, because a lock may have landed meanwhile (`FOR SHARE` lets bets on one round run in parallel, but conflicts with the `FOR UPDATE` taken by start, void and settlement);
-   2. `lockAccount(wallet)`;
-   3. check balance ≥ stake;
-   4. insert the bet;
-   5. post `bet.stake` (wallet → `PreFlop:bankroll`);
-   6. audit;
-   7. read the round's accepted-bet count, and compare it with the cache's count plus one.
+6. **One database transaction, in the global lock order (§4): round first, then user, table and wallet:**
+   1. `select state from rounds where id = $1 for update`, and re-check that it is `OPEN`, because a lock may have landed meanwhile. `FOR UPDATE` serialises the bets of one round **across every API process**, and conflicts with start, void and settlement as before;
+   2. re-check the account and the table (`for share`), and replay the idempotency key under the lock;
+   3. **check exposure** against `poker_tables.max_round_loss_minor`, otherwise `422 limit_exceeded`. The worst case is computed from the database, under the lock: the round's accepted PreFlop-house bets are summed per selection (stakes, and payouts with the engine's exact per-bet rounding), and the house net is evaluated on all 22,100 flops with the new bet added, exactly as `RoundExposure.lossIfAdded()` does;
+   4. `lockAccount(wallet)`;
+   5. check balance ≥ stake;
+   6. insert the bet;
+   7. post `bet.stake` (wallet → `PreFlop:bankroll`);
+   8. audit.
 
    A deadlock or serialization failure rolls the whole transaction back and is retried per §4; the idempotency key makes the retry safe.
-8. **After commit, update the cache, or evict it:**
-   - If the commit succeeded and the count matched, apply the bet to the cache (`tryAdd`).
-   - If applying throws, the commit outcome is unknown (for example a lost connection), or the counts differed, **evict the round's cache**. The next bet rebuilds it from the database before its exposure check.
+7. **After commit** there is no in-memory exposure state to update, so a crash or error after the commit cannot make a later check under-count accepted bets.
 
-   The cache can therefore never under-count accepted bets, and the round-loss limit holds even after a partial failure.
-
-**Scaling note:** the in-process mutex and exposure cache assume **one API process per region**. Horizontal scaling needs a shared exposure store, for example Redis with a Lua script doing the same worst-case check, or a per-round row lock plus a persisted exposure vector.
+**Scaling note:** bet placement is safe with several API processes per region (tested with two processes racing on one round). Rooms were already safe: an organizer-house bet computes the collateral reserve under the collateral account's `FOR UPDATE` lock, and a pool carries no house exposure. Per-IP rate limits are per process (see `docs/14`); the login lockout is in Postgres and holds across processes.
 
 ## 6. Settlement and refunds
 

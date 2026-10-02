@@ -16,6 +16,22 @@ export type PlatformRole = 'admin' | 'ops' | 'risk' | 'support';
 
 export interface Problem { type: string; title: string; status: number; [k: string]: unknown }
 
+/** GET /v1/admin/metrics. Database counters are global; `instance` is the API process that answered. */
+export interface AdminMetrics {
+  at: string;
+  outbox: { pending: number; oldest_pending_age_s: number | null };
+  webhook_deliveries: { pending: number; failed: number; oldest_pending_age_s: number | null };
+  alerts: { open: number; open_critical: number };
+  rounds_by_state: Partial<Record<'OPEN' | 'LOCKED' | 'DEALT' | 'REVIEW' | 'EVIDENCE_REJECTED' | 'SETTLED' | 'VOID', number>>;
+  sweeper_voids_last_hour: number;
+  worker: { ok: boolean; last_beat_age_ms: number | null; max_age_ms: number };
+  instance: {
+    pid: number; started_at: string; uptime_s: number;
+    db_retries: { total: number; deadlocks: number; serialization_failures: number; exhausted: number };
+    ws_clients: number;
+  };
+}
+
 export interface User {
   id: string; email: string; display_name: string; status: 'active' | 'suspended' | 'self_excluded' | 'closed';
   kyc_status: 'none' | 'pending' | 'verified' | 'rejected'; platform_role: PlatformRole | null; country: string | null; partner_id: string | null;
@@ -100,6 +116,8 @@ export class ApiError extends Error {
     super(problem.title || problem.type);
   }
   get type() { return this.problem.type; }
+  /** Seconds to wait before retrying a 429 (rate_limited, login_locked), else null. */
+  get retryAfterS(): number | null { return typeof this.problem.retry_after_s === 'number' ? this.problem.retry_after_s : null; }
 }
 
 export const newIdempotencyKey = () =>
@@ -246,6 +264,7 @@ export function createClient(o: ClientOptions) {
     adminLedger: (f: { account?: string; kind?: string; limit?: number } = {}) => get<{ accounts: { account_id: string; balance_minor: number; currency: string }[]; entries: (LedgerLine & { tx_id: number })[] }>(`/v1/admin/ledger${q(f)}`),
     adminAudit: (f: { limit?: number } = {}) => get<{ chain: { ok: boolean; brokenAt: number | null; count: number }; events: { seq: number; at: string; hash: string; event: string }[] }>(`/v1/admin/audit${q(f)}`),
     adminStatements: (period?: string) => get<{ statements: Statement[] }>(`/v1/admin/statements${q({ period })}`),
+    adminMetrics: () => get<AdminMetrics>('/v1/admin/metrics'),
     adminRisk: () => get<{ rounds: { round_id: string; table_name: string; bets: number; staked_minor: number; worst_case_loss_minor: number; limit_minor: number; currency: string }[]; monitor: { table_id: string; table_name: string; hands: number; threshold: number; top: { selection_id: string; statistic: number }[] }[] }>('/v1/admin/risk'),
     adminPayments: () => get<{ payments: (Payment & { user_email: string | null; org_id: string | null })[] }>('/v1/admin/payments'),
   };

@@ -46,6 +46,30 @@ To check the code:
 - `pnpm typecheck` checks types.
 - `ROUNDS=10000 pnpm --filter @preflop/api soak` runs the phase 1 exit check.
 
+## Running in production
+
+The API and the worker validate their environment at start (`apps/api/src/config.ts`). A malformed value stops them with a list of every problem. With `NODE_ENV=production` they also refuse unsafe settings, listed below. Real money stays off and physical-table play stays disabled: those are database settings and owner decisions, not environment variables.
+
+| Variable | Default | Production rule |
+|---|---|---|
+| `NODE_ENV` | `development` | Set to `production` to turn on the checks in this column |
+| `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 32 characters and not a demo value (`postgres`, `password`, `changeme`, …) |
+| `CORS_ORIGINS` | `*` | **Required.** A comma-separated list of the web, console and table origins. `*` or empty is refused |
+| `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts |
+| `WEBHOOK_ALLOW_PRIVATE` | `false` | Must not be `true` (it lets webhooks reach private addresses; tests only) |
+| `RATE_LIMIT_ENABLED` | `true` | Must not be `false` |
+| `RATE_LIMIT_AUTH_PER_MIN` · `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` · `RATE_LIMIT_BETS_PER_MIN` | `20` · `30` · `120` | Per-IP login/register, per-IP partner token, per-user bets; per API instance |
+| `TRUST_PROXY` | `false` | Set to `true` behind a load balancer, so per-IP limits see the client address |
+| `PORT` | `4000` | |
+| `RUN_WORKER` | `true` | `false` when the worker runs separately (`pnpm --filter @preflop/api worker`); several workers may run |
+| `WORKER_HEARTBEAT_MAX_AGE_MS` | `15000` | `GET /v1/health/ready` fails when no worker has beaten for this long |
+| `RESULT_SLA_MS` · `REVIEW_SLA_MS` · `MAX_CAPTURE_DELAY_MS` | 5 min · 30 min · 3 min | Round deadlines (`docs/13` §4) |
+| `PLAY_START` | `10000` | Starting play-money balance |
+| `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
+| `WEB_URL` | `http://localhost:5173` | Origin used in the partner widget snippet |
+
+Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
+
 ## Documentation
 
 | | |

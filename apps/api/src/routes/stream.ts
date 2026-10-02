@@ -10,12 +10,16 @@ import { type DomainEvent, bus } from '../lib/events.ts';
  */
 export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/stream', { websocket: true }, async (socket, req) => {
+    // Counted from the first moment, so a socket that closes during the token lookup is not leaked.
+    ctx.stats.wsClients++;
+    socket.on('close', () => { ctx.stats.wsClients--; });
     const topics = new Set<string>();
     let userId: string | null = null;
     const token = (req.query as { token?: string }).token;
     if (token) {
       try { userId = (await userFromToken(ctx.db, token)).id; } catch { userId = null; }
     }
+    if (socket.readyState !== socket.OPEN) return; // closed during the lookup: never subscribe it
     const onEvent = (e: DomainEvent) => {
       const forUser = e.userId !== undefined;
       if (forUser ? e.userId === userId : topics.has('lobby') || (e.tableId && topics.has(`table:${e.tableId}`))) {
