@@ -169,7 +169,7 @@ describe('simulated table (docs/13 §8.11, §8.12)', () => {
     const t = (await h.db.query('select status, pause_reason from poker_tables where id = $1', ['sim-1'])).rows[0];
     expect(t.status).toBe('paused');
     expect(t.pause_reason).toMatch(/outcome monitor/);
-    expect(hands).toBeLessThan(12); // calibrated: caught in 9 hands
+    expect(hands).toBeLessThan(12); // calibrated: caught in 10 hands
     const alert = (await h.db.query(`select details from alerts where kind = 'outcome_monitor_alarm'`)).rows[0];
     expect(alert.details.alarms.map((a: any) => a.selectionId)).toContain('colour:all-red');
     expect(await h.sim.openHand()).toBeNull();

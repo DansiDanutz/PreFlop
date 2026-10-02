@@ -174,7 +174,7 @@ Verdict: *request changes*. F02, F03, F05, F06 and F11 materially addressed; F07
 |---|---|---|
 | I-1 | `OrganizerCollateral` reserved only each round's net loss (−minNet), but the ledger balance it is compared with already contains the open rounds' stakes. Example: an organizer with 850 plus a posted 100 stake (balance 950) could accept a bet paying 1,000 | **Fixed in the engine and the backend:** the reserve is the full worst-case outgo (stakes + certain costs − minNet). A regression test was added (`houses-diamonds.test.ts`), and the room bet path checks it under a per-organizer lock |
 | I-2 | The daily deposit limit compared EUR cents with USDT/USDC micro-units | **Fixed:** limits are EUR-equivalent across currencies (integration test) |
-| I-3 | The outcome monitor's first calibration (ratio 3, threshold 7) gave 327 false alarms in 50,000 fair flops | **Fixed:** with ratio 5 and threshold 14 there were 0 false alarms in 50,000 fair flops, and a stacked "all red" deck is caught in 9 hands (`apps/api/src/rounds/monitor.ts`) |
+| I-3 | The outcome monitor's first calibration (ratio 3, threshold 7) gave 327 false alarms in 50,000 fair flops. Ratio 5 / threshold 14 still alarmed once on the live simulator (atlas-07, after 233 hands); 1,000,000 fair flops measured one false alarm per ~52,600 hands | **Fixed:** ratio 5 / threshold 16 gives one false alarm per ~500,000 hands per table and catches a stacked "all red" deck in 10 hands. The simulator's dealing was checked unbiased over 300,000 hands (`apps/api/src/rounds/monitor.ts`) |
 
 **Now executed, not only specified:** these `docs/13` §8 acceptance criteria are covered by PostgreSQL integration tests in `apps/api/test`:
 - terminal compare-and-set;
