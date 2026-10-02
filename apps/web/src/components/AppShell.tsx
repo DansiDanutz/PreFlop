@@ -1,5 +1,5 @@
 import { ChipIcon, Wordmark, cx, formatMoney } from '@preflop/ui';
-import { Building2, CircleHelp, FileText, Gift, House, Info, Trophy, User } from 'lucide-react';
+import { Building2, CircleHelp, FileText, Gift, House, Info, Swords, Trophy, User } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useSearchParams } from 'react-router';
 import { useBalance, useMe, useRealMoney } from '../lib/queries.ts';
@@ -13,6 +13,7 @@ export function initials(name: string | undefined | null) {
 const NAV = [
   { to: '/app', label: 'Lobby', short: 'Lobby', end: true, icon: House },
   { to: '/app/clubs', label: 'Clubs', short: 'Clubs', end: false, icon: Building2 },
+  { to: '/app/tournaments', label: 'Tournaments', short: 'Tourneys', end: false, icon: Swords },
   { to: '/app/leaderboards', label: 'Leaderboards', short: 'Ranks', end: false, icon: Trophy },
   { to: '/app/promotions', label: 'Promotions', short: 'Promos', end: false, icon: Gift },
   { to: '/app/activity', label: 'Activity', short: 'Activity', end: false, icon: FileText },
@@ -25,6 +26,7 @@ export function sectionOf(path: string): string {
   if (path.startsWith('/app/clubs/')) return 'The club';
   if (path.startsWith('/app/clubs')) return 'Clubs';
   if (path.startsWith('/app/activity')) return 'Activity';
+  if (path.startsWith('/app/tournaments')) return 'Tournaments';
   if (path.startsWith('/app/leaderboards')) return 'Leaderboards';
   if (path.startsWith('/app/promotions')) return 'Promotions';
   if (path.startsWith('/app/profile')) return 'Profile';
