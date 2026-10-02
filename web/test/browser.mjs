@@ -1,63 +1,119 @@
-import assert from 'node:assert/strict';
-import {mkdir} from 'node:fs/promises';
-const {chromium}=await import(process.env.PREFLOP_PLAYWRIGHT_MODULE||'playwright');
-const browser=await chromium.launch({headless:true,channel:'chrome'});
-const context=await browser.newContext({viewport:{width:1440,height:1000}});
-const page=await context.newPage();const errors=[];
-page.on('pageerror',e=>errors.push(e.message));
-await mkdir('.local/qa',{recursive:true});
-await page.goto('http://127.0.0.1:4173');
-await page.getByRole('heading',{name:'Find your table.'}).waitFor();
-assert.equal(await page.locator('.table-card').count(),6);
-await page.screenshot({path:'.local/qa/lobby-desktop.png',fullPage:true});
-await page.getByRole('link',{name:'Take a seat'}).first().click();
-await page.getByRole('heading',{name:/Favorite bets/}).waitFor();
-assert.equal(await page.locator('.favorite-grid .bet-card').count(),6);
-await page.getByRole('button',{name:/Browse all 241 bets/}).click();
-await page.getByRole('searchbox',{name:'Search bets'}).fill('Exactly 2 red');
-await page.getByRole('button',{name:'Save favorite: Exactly 2 red',exact:true}).click();
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+const { chromium } = await import(
+  process.env.PREFLOP_PLAYWRIGHT_MODULE || "playwright"
+);
+const browser = await chromium.launch({ headless: true, channel: "chrome" });
+const context = await browser.newContext({
+  viewport: { width: 1440, height: 1000 },
+});
+const page = await context.newPage();
+const errors = [];
+page.on("pageerror", (e) => errors.push(e.message));
+await mkdir(".local/qa", { recursive: true });
+await page.goto("http://127.0.0.1:4173");
+await page.getByRole("heading", { name: "Find your table." }).waitFor();
+assert.equal(await page.locator(".table-card").count(), 6);
+await page.screenshot({ path: ".local/qa/lobby-desktop.png", fullPage: true });
+await page.getByRole("link", { name: "Take a seat" }).first().click();
+await page.getByRole("heading", { name: /Favorite bets/ }).waitFor();
+assert.equal(await page.locator(".favorite-grid .bet-card").count(), 6);
+await page.getByRole("button", { name: /Browse all 241 bets/ }).click();
+await page
+  .getByRole("searchbox", { name: "Search bets" })
+  .fill("Exactly 2 red");
+await page
+  .getByRole("button", { name: "Save favorite: Exactly 2 red", exact: true })
+  .click();
 await page.locator('#sheet [data-action="slot"]').first().click();
-await page.getByRole('button',{name:'Replace favorite',exact:true}).click();
-await page.locator('#sheet').waitFor({state:'hidden'});
-assert.match(await page.locator('#main .favorite-grid').innerText(),/Exactly 2 red/);
+await page
+  .getByRole("button", { name: "Replace favorite", exact: true })
+  .click();
+await page.locator("#sheet").waitFor({ state: "hidden" });
+assert.match(
+  await page.locator("#main .favorite-grid").innerText(),
+  /Exactly 2 red/,
+);
 await page.reload();
-await page.getByRole('heading',{name:/Favorite bets/}).waitFor();
-assert.match(await page.locator('#main .favorite-grid').innerText(),/Exactly 2 red/);
-await page.getByRole('button',{name:'Confirm · 100 chips',exact:true}).click();
-await page.locator('.result-panel').waitFor();
-await page.getByRole('button',{name:/View round receipt/}).click();
-await page.getByRole('heading',{name:'The round receipt.'}).waitFor();
-await page.keyboard.press('Escape');
-await page.locator('#sheet').waitFor({state:'hidden'});
-await page.getByRole('link',{name:'Activity',exact:true}).first().click();
-await page.locator('.activity-row').waitFor();
-assert.equal(await page.locator('.activity-row').count(),1);
-await page.getByRole('link',{name:'Profile',exact:true}).first().click();
-await page.getByLabel('Display name').fill('Alex');
-await page.getByRole('button',{name:'Save name',exact:true}).click();
-await page.getByRole('heading',{name:'Alex',exact:true}).waitFor();
-await page.reload();await page.getByRole('heading',{name:'Alex',exact:true}).waitFor();
-const widths=[320,390,768,1024,1440];const routes=['lobby','clubs','club/atlas','table/atlas-04','activity','profile'];
-for(const width of widths){
-  await page.setViewportSize({width,height:960});
-  for(const route of routes){
-    await page.goto('http://127.0.0.1:4173/#'+route);await page.locator('#main').waitFor();
-    const sizes=await page.evaluate(()=>({w:window.innerWidth,scroll:document.documentElement.scrollWidth}));
-    assert.ok(sizes.scroll<=sizes.w+1,`${route} overflows at ${width}: ${JSON.stringify(sizes)}`);
+await page.getByRole("heading", { name: /Favorite bets/ }).waitFor();
+assert.match(
+  await page.locator("#main .favorite-grid").innerText(),
+  /Exactly 2 red/,
+);
+await page
+  .getByRole("button", { name: "Confirm · 100 chips", exact: true })
+  .click();
+await page.locator(".result-panel").waitFor();
+await page.getByRole("button", { name: /View round receipt/ }).click();
+await page.getByRole("heading", { name: "The round receipt." }).waitFor();
+await page.keyboard.press("Escape");
+await page.locator("#sheet").waitFor({ state: "hidden" });
+await page.getByRole("link", { name: "Activity", exact: true }).first().click();
+await page.locator(".activity-row").waitFor();
+assert.equal(await page.locator(".activity-row").count(), 1);
+await page.getByRole("link", { name: "Profile", exact: true }).first().click();
+await page.getByLabel("Display name").fill("Alex");
+await page.getByRole("button", { name: "Save name", exact: true }).click();
+await page.getByRole("heading", { name: "Alex", exact: true }).waitFor();
+await page.reload();
+await page.getByRole("heading", { name: "Alex", exact: true }).waitFor();
+const widths = [320, 390, 768, 1024, 1440];
+const routes = [
+  "lobby",
+  "clubs",
+  "club/atlas",
+  "table/atlas-04",
+  "activity",
+  "profile",
+];
+for (const width of widths) {
+  await page.setViewportSize({ width, height: 960 });
+  for (const route of routes) {
+    await page.goto("http://127.0.0.1:4173/#" + route);
+    await page.locator("#main").waitFor();
+    const sizes = await page.evaluate(() => ({
+      w: window.innerWidth,
+      scroll: document.documentElement.scrollWidth,
+    }));
+    assert.ok(
+      sizes.scroll <= sizes.w + 1,
+      `${route} overflows at ${width}: ${JSON.stringify(sizes)}`,
+    );
   }
 }
-await page.setViewportSize({width:390,height:844});
-await page.goto('http://127.0.0.1:4173/#lobby');await page.locator('.table-card').first().waitFor();
-await page.screenshot({path:'.local/qa/lobby-mobile.png',fullPage:true});
-await page.goto('http://127.0.0.1:4173/#table/atlas-04');await page.locator('.bet-card').first().waitFor();
-await page.screenshot({path:'.local/qa/table-mobile.png',fullPage:true});
-await page.getByRole('button',{name:/Browse all 241 bets/}).click();
-await page.screenshot({path:'.local/qa/catalogue-mobile.png'});
-await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.querySelector('#sheet').contains(document.activeElement)),true);
-await page.keyboard.press('Escape');
-await page.emulateMedia({reducedMotion:'reduce'});
-assert.equal(await page.evaluate(()=>matchMedia('(prefers-reduced-motion: reduce)').matches),true);
-await page.evaluate(()=>document.documentElement.style.fontSize='200%');
-assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'200% text reflow overflow');
-assert.deepEqual(errors,[]);
-await browser.close();console.log('Browser journeys, persistence, six routes × five widths, keyboard dialog, reduced-motion and 200% text checks passed.');
+await page.setViewportSize({ width: 390, height: 844 });
+await page.goto("http://127.0.0.1:4173/#lobby");
+await page.locator(".table-card").first().waitFor();
+await page.screenshot({ path: ".local/qa/lobby-mobile.png", fullPage: true });
+await page.goto("http://127.0.0.1:4173/#table/atlas-04");
+await page.locator(".bet-card").first().waitFor();
+await page.screenshot({ path: ".local/qa/table-mobile.png", fullPage: true });
+await page.getByRole("button", { name: /Browse all 241 bets/ }).click();
+await page.screenshot({ path: ".local/qa/catalogue-mobile.png" });
+await page.keyboard.press("Tab");
+assert.equal(
+  await page.evaluate(() =>
+    document.querySelector("#sheet").contains(document.activeElement),
+  ),
+  true,
+);
+await page.keyboard.press("Escape");
+await page.emulateMedia({ reducedMotion: "reduce" });
+assert.equal(
+  await page.evaluate(
+    () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+  ),
+  true,
+);
+await page.evaluate(() => (document.documentElement.style.fontSize = "200%"));
+assert.ok(
+  await page.evaluate(
+    () => document.documentElement.scrollWidth <= innerWidth + 1,
+  ),
+  "200% text reflow overflow",
+);
+assert.deepEqual(errors, []);
+await browser.close();
+console.log(
+  "Browser journeys, persistence, six routes × five widths, keyboard dialog, reduced-motion and 200% text checks passed.",
+);

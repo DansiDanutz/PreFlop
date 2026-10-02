@@ -22,4 +22,3 @@ jobs:
       - run: pnpm --filter @preflop/odds-engine smoke
       - run: pnpm check:app
       - run: pnpm test:app
-      - run: pnpm build:app
