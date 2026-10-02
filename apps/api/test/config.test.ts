@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, loadConfig, passwordWeakness } from '../src/config.ts';
+import { ConfigError, corsOrigin, isPrivateDbHost, loadConfig, passwordWeakness } from '../src/config.ts';
 
 const STRONG_DB = `postgres://preflop:${'k'.repeat(20)}Q7-${'z'.repeat(12)}@db.internal:5432/preflop`;
 const PROD = {
@@ -42,6 +42,30 @@ describe('validated config', () => {
     // Private hosts (Docker, Fly private network) need no TLS.
     for (const host of ['postgres', 'db.internal', 'preflop-db.flycast', 'localhost']) {
       expect(problemsOf({ ...PROD, DATABASE_URL: `postgres://preflop:${'k'.repeat(20)}Q7@${host}:5432/preflop` })).toEqual([]);
+    }
+    // IP literals other than loopback are public: a public IPv6 address still needs TLS.
+    expect(problemsOf({ ...PROD, DATABASE_URL: `postgres://preflop:${'k'.repeat(20)}Q7@[2001:db8::10]:5432/preflop` })).toEqual([expect.stringMatching(/without TLS/)]);
+    expect(problemsOf({ ...PROD, DATABASE_URL: `postgres://preflop:${'k'.repeat(20)}Q7@[2001:db8::10]:5432/preflop?sslmode=verify-full` })).toEqual([]);
+    expect(isPrivateDbHost('[::1]')).toBe(true);
+    expect(isPrivateDbHost('[fd00::1]')).toBe(false);
+    expect(isPrivateDbHost('203.0.113.7')).toBe(false);
+  });
+
+  it('CORS_ORIGINS may hold a narrow per-deployment wildcard for preview URLs', () => {
+    const preview = 'https://preflop-staging-web-*-irises-projects-ce549f63.vercel.app';
+    expect(problemsOf({ ...PROD, CORS_ORIGINS: `https://preflop-staging-web.vercel.app,${preview}` })).toEqual([]);
+    const [exact, pattern] = corsOrigin(['https://preflop-staging-web.vercel.app', preview]) as [string, RegExp];
+    expect(exact).toBe('https://preflop-staging-web.vercel.app');
+    expect(pattern.test('https://preflop-staging-web-a1b2c3d4e-irises-projects-ce549f63.vercel.app')).toBe(true);
+    // The * never spans a dash or a dot: another account's names or hosts don't match.
+    expect(pattern.test('https://preflop-staging-web-x-evil-irises-projects-ce549f63.vercel.app')).toBe(false);
+    expect(pattern.test('https://preflop-staging-web-a.evil.com-irises-projects-ce549f63.vercel.app')).toBe(false);
+    expect(pattern.test('https://preflop-staging-web-abc-irises-projects-ce549f63.vercel.app.evil.com')).toBe(false);
+    expect(pattern.test('http://preflop-staging-web-abc-irises-projects-ce549f63.vercel.app')).toBe(false);
+    expect(corsOrigin(['*'])).toBe(true);
+    // Broad wildcards are refused in production.
+    for (const broad of ['https://*.vercel.app', 'https://*-x.vercel.app', 'http://web-*-x.vercel.app', 'https://web-*-x-*-y.vercel.app']) {
+      expect(problemsOf({ ...PROD, CORS_ORIGINS: broad })).toEqual([expect.stringMatching(/too broad/)]);
     }
   });
 

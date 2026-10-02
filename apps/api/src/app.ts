@@ -5,7 +5,7 @@ import { type PlayMode } from '@preflop/odds-engine';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, LogController } from 'fastify';
 import { ZodError } from 'zod';
 import { type SessionUser, bearer, userFromToken } from './auth/players.ts';
-import type { Config } from './config.ts';
+import { type Config, corsOrigin } from './config.ts';
 import type { Db } from './lib/db.ts';
 import { ApiError } from './lib/errors.ts';
 import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
@@ -77,7 +77,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     done(null, body);
   });
 
-  await app.register(cors, { origin: config.corsOrigins.includes('*') ? true : config.corsOrigins, credentials: true });
+  await app.register(cors, { origin: corsOrigin(config.corsOrigins), credentials: true });
   await app.register(websocket);
 
   app.setErrorHandler((err: unknown, req: FastifyRequest, reply: FastifyReply) => {

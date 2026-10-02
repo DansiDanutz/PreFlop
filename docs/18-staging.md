@@ -51,7 +51,7 @@ Staging runs the real product against **simulated tables**:
    3. If Vercel asks for access to the repository, approve the Vercel GitHub app for it.
 
 ## Deploying
-- **Automatic.** Every push to `main` runs CI. When CI passes, **Deploy staging** (`.github/workflows/deploy-staging.yml`) deploys the API, then the simulator, then smoke-checks `/v1/health/ready`. Vercel builds the three sites from the same push, and builds a preview for every pull request.
+- **Automatic.** Every push to `main` runs CI. When CI passes, **Deploy staging** (`.github/workflows/deploy-staging.yml`) deploys the API, then the simulator, then smoke-checks `/v1/health/ready`. Vercel builds the three sites from the same push, and builds a preview for every pull request. Previews talk to the staging API from their unique deployment URL (`<project>-<hash>-irises-projects-ce549f63.vercel.app`, listed under the project's Deployments); the API's `CORS_ORIGINS` allows that pattern, but not the branch aliases (`…-git-<branch>-…`).
 - **By hand.** Use Actions → Deploy staging → Run workflow, or from the repo root:
   ```sh
   flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only

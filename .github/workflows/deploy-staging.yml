@@ -20,10 +20,15 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # Pinned flyctl release, verified against its published checksum before it runs.
+      FLYCTL_VERSION: 0.4.111
+      FLYCTL_SHA256: 1878d7fb1f8a418039042cf0749e4b7216c6c7018b66ae10611a64c2b6d9aa9e
     steps:
+      # The Fly token is given only to the steps that need it, never to the installer.
       - name: Check for the Fly token
         id: token
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
             echo "FLY_API_TOKEN is not set; skipping the staging deploy (docs/18-staging.md)."
@@ -39,13 +44,20 @@ jobs:
       - name: Install flyctl
         if: steps.token.outputs.ok == 'true'
         run: |
-          curl -fsSL https://fly.io/install.sh | sh
+          curl -fsSL -o /tmp/flyctl.tgz "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          echo "${FLYCTL_SHA256}  /tmp/flyctl.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.fly/bin" && tar -xzf /tmp/flyctl.tgz -C "$HOME/.fly/bin" flyctl
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+          "$HOME/.fly/bin/flyctl" version
       - name: Deploy the API
         if: steps.token.outputs.ok == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only --wait-timeout 600
       - name: Deploy the simulated tables
         if: steps.token.outputs.ok == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy --config deploy/fly/sim.toml --dockerfile Dockerfile --remote-only --wait-timeout 600
       - name: Smoke check
         if: steps.token.outputs.ok == 'true'
