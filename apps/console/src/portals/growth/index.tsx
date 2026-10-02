@@ -10,18 +10,18 @@ import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Secti
 
 /** Leaderboards and promotions for the PreFlop team, clubs and organizers (docs/16). */
 
-const MODE_CURRENCY: Record<string, string[]> = { play: ['PLAY'], 'virtual-chips': ['CHIP'], diamonds: ['DIAMOND'], 'real-fiat': ['EUR'], 'real-crypto': ['USDT', 'USDC'] };
-const MODE_NAME: Record<string, string> = { play: 'Free chips', 'virtual-chips': 'Chips', diamonds: 'Diamonds', 'real-fiat': 'Real money (EUR)', 'real-crypto': 'Real money (crypto)' };
+export const MODE_CURRENCY: Record<string, string[]> = { play: ['PLAY'], 'virtual-chips': ['CHIP'], diamonds: ['DIAMOND'], 'real-fiat': ['EUR'], 'real-crypto': ['USDT', 'USDC'] };
+export const MODE_NAME: Record<string, string> = { play: 'Free chips', 'virtual-chips': 'Chips', diamonds: 'Diamonds', 'real-fiat': 'Real money (EUR)', 'real-crypto': 'Real money (crypto)' };
 const METRIC_NAME: Record<LeaderboardMetric, string> = { net: 'Net result', volume: 'Volume', roi: 'Return per chip', points: 'Points' };
-const amount = (minor: number, cur: string) => (cur === 'PLAY' || cur === 'CHIP' ? formatMoney(minor, 'PLAY') : formatMoney(minor, cur));
-const day = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-const localInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+export const amount = (minor: number, cur: string) => (cur === 'PLAY' || cur === 'CHIP' ? formatMoney(minor, 'PLAY') : formatMoney(minor, cur));
+export const day = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+export const localInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 function statusTone(s: string): 'accent' | 'muted' | 'warn' | 'info' | 'danger' {
   return s === 'active' || s === 'approved' ? 'accent' : s === 'scheduled' || s === 'pending_review' ? 'info' : s === 'rejected' || s === 'cancelled' ? 'danger' : 'muted';
 }
 
-function useScope() {
+export function useScope() {
   const p = usePortal();
   return { admin: p.kind === 'admin', orgId: p.orgId, kind: p.kind };
 }

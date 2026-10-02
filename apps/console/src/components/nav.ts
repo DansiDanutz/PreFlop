@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, BadgeEuro, BookOpen, Building2, Coins, CreditCard, Diamond, FileText, Gauge, Gem, KeyRound, LayoutDashboard,
-  Landmark, ListChecks, Trophy, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
+  Landmark, ListChecks, Trophy, Swords, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
   type LucideIcon,
 } from 'lucide-react';
 import type { PortalKind } from '../lib/portals.ts';
@@ -29,6 +29,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
     ] },
     { label: 'Growth', items: [
       { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'tournaments', label: 'Tournaments', icon: Swords },
       { to: 'promotions', label: 'Promotions', icon: Gift },
       { to: 'agents', label: 'Agents', icon: Network },
     ] },
@@ -47,6 +48,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
     { label: 'Play', items: [
       { to: 'rooms', label: 'Rooms', icon: DoorOpen },
       { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'tournaments', label: 'Tournaments', icon: Swords },
       { to: 'promotions', label: 'Promotions', icon: Gift },
       { to: 'chips', label: 'Chips', icon: Coins },
       { to: 'players', label: 'Players', icon: Users },
@@ -75,6 +77,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
     { items: [{ to: '', label: 'Overview', icon: LayoutDashboard, end: true }, { to: 'rooms', label: 'Rooms', icon: DoorOpen }] },
     { label: 'Growth', items: [
       { to: 'leaderboards', label: 'Leaderboards', icon: Trophy },
+      { to: 'tournaments', label: 'Tournaments', icon: Swords },
       { to: 'promotions', label: 'Promotions', icon: Gift },
     ] },
     { label: 'Currencies', items: [
