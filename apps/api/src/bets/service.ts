@@ -187,7 +187,7 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
         cache.exposure.tryAdd(stats, i.stakeMinor, odds);
         cache.count += 1;
       } else evictExposure(r.id);
-      ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, data: { betId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds } });
+      ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: null } });
       return view(out.row);
     } catch (e) {
       if (!committed || !(e instanceof ApiError)) evictExposure(r.id);

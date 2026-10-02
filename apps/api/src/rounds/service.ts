@@ -441,7 +441,7 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
   let paid = 0, staked = 0;
   const record = async (b: BetRow, status: 'won' | 'lost' | 'void', payout: number) => {
     await c.query(`update bets set status = $2, payout_minor = $3, settled_at = clock_timestamp() where id = $1 and status = 'accepted'`, [b.id, status, payout]);
-    ev.push({ type: 'bet.settled', userId: b.user_id, roundId: r.id, data: { betId: b.id, status, payoutMinor: payout, partnerId: b.partner_id } });
+    ev.push({ type: 'bet.settled', userId: b.user_id, roundId: r.id, tableId: r.table_id, data: { betId: b.id, status, payoutMinor: payout, partnerId: b.partner_id, tableId: r.table_id, roomId: b.room_id } });
   };
   // Fixed odds (PreFlop or organizer house): the at-risk amount plays at the accepted odds.
   for (const b of bets.filter((x) => x.house_kind !== 'pool')) {
@@ -501,7 +501,7 @@ export async function voidRound(c: Tx, r: RoundRow, reason: string, by: string, 
     // Undo every placement posting (stake, fees, rake, pool entry): the player gets the full stake back.
     await reverse(c, 'bet.stake', b.id, 'bet.refund');
     await c.query(`update bets set status = 'void', payout_minor = stake_minor, settled_at = clock_timestamp() where id = $1 and status = 'accepted'`, [b.id]);
-    ev.push({ type: 'bet.voided', userId: b.user_id, roundId: r.id, data: { betId: b.id, refundMinor: b.stake_minor, partnerId: b.partner_id } });
+    ev.push({ type: 'bet.voided', userId: b.user_id, roundId: r.id, tableId: r.table_id, data: { betId: b.id, refundMinor: b.stake_minor, partnerId: b.partner_id, tableId: r.table_id, roomId: b.room_id } });
   }
   await audit(c, { type: 'round.voided', roundId: r.id, reason, by, refunds: bets.length });
   ev.push({ type: 'round.voided', tableId: r.table_id, roundId: r.id, data: { handNo: r.hand_no, reason } });

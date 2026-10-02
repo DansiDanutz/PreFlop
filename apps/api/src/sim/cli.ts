@@ -47,6 +47,9 @@ const tables = (await seed()).map((k) => new SimTable(send, k));
 for (const t of tables) await t.syncCheckpoint();
 console.log(`simulating ${tables.length} tables against ${API}, a flop every ${WINDOW / 1000}s`);
 
+// Every Table Box heartbeats once a second (docs/11): readiness needs a heartbeat younger than 5 s.
+for (const t of tables) setInterval(() => { t.heartbeat().catch(() => {}); }, 1000);
+
 async function loop(t: SimTable, offset: number) {
   await new Promise((r) => setTimeout(r, offset));
   for (;;) {

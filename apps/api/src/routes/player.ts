@@ -135,7 +135,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const q = req.query as { limit?: string; round_id?: string; status?: string };
     const limit = Math.min(200, Math.max(1, Number(q.limit ?? 50)));
     const rows = (await ctx.db.query(
-      `select b.id as bet_id, b.round_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
+      `select b.id as bet_id, b.round_id, b.room_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
               r.hand_no, r.table_id, r.flop, t.name as table_name
          from bets b join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.user_id = $1 and ($2::text is null or b.round_id = $2) and ($3::text is null or b.status = $3)

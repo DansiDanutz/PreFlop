@@ -57,6 +57,10 @@ export interface Room {
   house: 'organizer' | 'pool'; rules: RoomRules; status: 'active' | 'paused' | 'closed'; visibility: 'public' | 'invite'; invite_code?: string | null;
 }
 
+/** GET /v1/rooms/:id: the room plus its own book. Odds are null where the room does not offer a selection.
+ *  Pool rooms return 100 for every selection: send odds_centi 100 for pool bets (payouts are parimutuel). */
+export interface RoomDetail extends Room { odds: Record<string, number | null> }
+
 // --- organization portals
 export interface OrgOverview {
   org: { id: string; kind: OrgKind; name: string; status: string; settings: Record<string, unknown> };
@@ -144,7 +148,7 @@ export function createClient(o: ClientOptions) {
     currentRound: (tableId: string) => get<{ latest: Round; open: { id: string; hand_no: number; opened_at: string } | null }>(`/v1/tables/${encodeURIComponent(tableId)}/rounds/current`),
     round: (id: string) => get<Round>(`/v1/rounds/${encodeURIComponent(id)}`),
     rooms: () => get<{ rooms: Room[] }>('/v1/rooms'),
-    room: (id: string) => get<Room>(`/v1/rooms/${encodeURIComponent(id)}`),
+    room: (id: string) => get<RoomDetail>(`/v1/rooms/${encodeURIComponent(id)}`),
     apply: (a: { kind: OrgKind; name: string; email: string; details?: Record<string, unknown> }) => post<{ id: string }>('/v1/applications', a),
 
     // ---------- auth

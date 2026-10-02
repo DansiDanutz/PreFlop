@@ -210,7 +210,7 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
       await audit(c, { type: 'bet.accepted', betId, roundId: r.id, roomId: room.id, userId: i.userId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, atRiskMinor: atRisk, oddsCenti: odds });
       return ins.rows[0];
     });
-    ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, data: { betId: row.id, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, roomId: room.id } });
+    ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId: row.id, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: room.id } });
     return { bet_id: row.id, round_id: row.round_id, selection_id: row.selection_id, stake_minor: row.stake_minor, odds_centi: row.odds_centi, potential_payout_minor: room.house === 'pool' ? 0 : payoutMinor(atRisk, odds), mode: row.mode, currency: row.currency, status: row.status };
   });
 }
