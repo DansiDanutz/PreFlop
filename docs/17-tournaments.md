@@ -33,6 +33,7 @@ The owner's decisions apply as everywhere else:
   - takes the stake off the stack at once;
   - pays `stake × odds` back to the stack if it wins.
 - **One bet per flop per entrant.** Hedging every outcome of one flop is not possible.
+- **Eligibility is checked on every bet, not only at registration.** The mode must still be on, and the account still active. For real money, the identity check must still be verified.
 - **Out of the tournament (`busted`):** once nothing is waiting to settle and the stack is below the minimum stake (a stack of 0 included), the entrant can no longer bet and is out.
 - **Finished:** an entrant who has used every bet, with nothing left to settle, is finished. Their stack is final.
 - **When the clock ends:** no new bets are accepted. Bets already placed still settle with their flop, and the tournament stays `settling` until they do. An entrant with unused bets keeps the stack they have; unused bets are worth nothing.
@@ -52,6 +53,9 @@ Every standing shows the position, the stack (the points accumulated), bets used
 - **Fewer entrants than paid places:** the shares of the places that exist are scaled up to 100%.
 - **Ties:** tied players split the shares of the positions they occupy equally. Rounding goes to the earliest entrant, so the pool always ends at exactly 0.
 - The top three get badges (`champion`, `podium`).
+- **Real money:**
+  - prizes go only to active, identity-verified players; anyone else keeps their position, the prize ranks close up, and the dashboard projects prizes the same way;
+  - while the mode is off, completion waits (the team can cancel to refund).
 
 **Cancelling** (by the team or the owner, or automatically below `min_entries`) refunds every buy-in in full and returns the added amount to whoever put it in.
 

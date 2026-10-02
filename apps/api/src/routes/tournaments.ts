@@ -4,7 +4,7 @@ import type { AppContext } from '../app.ts';
 import type { SessionUser } from '../auth/players.ts';
 import {
   type Phase, type StandingRow, type TournamentRow, allocatePrizes, cancel, createTournament, entriesOf, lateRegUntil, phaseOf,
-  placeTournamentBet, prizePoolOf, rankEntries, register, unregister,
+  placeTournamentBet, prizeEligible, prizePoolOf, rankEntries, register, unregister,
 } from '../growth/tournaments.ts';
 import { tx } from '../lib/db.ts';
 import { EventBatch, publish } from '../lib/events.ts';
@@ -86,7 +86,8 @@ async function detail(ctx: AppContext, id: string, u: SessionUser | null) {
   const agg = { entries: entries.length, buy_ins: Number((await ctx.db.query<{ s: string }>('select coalesce(sum(buy_in_minor), 0) as s from tournament_entries where tournament_id = $1', [id])).rows[0]!.s) };
   const done = t.status === 'completed';
   const ranked = rankEntries(entries);
-  const projected = done ? new Map<string, number>() : allocatePrizes(prizePoolOf(t, agg.buy_ins).pool, t.payout_bps, ranked);
+  // Projected with the same eligibility rule completion applies, so the dashboard shows what will be paid.
+  const projected = done ? new Map<string, number>() : allocatePrizes(prizePoolOf(t, agg.buy_ins).pool, t.payout_bps, rankEntries(await prizeEligible(ctx.db, t, entries)));
   const standing = (e: StandingRow & { rank: number }) => ({
     rank: done && e.final_rank !== null ? e.final_rank : e.rank,
     display_name: e.display_name, stack: e.stack, bets_used: e.bets_used, bets_left: Math.max(0, t.bets_allowed - e.bets_used),

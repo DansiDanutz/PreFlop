@@ -222,6 +222,12 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
     const t = (await c.query<TournamentRow>('select * from tournaments where id = $1 for share', [id])).rows[0];
     if (!t) throw notFound('tournament');
     if (phaseOf(t, now) !== 'running') throw conflict('tournament_not_running', 'bets are accepted only while the tournament runs');
+    // Eligibility is rechecked on every bet, not only at registration: the mode may have been switched
+    // off, or the account suspended, self-excluded or (real money) its identity check rejected since.
+    if (!(await modeEnabled(c, t.mode))) throw forbidden('mode_disabled', `${t.mode} is switched off`);
+    const u = (await c.query<{ status: string; kyc_status: string }>('select status, kyc_status from users where id = $1', [userId])).rows[0];
+    if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'this account cannot play');
+    if (REAL_MODES.has(t.mode) && u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required for real money');
     const entries = Number((await c.query<{ n: string }>('select count(*) as n from tournament_entries where tournament_id = $1', [id])).rows[0]!.n);
     if (entries < t.min_entries) throw conflict('not_enough_players', 'the tournament has not reached its minimum entries');
     const e = (await c.query<{ stack: string; bets_used: number; status: EntryStatus }>(
@@ -315,6 +321,17 @@ export async function entriesOf(c: Pick<Db, 'query'>, id: string): Promise<Stand
   return rows.map((r) => ({ ...r, stack: n(r.stack), pending: n(r.pending), prize_minor: r.prize_minor === null ? null : n(r.prize_minor) }));
 }
 
+/**
+ * Who may take a prize. Real money pays active, identity-verified players only: anyone else steps
+ * aside and the prize ranks close up (their overall position stands). Other modes pay every entrant.
+ */
+export async function prizeEligible<T extends { user_id: string }>(c: Pick<Db, 'query'>, t: Pick<TournamentRow, 'mode'>, entries: T[]): Promise<T[]> {
+  if (!REAL_MODES.has(t.mode)) return entries;
+  const ok = new Set((await c.query<{ id: string }>(`select id from users where id = any($1) and status = 'active' and kyc_status = 'verified'`,
+    [entries.map((e) => e.user_id)])).rows.map((r) => r.id));
+  return entries.filter((e) => ok.has(e.user_id));
+}
+
 /** Buy-ins after the fee, plus the added prize. */
 export function prizePoolOf(t: Pick<TournamentRow, 'fee_bps' | 'added_minor'>, buyIns: number): { fee: number; pool: number } {
   const fee = Math.floor((buyIns * t.fee_bps) / 10_000);
@@ -328,6 +345,8 @@ export function prizePoolOf(t: Pick<TournamentRow, 'fee_bps' | 'added_minor'>, b
 export async function complete(c: Tx, id: string, ev: EventBatch, now = new Date()): Promise<boolean> {
   const t = await lockTournament(c, id);
   if (t.status !== 'open' || now < t.ends_at) return false;
+  // A real-money tournament waits while its mode is off; the team can cancel it to refund everyone.
+  if (REAL_MODES.has(t.mode) && !(await modeEnabled(c, t.mode))) return false;
   if ((await c.query(`select 1 from tournament_bets where tournament_id = $1 and status = 'accepted' limit 1`, [id])).rowCount) return false;
   await c.query('select 1 from tournament_entries where tournament_id = $1 order by user_id for update', [id]);
   const entries = await entriesOf(c, id);
@@ -335,7 +354,7 @@ export async function complete(c: Tx, id: string, ev: EventBatch, now = new Date
   const buyIns = (await c.query<{ s: string }>('select coalesce(sum(buy_in_minor), 0) as s from tournament_entries where tournament_id = $1', [id])).rows[0]!.s;
   const { fee, pool } = prizePoolOf(t, n(buyIns));
   const ranked = rankEntries(entries);
-  const prizes = allocatePrizes(pool, t.payout_bps, ranked);
+  const prizes = allocatePrizes(pool, t.payout_bps, rankEntries(await prizeEligible(c, t, entries)));
   if (fee > 0) await post(c, 'tournament.fee', id, [{ from: poolAccount(t), to: feeAccount(t), amountMinor: fee }]);
   for (const e of ranked) {
     const prize = prizes.get(e.user_id) ?? 0;
