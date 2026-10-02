@@ -20,3 +20,6 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm --filter @preflop/odds-engine smoke
+      - run: pnpm check:app
+      - run: pnpm test:app
+      - run: pnpm build:app

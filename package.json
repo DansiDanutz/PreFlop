@@ -8,6 +8,10 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "book": "pnpm --filter @preflop/odds-engine book"
+    "book": "pnpm --filter @preflop/odds-engine book",
+    "dev:app": "node web/scripts/dev.mjs",
+    "build:app": "node web/scripts/build.mjs",
+    "test:app": "node --test web/test/*.test.mjs",
+    "check:app": "node --check web/app.js && node --check web/server.mjs && node --check web/worker.mjs"
   }
 }

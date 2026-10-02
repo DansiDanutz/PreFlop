@@ -1,0 +1,18 @@
+export const clubs = [
+  { id: 'atlas', name: 'Atlas Poker Club', city: 'Bucharest', country: 'Romania', monogram: 'A', tone: 'emerald', description: 'A classic club atmosphere. Find your rhythm at one of three practice tables.' },
+  { id: 'meridian', name: 'Meridian Poker Club', city: 'London', country: 'United Kingdom', monogram: 'M', tone: 'blue', description: 'Clean lines, quiet focus. Two tables to explore the possibilities of the flop.' },
+  { id: 'noir', name: 'Noir Card Room', city: 'Paris', country: 'France', monogram: 'N', tone: 'violet', description: 'An intimate card room for a few thoughtfully played rounds.' },
+];
+export const tables = [
+  { id: 'atlas-04', clubId: 'atlas', number: '04', name: 'The Green Room', available: true, theme: 'green', cards: ['8h','Qs','3c'] },
+  { id: 'atlas-07', clubId: 'atlas', number: '07', name: 'After Hours', available: true, theme: 'green', cards: ['Kh','7d','2c'] },
+  { id: 'atlas-12', clubId: 'atlas', number: '12', name: 'The Quiet Table', available: false, theme: 'green', cards: ['As','9h','4c'] },
+  { id: 'meridian-02', clubId: 'meridian', number: '02', name: 'Midnight Blue', available: true, theme: 'blue', cards: ['Ah','Ad','Jc'] },
+  { id: 'meridian-06', clubId: 'meridian', number: '06', name: 'The Drawing Room', available: true, theme: 'blue', cards: ['5s','6h','7c'] },
+  { id: 'noir-01', clubId: 'noir', number: '01', name: 'Salon Privé', available: true, theme: 'violet', cards: ['Ts','Js','Qs'] },
+];
+export const defaultFavorites = ['rank-pattern:pair','colour:all-red','colour:all-black','suit-pattern:monotone','straight:yes','any-ace:yes'];
+export const familyLabels = {
+  'rank-patterns': 'Rank patterns', 'suits-colours': 'Suits & colors', 'high-low': 'High & low',
+  'face-named': 'Faces & ranks', sequences: 'Sequences', 'totals-parity': 'Totals & parity', combined: 'Combinations',
+};
