@@ -57,7 +57,7 @@ SCHEDULED ─────────────────────► OPE
                                   └───────────── void ────────► VOID (refund all) ◄─────────┘ dispute / mis-deal
 ```
 
-- **Opening:** bets on flop N+1 open the moment flop N is captured, so players bet while hand N plays out. This matches the confirmed cycle.
+- **Opening:** bets on flop N+1 open the moment flop N is captured, so players bet while hand N plays out. This matches the confirmed cycle. In the backend this is the moment an authentic signed capture of flop N is recorded and round N moves to DEALT. Dealer and floor entries alone never open betting. Start hand only locks the round and draws the cut, and never opens the next one (`docs/13` §4).
 - **Every hand follows this sequence** (`docs/11`, `docs/12`):
   1. *shuffle complete* from the club's **mandatory automatic shuffler**. With two decks this usually happens while hand N is still being played;
   2. **LOCK**: after hand N ends, the dealer presses *Start hand* to take the shuffled deck. Bets on flop N+1 close here, **before any hole card exists**;

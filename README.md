@@ -2,7 +2,7 @@
 
 Bet on the three-card **flop** dealt live at licensed poker clubs: against the house at fixed odds, against each other in pools, or in tournaments and challenges.
 
-This repository holds the platform's design and its mathematical core:
+This repository holds the platform's design and its mathematical core. **Reviewers: start with [`AUDIT.md`](AUDIT.md).**
 
 | | |
 |---|---|
@@ -19,6 +19,7 @@ This repository holds the platform's design and its mathematical core:
 | [`docs/10-who-pays-the-winnings.md`](docs/10-who-pays-the-winnings.md) | PreFlop house, organizer house (collateral), or pool |
 | [`docs/11-club-requirements.md`](docs/11-club-requirements.md) | Mandatory shuffler, dealer cut before each hand, connection testing and live monitoring |
 | [`docs/12-table-hardware-and-security.md`](docs/12-table-hardware-and-security.md) | Shuffler, cameras, live stream (dealer, shuffler and cards, never the players), PreFlop Table Box, network and signed flop evidence |
+| [`docs/13-phase1-backend-spec.md`](docs/13-phase1-backend-spec.md) | Phase 1 core backend spec: schema, round lifecycle, bets, settlement, API, acceptance criteria |
 | [`docs/profitability.md`](docs/profitability.md) | **Generated** monthly P&L for every participant in 8 scenarios |
 | [`docs/odds-book.md`](docs/odds-book.md) | **Generated** odds book: every selection, its exact probability, odds and net EV |
 

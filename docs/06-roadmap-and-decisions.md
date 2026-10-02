@@ -29,6 +29,7 @@
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 111 tests green; generated docs checked in CI |
+| **0.5 — External audit** (now) | Codex and Kimi audit the plan, the engine and the backend spec (`AUDIT.md`); Codex prepares the app designs | Findings resolved; plan frozen |
 | **1 — Core backend** | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
 | **2 — Player app + pilot club** | Web lobby, live table with video, bet slip, history; club tablet app; dual-entry results; play chips | 4 weeks live at one table; ≥ 99.9% of rounds verified; zero settlement errors |
 | **3 — Contests** | Pools, tournaments, heads-up, challenges, invitations, organizer reports | Fees reconcile across Models A–D; standings and ties match the rules |
