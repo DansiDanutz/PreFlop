@@ -58,11 +58,17 @@ SCHEDULED ─────────────────────► OPE
 ```
 
 - **Opening:** bets on flop N+1 open the moment flop N is captured, so players bet while hand N plays out. This matches the confirmed cycle.
-- **Locking:** the round locks on the dealer's *deal start* for hand N+1, or on the automatic shuffler's *shuffle complete* signal. That happens **before any hole card exists**.
+- **Before the lock, every hand needs three signals in order:**
+  1. *shuffle complete* from the club's **mandatory automatic shuffler**;
+  2. the dealer's **cut**;
+  3. *deal start*.
+
+  If any is missing or out of order, the round is voided (`docs/11`).
+- **Locking:** the round locks on the dealer's *deal start* for hand N+1. That happens **before any hole card exists**.
   - Locking any later leaks information. One player's own two hole cards give up to +12.8% on some markets (`docs/04` §4).
   - The lock is server time-stamped. A bet whose request arrives after the lock is rejected, whatever the client clock says.
 - **No flop in the hand:** the club agreement requires the dealer to deal the *PreFlop flop* (burn plus three) even when the hand ends preflop. If that does not happen, the round goes to VOID and every stake is refunded.
-- **Video:** stream delay is measured and shown to the player ("video is 2.1 s behind live") but never moves the cutoff.
+- **Video:** stream delay is measured and shown to the player ("video is 2.1 s behind live") but never moves the cutoff. Each table's connection is certified and monitored live. A degraded link stops new rounds from opening, and a lost link pauses the table (`docs/11`).
 
 Identifiers: `club_id / table_id / hand_no / round_id`. The bet slip always shows **"Flop of hand #N+1"**.
 

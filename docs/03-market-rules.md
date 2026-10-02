@@ -32,7 +32,9 @@ The round is voided and every stake refunded in full when:
 2. the dealer exposes a card before the round has locked, or a misdeal reaches the flop;
 3. the result cannot be verified (the entries disagree and no evidence settles it) within the club's SLA;
 4. the table goes offline between LOCKED and RESULT_VERIFIED for longer than the SLA;
-5. integrity staff void it after investigation, with a reason that is logged and audited.
+5. integrity staff void it after investigation, with a reason that is logged and audited;
+6. the hand's procedure was broken: no *shuffle complete* from the automatic shuffler, no dealer cut, or events out of order (`docs/11`);
+7. the table's connection went down (no heartbeat for more than 5 s, or video more than 6 s behind) and the flop could not be verified.
 
 A corrected result after settlement is handled with compensating entries (`docs/01` §5).
 

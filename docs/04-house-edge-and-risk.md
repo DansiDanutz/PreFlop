@@ -85,7 +85,7 @@ A single player at the table **beats a 5–10% margin**. Hence these rules:
 1. **Betting on flop N+1 closes on the deal-start signal for hand N+1, before any hole card exists** (`docs/01` §4). This is the most important rule in the product.
 2. **Table players, dealers and club staff may not bet** at their own club. This is enforced at KYC (by employer and venue) and through device and location linking.
 3. **No hole-card cameras** on the stream before the round is settled. The stream shows only public information.
-4. **Dealer integrity:** use an automatic shuffler where possible, a burn card before the flop, rotate dealers, and treat any card exposed before the lock as a void (`docs/03` §3).
+4. **Dealer integrity:** an automatic shuffler is **mandatory**, the dealer **cuts before every hand**, a burn card is dealt before the flop, dealers rotate, and any card exposed before the lock voids the round (`docs/03` §3, `docs/11`).
 
 ## 5. Integrity monitoring
 

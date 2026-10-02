@@ -22,12 +22,16 @@ A club has to do very little: run a tablet app (or a hardware bridge) that sends
 
 ```
 POST /v1/provider/tables/{tableId}/hands                 # hand N+1 is about to be shuffled → opens nothing, registers hand
+POST /v1/provider/tables/{tableId}/hands/{n}/shuffle-complete   # from the paired automatic shuffler (mandatory)
+POST /v1/provider/tables/{tableId}/hands/{n}/cut         # dealer cut the deck (mandatory, after shuffle)
 POST /v1/provider/tables/{tableId}/hands/{n}/deal-start  # LOCK: no more bets on flop of hand n (sent before hole cards)
 POST /v1/provider/tables/{tableId}/hands/{n}/flop        # {cards:["Kh","Kd","7h"], source:"dealer|floor|rfid", evidence?}
 POST /v1/provider/tables/{tableId}/hands/{n}/flop/confirm   # second, independent confirmation (pilot: floor supervisor)
 POST /v1/provider/tables/{tableId}/hands/{n}/void        # {reason:"misdeal|no_flop|stream_down|..."}
 POST /v1/provider/tables/{tableId}/pause | /resume
 GET  /v1/provider/tables/{tableId}/state
+POST /v1/provider/tables/{tableId}/heartbeat             # every 1 s: upload, RTT, jitter, loss, backup link, encoder status
+POST /v1/provider/tables/{tableId}/connection-tests      # 30-min soak test result (certification)
 ```
 
 Signature header: `X-PreFlop-Signature: t=<unix>,v1=<hex HMAC(key, t + "." + body)>`. Requests older than 30 s are rejected.
