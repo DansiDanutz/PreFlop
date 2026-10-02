@@ -289,7 +289,8 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
   - Every operation that reads or changes a round runs in **one transaction that starts with `select … from rounds where id = $1 for update`**. That covers start, cut, deal-start, a manual entry, a capture, an image, `resolve()`, a void, a review decision, the sweeper and `ensureOpenRound()`. Concurrent inputs for one round are therefore strictly serialised, and each one sees every input committed before it.
   - A capture also locks its device row (`select … from devices where id = $2 for update`) for the sequence check and update. **Lock order is always the round first, then the device, then wallet accounts**, so these locks never deadlock.
   - Every input that could complete a round's evidence also **enqueues a `resolve_round` job in `outbox`** in the same transaction. After commit, a worker runs `resolve()` (idempotent: a no-op unless the round is DEALT and every input is present). The sweeper re-enqueues any DEALT round that has all its inputs.
-  - So two entries committed concurrently, a crash between commit and resolve, or a settle racing a void, can never leave a round stuck or settled twice: settlement and void both re-check the state under the round lock.
+  - **Exactly one terminal outcome:** money moves only after the caller **wins the terminal transition** in the same transaction. That transition is `update rounds set state = 'SETTLED' … where id = $1 and state = 'DEALT' returning id` for settlement, and `… set state = 'VOID' … where id = $1 and state in (<voidable states>) returning id` for a void. If no row is returned, the round was already settled or voided, so no payout or refund is posted. Bet rows are updated with the same rule (`where status = 'accepted'`). A refund and a payout for the same bet can therefore never both commit.
+  - So two entries committed concurrently, a crash between commit and resolve, or a settle racing a void can never leave a round stuck or paid twice.
 - **Opening a round** requires `tableReadiness()`: every certification flag is true **and not expired**, and the last heartbeat is less than 5 s old with a healthy link and the **stream live**. Otherwise the call fails with `409 table_not_ready`.
   - Exactly one round per table may be OPEN.
   - `ensureOpenRound()` reopens betting after a pause, once the table is healthy again.
@@ -333,6 +334,11 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
     2. raise a security alert;
     3. leave the round **LOCKED** and the checkpoint unchanged;
     4. respond `422 evidence_rejected` with `{expected_seq, expected_prev_hash}`.
+  - **Checkpoint sync when the Box has lost its buffer:** if the Table Box no longer holds the signed record for its pending `seq` (for example after a crash) and does not know whether the server committed it, it calls `GET /v1/provider/devices/:id/checkpoint` (device-signed). The server returns `{last_seq, last_hash, record, signature}`, where `record` and `signature` are the authentic capture it holds at `last_seq`.
+    - The Box **verifies that signature with its own public key** and that `captureHash(record) = last_hash`, then adopts `last_seq + 1` and `last_hash` as its next sequence and `prev_hash`. A re-captured board is **never** accepted as a replay. The Box only learns that its earlier record was committed, and moves past it.
+    - If the server holds nothing beyond the Box's own checkpoint, the Box re-captures under its pending `seq`.
+    - A `409 capture_conflict` response also carries `{last_seq, last_hash}`, so the Box knows to sync.
+    - Every sync is audited.
   - **Retry protocol (Table Box):** the Table Box keeps every signed capture in its encrypted local buffer and **advances its own `seq` only after the server answers `authentic: true`**. On `evidence_rejected` it re-sends the **same signed record** (same `seq` N, same `prev_hash`) from its buffer. If that record is lost, it re-captures the board and signs it again under the same `seq` N and `prev_hash`. The retry is checked against the unchanged checkpoint, so recovery never trusts anything that was rejected. On a timeout or lost response it also re-sends the same record, and the idempotent replay rule above answers `200`. After **3 failed attempts**:
     - the round goes to **VOID** with a refund;
     - the device is flagged;
@@ -341,6 +347,7 @@ OPEN ──Start hand (lock + random cut)──▶ LOCKED ──authentic AND ad
 - **Result deadline (sweeper):** a job runs every few seconds. Any round still **LOCKED or DEALT** at `locked_at + result SLA` is **VOIDed** with a full refund and audited, **whatever is missing**: an authentic capture, the image matching the signed hash, the dealer entry or the floor entry. A round in **REVIEW** has its own floor-decision SLA and voids the same way when that expires. After a void, round N+1 opens through `ensureOpenRound()` once the table is healthy. Accepted bets can therefore never stay pending.
 - **Image upload:** the image bytes may come with the capture or in a separate upload. Bytes are stored only if their SHA-256 equals the **signed** `capture.imageSha256`. The hash can't be changed without breaking the signature, so a corrupted or swapped image can simply be re-uploaded.
 - **`resolve()`** runs once an authentic capture, its matching image and both manual entries all exist:
+  0. **Deadline first:** under the round lock, if `clock_timestamp() ≥ locked_at + result SLA`, **VOID** the round (refund) whatever evidence has arrived. Evidence that completes after the deadline never pays, even if the sweeper hasn't run yet.
   1. `handProcedureProblems(events)`. If there are any problems → **VOID** with the reason (refund every bet).
   2. `verifyCaptureContent(...)`: content checks only. Authenticity (device, signature, seq and chain) was already checked once on receipt, and is **not** checked again here. The device checkpoint has already moved past this capture, so re-running the sequence and chain checks would wrongly reject it as a replay. The content checks are:
      - the server-stamped `locked_at` / `deal_start_at` timing;
@@ -399,6 +406,7 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 | `POST /v1/provider/tables/:t/hands/:n/cut` · `/deal-start` | Staff: `dealer` | Procedure events |
 | `POST /v1/provider/tables/:t/hands/:n/flop` | Staff: `dealer` → dealer entry; `floor` / `floor_manager` → floor entry | `{cards}` only; the source comes from the role, and the two entries must be from different people |
 | `POST /v1/provider/tables/:t/hands/:n/capture` | Device (Table Box) | `{capture, signature, image_base64?}` → `200 {authentic: true, admitted}` (also returned for an identical replay, in any state), `422 evidence_rejected {expected_seq, expected_prev_hash}`, `409 capture_conflict`, or `409 invalid_round_state` |
+| `GET /v1/provider/devices/:id/checkpoint` | Device (that same Table Box only) | `{last_seq, last_hash, record, signature}`, used to resynchronise after the Box loses its buffer |
 | `PUT /v1/provider/tables/:t/hands/:n/capture/image` | Device (Table Box) | Raw image bytes; stored only if their SHA-256 equals the signed `imageSha256` |
 | `POST /v1/provider/tables/:t/hands/:n/void` | Staff: **`floor_manager` only** | `{reason}` |
 | `POST /v1/provider/rounds/:id/review` | Staff: **`floor_manager`**, not a person who entered the flop | `{action: settle, cards} \| {action: void, reason}` |
@@ -440,6 +448,9 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
    - A retry of the same signed record at the same `seq` then verifies and settles the hand. The next hand's capture (`seq + 1`) also verifies.
    - After 3 failed attempts, the round voids and the table pauses.
    - **Lost response:** the server commits the capture but the `200` is dropped. The Box retries the identical record, gets `200 {authentic: true}`, advances, and its next capture verifies. This also holds when the retry arrives after the round has moved to DEALT, SETTLED or VOID. The same `seq` with a different signature gets `409 capture_conflict`.
+   - **Lost buffer and lost response:** the server commits seq N, the response is lost and the Box loses its buffer. The Box's re-capture at N gets `409 capture_conflict` and is **not** accepted. The Box syncs through `GET …/checkpoint`, verifies its own signature on the stored record, moves to N+1, and the next hand's capture verifies.
+   - **Deadline at settlement:** the image or a manual entry arriving after `locked_at + SLA`, but before the sweeper runs, leads to VOID, never to a payout.
+   - **Settle racing void:** a resolver and the sweeper acting on the same DEALT round produce exactly one terminal state, and **no bet has both a refund and a payout** in the ledger.
    - **Admission gate:** an authentic capture sent before deal-start, timed before the lock, or with duplicate or invalid cards advances the device chain but goes to EVIDENCE_REJECTED, and **does not open round N+1**.
    - **Content-only resolution:** an authentic capture settles even though the device checkpoint has already advanced past it.
    - **Result deadline:** a round whose authentic capture's image never arrives, or that is missing a dealer or floor entry, is VOIDed with a refund at `locked_at + SLA`. No accepted bet stays pending after the deadline.
