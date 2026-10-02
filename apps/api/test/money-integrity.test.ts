@@ -81,7 +81,9 @@ describe('B1/B1b: real money only at PreFlop-approved tables, reviewed by PreFlo
     const risk = await user('rm-risk');
     await h.api('PUT', `/v1/admin/users/${risk.id}`, admin, { platform_role: 'risk' });
     expect((await approve(true, risk.token)).body.type).toBe('forbidden_role');
-    expect((await approve(true, admin, 'sim-1')).body.type).toBe('not_real_money');
+    // A play table can be approved too: real-money tournaments may bet on it (and revoked again).
+    expect((await approve(true, admin, 'sim-1')).status).toBe(200);
+    expect((await approve(false, admin, 'sim-1')).status).toBe(200);
     const ok = await approve(true);
     expect(ok.status).toBe(200);
     expect(ok.body.real_money_approved_by).toBeTruthy();
@@ -141,6 +143,10 @@ describe('B1/B1b: real money only at PreFlop-approved tables, reviewed by PreFlo
     expect(fm.body.type).toBe('platform_review_required');
     const fmVoid = await sim.call('floor_manager', 'POST', `/v1/provider/rounds/${rid}/review`, { action: 'void', reason: 'misdeal' });
     expect(fmVoid.body.type).toBe('platform_review_required');
+    // The general void route can't be used to cancel a dealt real-money round either.
+    const handVoid = await sim.call('floor_manager', 'POST', `/v1/provider/tables/${T}/hands/${hand}/void`, { reason: 'misdeal' });
+    expect(handVoid.status).toBe(403);
+    expect(handVoid.body.type).toBe('platform_review_required');
 
     const before = await balance(h.db as never, `${player.id}:wallet:real-fiat:EUR`);
     const ok = await h.api('POST', `/v1/admin/rounds/${rid}/review`, admin, { action: 'settle', cards });
@@ -151,6 +157,16 @@ describe('B1/B1b: real money only at PreFlop-approved tables, reviewed by PreFlo
     const audited = (await h.api('GET', '/v1/admin/audit', admin)).body.events.map((e: any) => JSON.parse(e.event)).find((e: any) => e.type === 'round.settled' && e.roundId === rid);
     expect(audited.by).toMatch(/^user:/);
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
+  });
+
+  it('before the deal, the club may still void a real-money round (misdeal) and every stake is refunded', async () => {
+    const hand = await openOn(sim);
+    const rid = `${T}:h${hand}`;
+    const before = await balance(h.db as never, `${player.id}:wallet:real-fiat:EUR`);
+    expect((await betOn(player.token, rid, 'colour:mixed', 1_000)).status).toBe(201);
+    const v = await sim.call('floor_manager', 'POST', `/v1/provider/tables/${T}/hands/${hand}/void`, { reason: 'misdeal' });
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    expect(await balance(h.db as never, `${player.id}:wallet:real-fiat:EUR`)).toBe(before);
   });
 
   it('play tables keep the club review; the team cannot settle them', async () => {

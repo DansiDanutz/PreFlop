@@ -191,6 +191,9 @@ describe('tournament lifecycle', () => {
       await h.db.query(`update users set kyc_status = 'verified' where id = any($1)`, [[a.id, b.id]]);
       for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
       const r1 = await openRound();
+      // A real-money tournament bets only on a table the PreFlop team approved, even a play-money one.
+      expect((await bet(t.id, a.token, r1.id, 'paired-board:no', 1_000)).body.type).toBe('table_not_approved');
+      expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: true })).status).toBe(200);
       await bet(t.id, a.token, r1.id, 'paired-board:no', 1_000);
       await bet(t.id, b.token, r1.id, 'paired-board:yes', 1_000);
       await finishRound(r1.n);

@@ -8,7 +8,6 @@ import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
-import { REAL_MODES } from '../lib/limits.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
@@ -338,7 +337,6 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     return tx(ctx.db, async (c) => {
       const t = (await c.query<{ mode: PlayMode }>('select mode from poker_tables where id = $1 for update', [id])).rows[0];
       if (!t) throw notFound('table');
-      if (b.approved && !REAL_MODES.has(t.mode)) throw unprocessable('not_real_money', `table mode is ${t.mode}; only real-money tables need approval`);
       const r = (await c.query<{ real_money_approved_at: Date | null; real_money_approved_by: string | null }>(
         `update poker_tables set real_money_approved_at = case when $2 then now() end, real_money_approved_by = case when $2 then $3 end
           where id = $1 returning real_money_approved_at, real_money_approved_by`, [id, b.approved, u.id])).rows[0]!;

@@ -125,7 +125,7 @@ Other provider routes:
   - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
 - **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
 - `tables` and `tables/:id/status`;
-- `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a `real-fiat`/`real-crypto` table for real money (`422 not_real_money` for other modes). Until approved, real-money bets there, including tournament bets, get `403 table_not_approved`. Audited as `table.real_money_approved` / `table.real_money_revoked`;
+- `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a table for real money. Until approved, real-money bets there get `403 table_not_approved`, and so do bets of a real-money tournament on any table, including play-money tables. Audited as `table.real_money_approved` / `table.real_money_revoked`;
 - `settings` (`modes_enabled`, `physical_play_enabled`, `territories`).
 
 **Finance and audit:**

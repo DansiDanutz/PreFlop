@@ -47,18 +47,17 @@ export function Tables() {
     ...baseColumns<AdminTable>(),
     { key: 'cert', header: 'Certification', className: 'whitespace-nowrap', sort: (t) => Object.values(t.certification ?? {}).filter((c) => c.ok).length, cell: (t) => <CertBadge cert={t.certification} /> },
     {
-      key: 'real', header: 'Real money', className: 'whitespace-nowrap', sort: (t) => (isReal(t) ? (t.real_money_approved_at ? 2 : 1) : 0),
-      cell: (t) => !isReal(t) ? <span className="text-faint">—</span>
-        : t.real_money_approved_at ? <Badge tone="live">Approved</Badge> : <Badge tone="warn">Not approved</Badge>,
+      // Play tables can be approved too, for real-money tournaments that bet on them.
+      key: 'real', header: 'Real money', className: 'whitespace-nowrap', sort: (t) => (t.real_money_approved_at ? 2 : isReal(t) ? 1 : 0),
+      cell: (t) => t.real_money_approved_at ? <Badge tone="live">Approved</Badge>
+        : isReal(t) ? <Badge tone="warn">Not approved</Badge> : <span className="text-faint">—</span>,
     },
     {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', className: 'w-px', cell: (t) => (
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          {isReal(t) && (
-            <Button size="sm" variant="secondary" disabled={setApproval.isPending} onClick={() => setApproval.mutate({ id: t.id, approved: !t.real_money_approved_at })}>
-              {t.real_money_approved_at ? 'Revoke' : 'Approve'}
-            </Button>
-          )}
+          <Button size="sm" variant="secondary" disabled={setApproval.isPending} onClick={() => setApproval.mutate({ id: t.id, approved: !t.real_money_approved_at })}>
+            {t.real_money_approved_at ? 'Revoke' : 'Approve'}
+          </Button>
           {t.status === 'paused'
             ? <Button size="sm" variant="secondary" onClick={() => setTarget({ t, to: 'active' })}><Play size={14} aria-hidden />Resume</Button>
             : <Button size="sm" variant="secondary" onClick={() => setTarget({ t, to: 'paused' })} disabled={t.status === 'retired'}><Pause size={14} aria-hidden />Pause</Button>}

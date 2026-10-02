@@ -225,12 +225,13 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
     const table = (await c.query<TableRow>('select * from poker_tables where id = $1 for share', [r.table_id])).rows[0]!;
     const ready = await tableReadiness(c, table);
     if (!ready.ok) throw conflict('table_not_ready', ready.problems.join('; '));
-    // A real-money table deals for real money only once the PreFlop team approved it (docs/14).
-    if (REAL_MODES.has(table.mode as PlayMode) && !table.real_money_approved_at) throw tableNotApproved();
     // Shared lock: completion and cancelling (exclusive) wait for bets in flight, and vice versa.
     const t = (await c.query<TournamentRow>('select * from tournaments where id = $1 for share', [id])).rows[0];
     if (!t) throw notFound('tournament');
     if (phaseOf(t, now) !== 'running') throw conflict('tournament_not_running', 'bets are accepted only while the tournament runs');
+    // Real money (the table's or the tournament's) is bet only on tables the PreFlop team approved
+    // (docs/14): a real-money tournament can't route around the gate through a play-money table.
+    if ((REAL_MODES.has(table.mode as PlayMode) || REAL_MODES.has(t.mode)) && !table.real_money_approved_at) throw tableNotApproved();
     // Eligibility is rechecked on every bet, not only at registration: the mode may have been switched
     // off, or the account suspended, self-excluded or (real money) its identity check rejected since.
     if (!(await modeEnabled(c, t.mode))) throw forbidden('mode_disabled', `${t.mode} is switched off`);
