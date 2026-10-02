@@ -176,6 +176,11 @@ Verdict: *request changes*. F02, F03, F05, F06 and F11 materially addressed; F07
 | I-2 | The daily deposit limit compared EUR cents with USDT/USDC micro-units | **Fixed:** limits are EUR-equivalent across currencies (integration test) |
 | I-3 | The outcome monitor's first calibration (ratio 3, threshold 7) gave 327 false alarms in 50,000 fair flops. Ratio 5 / threshold 14 still alarmed once on the live simulator (atlas-07, after 233 hands); 1,000,000 fair flops measured one false alarm per ~52,600 hands | **Fixed:** ratio 5 / threshold 16 gives one false alarm per ~500,000 hands per table and catches a stacked "all red" deck in 10 hands. The simulator's dealing was checked unbiased over 300,000 hands (`apps/api/src/rounds/monitor.ts`) |
 
+| I-4 | A pool nobody backed refunded only the pooled part, keeping the rake and PreFlop fee (engine rule: full refund, no fee) | **Fixed:** settlement reverses the whole placement; caught by a test that failed on all-black flops (~1 in 17 runs); deterministic regression test added |
+| I-5 | Bet placement re-checked the table status before the wallet lock, while settlement posted payouts (FK key-share on wallets) before locking the table — a deadlock CI caught | **Fixed:** settlement locks the table first; global order round → user → table → wallets (`docs/13` §4) |
+
+**Phase 1 exit criterion met:** `pnpm --filter @preflop/api soak` ran 10,000 simulated rounds with 8 random players (80,000 bets). All 10,000 settled, all 10,000 late bets were refused, the ledger sums to zero, and the audit chain verifies. The realised gross edge was 4.3%.
+
 **Now executed, not only specified:** these `docs/13` §8 acceptance criteria are covered by PostgreSQL integration tests in `apps/api/test`:
 - terminal compare-and-set;
 - deadline voids;
