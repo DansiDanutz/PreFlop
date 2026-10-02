@@ -89,38 +89,30 @@ export function useRunner(api: TableApi, onDone?: (a: Action, result: unknown) =
   };
 }
 
-// ------------------------------------------------------------------ local memory of own entries
+// ------------------------------------------------------------------ own entries
 
 /**
- * The state endpoint returns entries for the latest round only, so the tablet also remembers
- * its own submissions (round id → cards) to know a hand no longer needs its entry.
+ * The server says per round whether each side has entered and what this person entered
+ * (`has_*_entry`, `my_entry`). This session-only map is a safety net between a successful submit
+ * and the next poll, and records `duplicate_entry` answers (side already entered elsewhere).
  */
-const memKey = (cred: string) => `preflop-table:entries:${cred}`;
-function readMem(cred: string): Record<string, string[]> {
-  try { return JSON.parse(localStorage.getItem(memKey(cred)) ?? '{}') as Record<string, string[]>; } catch { return {}; }
-}
-export function useMyEntries(cred: string) {
-  const [mem, setMem] = useState<Record<string, string[]>>(() => readMem(cred));
-  const remember = useCallback((roundId: string, cards: string[]) => {
-    setMem((m) => {
-      const ids = Object.keys(m);
-      const next = { ...m, [roundId]: cards };
-      if (ids.length > 50) for (const k of ids.slice(0, ids.length - 50)) delete next[k];
-      try { localStorage.setItem(memKey(cred), JSON.stringify(next)); } catch { /* storage unavailable */ }
-      return next;
-    });
-  }, [cred]);
+export function useMyEntries() {
+  const [mem, setMem] = useState<Record<string, string[]>>({});
+  const remember = useCallback((roundId: string, cards: string[]) => setMem((m) => ({ ...m, [roundId]: cards })), []);
   return { mem, remember };
 }
+
+/** This person's entry for round r (server first), or undefined. */
+export const myEntry = (r: Round, mem: Record<string, string[]>): string[] | undefined => r.my_entry ?? mem[r.id];
 
 // ------------------------------------------------------------------ derived
 
 export const needsEntry = (r: Round) => (r.state === 'LOCKED' && r.step === 'dealing') || r.state === 'DEALT' || r.state === 'REVIEW';
 
 /** Whether this tablet's side (dealer / floor) of the flop is already recorded for round r. */
-export function entryDone(s: TableState, r: Round, source: 'dealer' | 'floor', mem: Record<string, string[]>): boolean {
-  if (mem[r.id]) return true;
-  return s.rounds[0]?.id === r.id && s.entries.some((e) => e.source === source);
+export function entryDone(_s: TableState, r: Round, source: 'dealer' | 'floor', mem: Record<string, string[]>): boolean {
+  if (r.my_entry || mem[r.id]) return true;
+  return source === 'dealer' ? r.has_dealer_entry : r.has_floor_entry;
 }
 
 /** Oldest hand among the latest three that still needs this side's entry. */

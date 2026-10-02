@@ -11,12 +11,27 @@ export interface Round {
   deal_start_at: string | null;
   flop: string[] | null;
   review_reasons: string[] | null;
+  /** Per-round entries. Another person's cards are null until this person has entered (server-enforced). */
+  entries: Entry[];
+  has_dealer_entry: boolean;
+  has_floor_entry: boolean;
+  /** This person's own entry for the round, or null. */
+  my_entry: string[] | null;
 }
 
 export interface Entry {
   source: 'dealer' | 'floor';
   person_id: string;
-  cards: string[];
+  mine?: boolean;
+  cards: string[] | null;
+}
+
+export interface WhoAmI {
+  kind: 'staff' | 'device';
+  credential_id: string;
+  role?: 'dealer' | 'floor' | 'floor_manager';
+  person_id?: string;
+  table_id: string;
 }
 
 export interface TableState {
@@ -24,7 +39,7 @@ export interface TableState {
   readiness: { ok: boolean; problems: string[] };
   /** Latest 3, newest first. */
   rounds: Round[];
-  /** Entries of rounds[0] only. */
+  /** Same as rounds[0].entries. */
   entries: Entry[];
 }
 

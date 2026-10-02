@@ -5,7 +5,7 @@ import { ActionStatus } from '../components/controls.tsx';
 import { FlopEntry } from '../components/FlopEntry.tsx';
 import { StateBadge, Timeline } from '../components/RoundBits.tsx';
 import { prettyFlop, sameFlop } from '../lib/cards.ts';
-import { type Live, type Runner, pendingEntry } from '../lib/hooks.ts';
+import { type Live, type Runner, myEntry, pendingEntry } from '../lib/hooks.ts';
 import type { Round } from '../lib/types.ts';
 import { Stage } from './Dealer.tsx';
 
@@ -22,7 +22,7 @@ export function FloorScreen({ live, mem, runner, submitFlop, banner }: {
   const pending = pendingEntry(s, 'floor', mem);
   const busy = !!runner.pending;
   const latest = s.rounds[0];
-  const mineRound = s.rounds.find((r) => mem[r.id]);
+  const mineRound = s.rounds.find((r) => myEntry(r, mem));
   let main: ReactNode;
 
   if (pending) {
@@ -34,7 +34,7 @@ export function FloorScreen({ live, mem, runner, submitFlop, banner }: {
     );
   } else if (mineRound) {
     const r = mineRound;
-    const mine = mem[r.id] ?? [];
+    const mine = myEntry(r, mem) ?? [];
     if (r.state === 'SETTLED') {
       const match = sameFlop(mine, r.flop);
       main = (
@@ -77,7 +77,7 @@ export function FloorScreen({ live, mem, runner, submitFlop, banner }: {
       {!wide && (
         <aside className="hidden min-h-0 overflow-auto lg:block">
           {/* flops only for hands this tablet already confirmed */}
-          <Timeline rounds={s.rounds} showFlop={(r) => !!mem[r.id]} highlight={mineRound?.id} />
+          <Timeline rounds={s.rounds} showFlop={(r) => !!myEntry(r, mem)} highlight={mineRound?.id} />
         </aside>
       )}
     </div>

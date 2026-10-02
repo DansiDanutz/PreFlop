@@ -1,7 +1,8 @@
 import { authHeader, newIdempotencyKey } from './envelope.ts';
 import type { Identity } from './keystore.ts';
 import { problemMessage } from './problems.ts';
-import type { Evidence, TableState } from './types.ts';
+import { normalizeState } from './state.ts';
+import type { Evidence, TableState, WhoAmI } from './types.ts';
 
 export const DEFAULT_API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4000';
 
@@ -91,8 +92,13 @@ export class TableApi {
     return this.request<T>(a.method, a.path, { body: a.body, idempotencyKey: a.key });
   }
 
-  state() {
-    return this.request<TableState>('GET', `/v1/provider/tables/${this.t}/state`);
+  async state(): Promise<TableState> {
+    return normalizeState(await this.request<unknown>('GET', `/v1/provider/tables/${this.t}/state`), this.id.config.personId);
+  }
+
+  /** Who the server says this credential is (role, person, table). */
+  whoami() {
+    return this.request<WhoAmI>('GET', '/v1/provider/whoami');
   }
 
   evidence(roundId: string) {
