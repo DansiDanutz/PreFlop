@@ -42,18 +42,70 @@ Status: proposed standard. Product names are examples to evaluate with vendors a
 | Camera | Purpose | Spec (minimum) | Installation |
 |---|---|---|---|
 | **C1 Board camera** | Reads the flop and records the evidence image | 4K (3840×2160) sensor, fixed lens, global or fast shutter, PoE IP camera with ONVIF, H.265, hardware timestamps | **Directly overhead**, centred on the board area, **1.2–1.5 m** above the felt, on a rigid ceiling mount or boom with no vibration. Covers the five board-card positions and the burn spot only |
-| **C2 Table camera** | The live video players watch | 1080p60 (4K optional), wide dynamic range | Across from the dealer, **30–45° down**, showing the dealer, board, pot and shuffler output. Must not show the players' card area |
-| **C3 Dealer/shuffler camera** | Evidence of shuffle, Start hand, cut depth and dealing | 1080p, close-up | Side-mounted, covering the shuffler, the dealer's hands and the cut card |
+| **C2 Dealer camera** | The main live view: the dealer dealing | 1080p60 (4K optional), wide dynamic range, PoE, ONVIF | **High on the ceiling opposite the dealer, about 2.2–2.5 m up, tilted steeply down (about 55–65°)** and framed tightly on the dealer zone: dealer, chip tray, shuffler and board. Pointing down and away means the players opposite are behind or below the frame. Seats next to the dealer are covered by privacy masks |
+| **C3 Shuffler camera** | Live close-up of the shuffler and the cut, plus evidence of shuffle, Start hand and cut depth | 1080p (streamed at 720p), close-up | Side-mounted at the dealer's position, aimed only at the shuffler, the dealer's hands and the cut card |
 | **C4 Room CCTV** | General security (players, phones, staff) | Club's own system, recordings kept for at least 30 days | Covers the table area and the shuffler cabinet |
 
 **Installation rules:**
-- **No camera can see hole cards.** At certification a technician places a card face-up at every seat and checks every camera feed to confirm none is visible. Lens masks enforce this.
+- **No camera can see hole cards or players.** At certification a technician places a card face-up at every seat, and people sit in every seat. The technician checks every feed to confirm neither cards nor players are visible. Privacy masks enforce this (§3a).
 - **Lighting:** diffused LED, 5000 K, at least 800 lux on the felt, no hotspots or glare. Use matte, non-reflective felt.
 - **Mounts:** steel, tamper-proof screws, cables in conduit, camera housings sealed. Cameras are serial-registered to the table.
 - **Camera network:** cameras connect **only** to the Table Box on their own isolated network (§4). Each camera's default password is replaced, its cloud and P2P features are disabled, and its firmware is pinned to a version PreFlop has checked.
 - **Calibration:** at the start of each shift the dealer lays out a set of test flops. The Table Box must read every one correctly (`boardCameraCalibrated`).
 
 **Card reading:** the main source is computer vision on C1, running on the Table Box. An optional upgrade is **board-only RFID**: antennas only under the community-card area, never under player seats. Either way, each flop is confirmed by **three independent sources**: the camera (or RFID) reading, the dealer's entry, and the floor supervisor's entry.
+
+## 3a. The live stream: what viewers see
+
+**Live streaming is mandatory.** A table that is not on air cannot open betting (`streamLive` in `checkLink()`). If the stream drops, the table pauses at once.
+
+Viewers always see **the dealer, the shuffler, the cards and the flop**, and **never the players**.
+
+```
+                    C2 (ceiling, opposite the dealer, steep down-angle)
+                     │  frames ONLY the dealer zone
+          seat 5   seat 4 │ seat 6          ← behind / below C2's frame: never on stream
+     seat 3                             seat 7
+          ┌───────────────────────────────┐
+     seat 2│      [ B O A R D ]  ← C1 overhead │seat 8     masked zones: every seat area
+          │                               │
+          └──────────[ DEALER ]───────────┘
+     seat 1 ▒▒▒    [chip tray] [SHUFFLER] ← C3   ▒▒▒ seat 9   (seats next to the dealer: masked)
+```
+
+**What viewers watch.** The Table Box produces the programme automatically from round events:
+
+| Moment | Main picture | Picture-in-picture |
+|---|---|---|
+| Betting open (hand N playing) | C2 dealer view | C1 board |
+| Shuffle complete, Start hand, cut | C3 shuffler and cut close-up | C2 |
+| Deal | C2 dealer view | C1 board |
+| Flop | **C1 board full screen**, with the flop and bet results overlaid | C2 |
+
+Viewers can also switch to a multi-view of all three feeds.
+
+**Privacy protection (players are never streamed):**
+1. **Framing:** C2 and C3 are aimed only at the dealer zone and shuffler, and C1 only at the felt.
+2. **Fixed privacy masks:** every seat area is blacked out on the Table Box **before encoding**, so unmasked pictures of players never leave the table.
+3. **Live person detection** on every streamed frame, plus a check that each camera's framing still matches its certified reference image. If anyone appears outside the dealer zone, or a camera is bumped, the stream **switches to the board-only view at once** and alerts the floor (`streamPrivacyDecision()`). Betting continues, because the board camera only sees the felt.
+4. **Certification test:** people sit in every seat, and the technician confirms nobody is visible in any streamed feed (`privacyMasksVerified`). This is repeated after any camera change.
+5. **Consent:** dealers agree to being streamed in their contract. Signs in the room say that the dealer area is broadcast and that players are not.
+
+**Delivery:**
+- The Table Box encodes the feeds (H.264, 1-second keyframes) and sends them over **SRT** (encrypted, recovers from packet loss) to PreFlop's media servers.
+- Viewers receive them over **WebRTC** (under 1 s delay) or **LL-HLS** (about 2–3 s) as a fallback.
+- Target: **3 s or less** from camera to viewer (`docs/11` §3).
+
+**Bandwidth per table:**
+
+| Feed | Bitrate |
+|---|---|
+| C2 1080p60 | ~6 Mbps |
+| C1 1080p | ~3 Mbps |
+| C3 720p | ~1.5 Mbps |
+| Evidence stills, about 2 MB per flop | negligible |
+
+That is ~12 Mbps in total, so the requirement is **20 Mbps sustained upload** per table. The 5G backup must carry at least the main programme (about 8 Mbps).
 
 ## 4. The PreFlop Table Box: the machine that connects cameras to PreFlop
 
@@ -151,6 +203,7 @@ Because the cut depth is chosen **after** betting closes, someone who knew the f
 |---|---|---|
 | Shuffler | $20,000+ (DeckMate 2) | a few thousand dollars (single-deck model) |
 | Cameras C1–C3 and mounts | €2,000–4,000 | €1,000–2,000 |
+| Internet: fibre with ≥ 20 Mbps upload + 5G backup | monthly, per room | monthly, per room |
 | PreFlop Table Box (TPM, encoder) | €1,500–2,500 | €1,000–1,500 |
 | Dual-WAN router, firewall, UPS | €800–1,500 per room | €500–1,000 per room |
 | Tablets (dealer and floor) | €600–1,000 | €600 |

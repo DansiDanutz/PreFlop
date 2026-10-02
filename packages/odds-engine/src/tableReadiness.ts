@@ -26,7 +26,7 @@ export interface ConnectivityThresholds {
 }
 
 export const CONNECTIVITY: ConnectivityThresholds = {
-  minUploadMbps: 10, // 1080p stream + data with headroom
+  minUploadMbps: 20, // three live feeds (~12 Mbps: dealer 1080p60, board 1080p, shuffler 720p) + evidence, with headroom
   maxRttMs: 150,
   maxJitterMs: 30,
   maxPacketLossPct: 1,
@@ -43,6 +43,8 @@ export interface LinkSample {
   readonly videoDelayMs: number;
   readonly heartbeatAgeS: number;
   readonly backupLinkUp: boolean;
+  /** The live stream is publishing and reaching PreFlop's media servers (live streaming is mandatory). */
+  readonly streamLive: boolean;
 }
 
 export type LinkStatus = 'healthy' | 'degraded' | 'down';
@@ -55,11 +57,13 @@ export interface LinkCheck {
 /**
  * - healthy:  all thresholds met → betting may open.
  * - degraded: soft limits exceeded → no new rounds open; the round in progress may finish.
- * - down:     heartbeat lost or stream far behind → PAUSE now; an unverifiable round is VOID.
+ * - down:     heartbeat lost, live stream off air, or stream far behind → PAUSE now; an unverifiable round is VOID.
+ *   Live streaming is mandatory: no stream, no betting.
  */
 export function checkLink(s: LinkSample, t: ConnectivityThresholds = CONNECTIVITY): LinkCheck {
   const problems: string[] = [];
   if (s.heartbeatAgeS > t.maxHeartbeatAgeS) problems.push(`no heartbeat for ${s.heartbeatAgeS}s`);
+  if (!s.streamLive) problems.push('live stream is not on air');
   if (s.videoDelayMs > 2 * t.maxVideoDelayMs) problems.push(`video ${s.videoDelayMs} ms behind`);
   const hard = problems.length > 0;
   if (s.uploadMbps < t.minUploadMbps) problems.push(`upload ${s.uploadMbps} Mbps < ${t.minUploadMbps}`);
@@ -88,6 +92,8 @@ export interface TableCertification {
   readonly tableBoxAttested: boolean;
   /** Shuffler, cameras, table box and router run on a UPS with ≥ 30 min backup. */
   readonly upsOk: boolean;
+  /** Stream privacy verified: people seated at every seat, none visible in any streamed feed (masks applied). */
+  readonly privacyMasksVerified: boolean;
 }
 
 export function certificationProblems(c: TableCertification): string[] {
@@ -100,6 +106,7 @@ export function certificationProblems(c: TableCertification): string[] {
   if (!c.boardCameraCalibrated) p.push('board camera not calibrated');
   if (!c.tableBoxAttested) p.push('table box failed attestation');
   if (!c.upsOk) p.push('UPS not healthy');
+  if (!c.privacyMasksVerified) p.push('stream privacy masks not verified');
   return p;
 }
 
@@ -158,4 +165,36 @@ export function handProcedureProblems(e: HandEvents): string[] {
     if (a !== undefined && b !== undefined && b < a) p.push(`${LABEL[ORDER[i]!]} happened before ${LABEL[ORDER[i - 1]!]}`);
   }
   return p;
+}
+
+// ---------- stream privacy ----------
+
+/**
+ * Viewers see the dealer, the shuffler, the cards and the flop — never the players.
+ * Fixed privacy masks black out every seat area on the Table Box before encoding, and
+ * person detection runs on each streamed frame as a second line of defence.
+ */
+export type StreamView = 'program' | 'board-only';
+
+export interface PrivacySample {
+  /** People detected outside the dealer zone in any streamed feed. */
+  readonly personsOutsideDealerZone: number;
+  /** A camera's framing moved (bumped / re-aimed) compared with its certified reference image. */
+  readonly framingDrift: boolean;
+}
+
+export interface PrivacyDecision {
+  readonly view: StreamView;
+  readonly alert: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * If a player could be visible, switch the stream to the board-only view immediately
+ * (betting continues — the board camera only sees the felt) and alert the floor.
+ */
+export function streamPrivacyDecision(s: PrivacySample): PrivacyDecision {
+  if (s.personsOutsideDealerZone > 0) return { view: 'board-only', alert: true, reason: `${s.personsOutsideDealerZone} person(s) visible outside the dealer zone` };
+  if (s.framingDrift) return { view: 'board-only', alert: true, reason: 'camera framing changed since certification' };
+  return { view: 'program', alert: false };
 }

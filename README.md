@@ -18,7 +18,7 @@ This repository holds the platform's design and its mathematical core:
 | [`docs/09-dynamic-revenue-sharing.md`](docs/09-dynamic-revenue-sharing.md) | Shares that grow with hands, players, turnover and pools created, capped to protect profit |
 | [`docs/10-who-pays-the-winnings.md`](docs/10-who-pays-the-winnings.md) | PreFlop house, organizer house (collateral), or pool |
 | [`docs/11-club-requirements.md`](docs/11-club-requirements.md) | Mandatory shuffler, dealer cut before each hand, connection testing and live monitoring |
-| [`docs/12-table-hardware-and-security.md`](docs/12-table-hardware-and-security.md) | Shuffler, cameras, PreFlop Table Box, network and signed flop evidence |
+| [`docs/12-table-hardware-and-security.md`](docs/12-table-hardware-and-security.md) | Shuffler, cameras, live stream (dealer, shuffler and cards, never the players), PreFlop Table Box, network and signed flop evidence |
 | [`docs/profitability.md`](docs/profitability.md) | **Generated** monthly P&L for every participant in 8 scenarios |
 | [`docs/odds-book.md`](docs/odds-book.md) | **Generated** odds book: every selection, its exact probability, odds and net EV |
 
@@ -40,7 +40,7 @@ A TypeScript library with no runtime dependencies. It covers:
 
 ```bash
 pnpm install
-pnpm test        # 106 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness, signed evidence
+pnpm test        # 111 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness, signed evidence
 pnpm typecheck
 pnpm build       # compile the engine to JavaScript (dist/) for plain Node consumers
 pnpm book        # regenerate docs/odds-book.{md,json} and docs/profitability.md

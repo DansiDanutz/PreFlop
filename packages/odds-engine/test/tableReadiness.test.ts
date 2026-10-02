@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { CUT_DEPTH, canOpenRound, checkLink, drawCutDepth, handProcedureProblems } from '../src/tableReadiness.ts';
+import { CUT_DEPTH, canOpenRound, checkLink, drawCutDepth, handProcedureProblems, streamPrivacyDecision } from '../src/tableReadiness.ts';
 
-const good = { uploadMbps: 25, rttMs: 40, jitterMs: 5, packetLossPct: 0.1, videoDelayMs: 1500, heartbeatAgeS: 1, backupLinkUp: true };
+const good = { uploadMbps: 25, rttMs: 40, jitterMs: 5, packetLossPct: 0.1, videoDelayMs: 1500, heartbeatAgeS: 1, backupLinkUp: true, streamLive: true };
 const cert = { shufflerPaired: true, connectionTestPassed: true, camerasApproved: true, dealersTrained: true,
-  shufflerSealsVerifiedThisShift: true, boardCameraCalibrated: true, tableBoxAttested: true, upsOk: true };
+  shufflerSealsVerifiedThisShift: true, boardCameraCalibrated: true, tableBoxAttested: true, upsOk: true, privacyMasksVerified: true };
 
 describe('connection health', () => {
   it('healthy link opens rounds', () => {
@@ -14,6 +14,10 @@ describe('connection health', () => {
     expect(checkLink({ ...good, videoDelayMs: 4000 }).status).toBe('degraded');
     expect(checkLink({ ...good, packetLossPct: 3 }).status).toBe('degraded');
     expect(canOpenRound(cert, { ...good, backupLinkUp: false }).ok).toBe(false);
+  });
+  it('no live stream means no betting (live streaming is mandatory)', () => {
+    expect(checkLink({ ...good, streamLive: false }).status).toBe('down');
+    expect(canOpenRound(cert, { ...good, streamLive: false }).ok).toBe(false);
   });
   it('lost heartbeat or a far-behind stream is down', () => {
     expect(checkLink({ ...good, heartbeatAgeS: 12 }).status).toBe('down');
@@ -48,5 +52,21 @@ describe('per-hand procedure: shuffle → lock → random cut → cut → deal-s
       seen.add(d);
     }
     expect(seen.size).toBe(CUT_DEPTH.max - CUT_DEPTH.min + 1);
+  });
+});
+
+describe('stream privacy: dealer, shuffler and cards only — never the players', () => {
+  it('streams the normal program when nobody is visible outside the dealer zone', () => {
+    expect(streamPrivacyDecision({ personsOutsideDealerZone: 0, framingDrift: false })).toEqual({ view: 'program', alert: false });
+  });
+  it('cuts to the board-only view and alerts when a player appears or a camera moves', () => {
+    expect(streamPrivacyDecision({ personsOutsideDealerZone: 1, framingDrift: false }).view).toBe('board-only');
+    expect(streamPrivacyDecision({ personsOutsideDealerZone: 0, framingDrift: true }).alert).toBe(true);
+  });
+  it('a table without verified privacy masks cannot open', () => {
+    expect(canOpenRound({ ...cert, privacyMasksVerified: false }, good).problems).toContain('stream privacy masks not verified');
+  });
+  it('needs enough upload for all three feeds', () => {
+    expect(checkLink({ ...good, uploadMbps: 15 }).status).toBe('degraded');
   });
 });

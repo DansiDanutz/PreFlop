@@ -21,14 +21,14 @@
 | 15 | Play modes | Real fiat, real crypto (USDT/USDC), play (reset at any time), chips (bought or transferred by clubs and organizers), diamonds (bought by organizers with fiat or crypto) (`docs/08`) | Proposed |
 | 16 | Who pays the winnings | PreFlop house, organizer house with collateral, or pool (`docs/10`) | Proposed |
 | 17 | Diamond economics | 1 ◆ fixed fee per bet, 20 ◆ minimum stake, €1 per 100 ◆ with volume discounts, provider clubs paid 20% in EUR | **Founder to confirm** |
-| 18 | Club table requirements | Automatic shuffler and a dealer cut before every hand are mandatory. Tested connection (≥ 10 Mbps up, ≤ 150 ms, ≤ 3 s video) with a backup line and live monitoring (`docs/11`) | Confirmed by the founder; thresholds are placeholders |
+| 18 | Club table requirements | Automatic shuffler and a dealer cut before every hand are mandatory. Mandatory live stream of dealer, shuffler and cards only, never the players. Tested connection (≥ 20 Mbps up per table, ≤ 150 ms, ≤ 3 s video) with a backup line and live monitoring (`docs/11`) | Confirmed by the founder; thresholds are placeholders |
 | 19 | Table hardware and security | Certified shuffler with sealed ports, cameras C1–C4, PreFlop-owned Table Box (TPM, Secure Boot, outbound-only), signed hash-chained flop captures with a 3-way match (`docs/12`) | Proposed; vendor choices to confirm |
 
 ## Delivery phases
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 106 tests green; generated docs checked in CI |
+| **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 111 tests green; generated docs checked in CI |
 | **1 — Core backend** | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
 | **2 — Player app + pilot club** | Web lobby, live table with video, bet slip, history; club tablet app; dual-entry results; play chips | 4 weeks live at one table; ≥ 99.9% of rounds verified; zero settlement errors |
 | **3 — Contests** | Pools, tournaments, heads-up, challenges, invitations, organizer reports | Fees reconcile across Models A–D; standings and ties match the rules |

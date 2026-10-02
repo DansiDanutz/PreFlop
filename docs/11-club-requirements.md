@@ -8,6 +8,7 @@ Every club table must be **certified** before it can host PreFlop rounds, and mu
 |---|---|---|
 | **Automatic shuffling machine** (approved model, serial registered, paired with the table device) | A human shuffle can be manipulated; a machine gives a random, auditable deck | The shuffler sends `shuffle-complete` for every hand. A signal typed in by staff does not count |
 | **Dealer cuts the deck before every hand, at a random depth chosen by PreFlop after betting closes** | Even someone who knew the shuffled order cannot know which cards reach the flop | The tablet shows the cut depth; the dealer cuts with a cut card and presses **Cut**. Camera C3 records it. Order is enforced: shuffle → lock → cut instruction → cut → deal |
+| **Live streaming (mandatory)** | Viewers must always see the dealer, the shuffler, the cards and the flop, and never the players | The stream must be on air for betting to open. If it drops, the table pauses (`docs/12` §3a) |
 | **Stable, tested internet with a backup line** | Players must see the table with minimal delay, and betting state must never depend on a slow stream | Connection test at onboarding, then live monitoring every few seconds |
 | **Approved cameras** | The flop area must be clearly visible; hole cards must never be exposed | Camera angles reviewed at certification |
 | **Trained dealers** | Correct Start hand, cut and flop entry | Training sign-off for each dealer |
@@ -27,7 +28,7 @@ shuffler: shuffle-complete ─► dealer: Start hand ══ LOCK ══ ─► P
 
 | Measure | Required |
 |---|---|
-| Upload | ≥ **10 Mbps** sustained (1080p video plus data, with headroom) |
+| Upload | ≥ **20 Mbps** sustained per table (three live feeds, ~12 Mbps, plus evidence, with headroom) |
 | Round-trip time | ≤ **150 ms** to the PreFlop region |
 | Jitter | ≤ **30 ms** |
 | Packet loss | ≤ **1%** |
@@ -40,13 +41,13 @@ shuffler: shuffle-complete ─► dealer: Start hand ══ LOCK ══ ─► P
 |---|---|---|
 | **Healthy** | All limits met | Rounds open normally |
 | **Degraded** | Any soft limit exceeded (slow upload, high RTT, jitter or loss, video delay > 3 s, backup line down) | **No new round opens**; the round in progress may finish. Players see "table reconnecting" |
-| **Down** | No heartbeat for > 5 s, or video delay > 6 s | **PAUSE at once.** A round that can't be verified becomes VOID and is refunded |
+| **Down** | No heartbeat for > 5 s, **live stream off air**, or video delay > 6 s | **PAUSE at once.** A round that can't be verified becomes VOID and is refunded |
 
 Video delay never moves the betting cutoff: that is always the dealer's Start hand signal, stamped by the server (`docs/01` §4). Monitoring keeps the delay small so that players watch the hand they are betting on as it happens.
 
 ## 4. Certification checklist (back office)
 
-`shufflerPaired` · `connectionTestPassed` · `camerasApproved` · `dealersTrained` · `shufflerSealsVerifiedThisShift` · `boardCameraCalibrated` · `tableBoxAttested` · `upsOk`
+`shufflerPaired` · `connectionTestPassed` · `camerasApproved` · `dealersTrained` · `shufflerSealsVerifiedThisShift` · `boardCameraCalibrated` · `tableBoxAttested` · `upsOk` · `privacyMasksVerified`
 
 The full hardware and security setup is in [`12-table-hardware-and-security.md`](./12-table-hardware-and-security.md).
 
