@@ -16,6 +16,7 @@ import * as P from './portals/partner/index.tsx';
 import * as G from './portals/organizer/index.tsx';
 import * as W from './portals/growth/index.tsx';
 import { Agents } from './portals/growth/Agents.tsx';
+import { TournamentDetailPage, Tournaments } from './portals/growth/Tournaments.tsx';
 import { AgentOverview } from './portals/agent/index.tsx';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -60,6 +61,8 @@ export function App() {
         <Route path="payments" element={<A.Payments />} />
         <Route path="settings" element={<A.Settings />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="tournaments" element={<Tournaments />} />
+        <Route path="tournaments/:id" element={<TournamentDetailPage />} />
         <Route path="promotions" element={<W.Promotions />} />
         <Route path="agents" element={<Agents />} />
         <Route path="*" element={<NotFoundPage />} />
@@ -77,6 +80,8 @@ export function App() {
         <Route path="hands" element={<O.HandLog />} />
         <Route path="rooms" element={<O.Rooms />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="tournaments" element={<Tournaments />} />
+        <Route path="tournaments/:id" element={<TournamentDetailPage />} />
         <Route path="promotions" element={<W.Promotions />} />
         <Route path="chips" element={<O.Chips />} />
         <Route path="players" element={<O.Players />} />
@@ -102,6 +107,8 @@ export function App() {
         <Route index element={<O.OrgOverviewPage />} />
         <Route path="rooms" element={<O.Rooms />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
+        <Route path="tournaments" element={<Tournaments />} />
+        <Route path="tournaments/:id" element={<TournamentDetailPage />} />
         <Route path="promotions" element={<W.Promotions />} />
         <Route path="diamonds" element={<G.Diamonds />} />
         <Route path="chips" element={<O.Chips />} />
