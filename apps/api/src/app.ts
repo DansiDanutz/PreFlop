@@ -9,6 +9,7 @@ import type { Db } from './lib/db.ts';
 import { ApiError } from './lib/errors.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
+import { growthRoutes } from './routes/growth.ts';
 import { orgRoutes } from './routes/org.ts';
 import { partnerRoutes } from './routes/partner.ts';
 import { playerRoutes } from './routes/player.ts';
@@ -78,6 +79,7 @@ export async function buildApp(db: Db, config: Config): Promise<FastifyInstance>
   await playerRoutes(app, ctx);
   await providerRoutes(app, ctx);
   await accountRoutes(app, ctx);
+  await growthRoutes(app, ctx);
   await orgRoutes(app, ctx);
   await partnerRoutes(app, ctx);
   await adminRoutes(app, ctx);
