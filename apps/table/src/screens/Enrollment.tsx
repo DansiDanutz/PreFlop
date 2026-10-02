@@ -3,6 +3,7 @@ import { BadgeCheck, Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { BigButton } from '../components/controls.tsx';
 import { ApiProblem, TableApi } from '../lib/api.ts';
+import { enrollmentMismatch } from '../lib/enrollment.ts';
 import { groupFingerprint } from '../lib/envelope.ts';
 import { type Identity, ROLE_LABEL, saveIdentity } from '../lib/keystore.ts';
 import { ResetTablet } from './Settings.tsx';
@@ -38,8 +39,11 @@ export function Enrollment({ id, onEnrolled, onReset }: { id: Identity; onEnroll
     const api = new TableApi(next);
     try {
       await api.syncClock().catch(() => 0);
-      const s = await api.state();
-      if (s.table.id !== c.tableId) throw new ApiProblem(403, 'forbidden_table');
+      // The server's view of this credential must match what was set up on this tablet.
+      const who = await api.whoami();
+      const mismatch = enrollmentMismatch(c, who);
+      if (mismatch) { setErr(mismatch); return; }
+      await api.state();
       await saveIdentity(next);
       onEnrolled(next);
     } catch (e) {

@@ -6,7 +6,7 @@ import { FlopEntry } from '../components/FlopEntry.tsx';
 import { StateBadge, Timeline } from '../components/RoundBits.tsx';
 import type { TableApi } from '../lib/api.ts';
 import { prettyFlop } from '../lib/cards.ts';
-import { type Live, type Runner, pendingEntry } from '../lib/hooks.ts';
+import { type Live, type Runner, myEntry, pendingEntry } from '../lib/hooks.ts';
 import type { Round, TableState } from '../lib/types.ts';
 
 /** Centered stage for one big instruction. */
@@ -102,7 +102,7 @@ export function DealerScreen({ api, live, mem, runner, submitFlop }: {
     }
     case 'waiting': {
       const r = task.round;
-      const mine = mem[r.id];
+      const mine = myEntry(r, mem);
       main = (
         <Stage testid="dealer-waiting" eyebrow={`Hand ${r.hand_no}`} title={r.state === 'REVIEW' ? 'Entries differ — floor manager reviewing' : 'Entry recorded'}>
           {mine?.length ? <Flop cards={mine} size="lg" /> : null}
@@ -122,7 +122,7 @@ export function DealerScreen({ api, live, mem, runner, submitFlop }: {
             <span className="inline-flex items-center gap-4" data-testid="btn-start"><Play className="h-10 w-10 fill-current" /> START HAND</span>
           </HoldButton>
           {paused && <div className="text-lg text-warn">Table paused{s.table.pause_reason ? `: ${s.table.pause_reason}` : ''}</div>}
-          {task.previous && <div className="mt-2"><ResultLine r={task.previous} mine={mem[task.previous.id]} /></div>}
+          {task.previous && <div className="mt-2"><ResultLine r={task.previous} mine={myEntry(task.previous, mem)} /></div>}
         </Stage>
       );
       break;

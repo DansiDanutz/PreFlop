@@ -36,8 +36,7 @@ function TableShell({ id, onReset }: { id: Identity; onReset: () => void }) {
     return () => clearInterval(h);
   }, [api]);
   const live = useTableState(api);
-  const cred = id.config.credentialId!;
-  const { mem, remember } = useMyEntries(cred);
+  const { mem, remember } = useMyEntries();
 
   const roundOf = (a: Action) => {
     const m = FLOP_PATH.exec(a.path);

@@ -6,7 +6,7 @@ import { FlopEntry } from '../components/FlopEntry.tsx';
 import { StateBadge } from '../components/RoundBits.tsx';
 import { ApiProblem, type TableApi } from '../lib/api.ts';
 import { sameFlop } from '../lib/cards.ts';
-import type { Live, Runner } from '../lib/hooks.ts';
+import { type Live, type Runner, myEntry } from '../lib/hooks.ts';
 import type { Evidence, Round } from '../lib/types.ts';
 import { FloorScreen } from './Floor.tsx';
 
@@ -78,10 +78,9 @@ function ReviewPanel({ api, r, live, mem, runner }: { api: TableApi; r: Round; l
   const [reason, setReason] = useState<VoidReason | null>(null);
   const [other, setOther] = useState('');
   useEffect(() => { setMode('view'); setReason(null); setOther(''); }, [r.id]);
-  const iEntered = !!mem[r.id];
+  const iEntered = !!myEntry(r, mem);
   const busy = !!runner.pending;
-  const stateEntries = live.state?.rounds[0]?.id === r.id ? live.state.entries : [];
-  const entries = ev?.entries ?? stateEntries;
+  const entries = ev?.entries ?? r.entries;
   const dealer = entries.find((e) => e.source === 'dealer');
   const floor = entries.find((e) => e.source === 'floor');
   const camera = ev?.capture?.cards;
@@ -118,8 +117,8 @@ function ReviewPanel({ api, r, live, mem, runner }: { api: TableApi; r: Round; l
         <Section title="Readings" icon={<Scale className="h-4 w-4" />}>
           <div className="flex flex-col gap-3">
             <CardsRow label="Camera" cards={camera} tone="accent" />
-            <CardsRow label="Dealer" cards={dealer?.cards} who={dealer?.person_id} tone={dealer && camera && !sameFlop(dealer.cards, camera) ? 'warn' : undefined} />
-            <CardsRow label="Floor" cards={floor?.cards} who={floor?.person_id} tone={floor && camera && !sameFlop(floor.cards, camera) ? 'warn' : undefined} />
+            <CardsRow label="Dealer" cards={dealer?.cards ?? undefined} who={dealer?.person_id} tone={dealer?.cards && camera && !sameFlop(dealer.cards, camera) ? 'warn' : undefined} />
+            <CardsRow label="Floor" cards={floor?.cards ?? undefined} who={floor?.person_id} tone={floor?.cards && camera && !sameFlop(floor.cards, camera) ? 'warn' : undefined} />
           </div>
         </Section>
         {iEntered && (
@@ -221,7 +220,7 @@ export function ManagerScreen({ api, live, mem, runner, submitFlop }: {
   useEffect(() => {
     const fresh = reviews.find((r) => !seen.current.has(r.id));
     for (const r of reviews) seen.current.add(r.id);
-    if (fresh && !mem[fresh.id]) setTab('review');
+    if (fresh && !myEntry(fresh, mem)) setTab('review');
   }, [reviews.map((r) => r.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
   const current = reviews.find((r) => r.id === pick) ?? reviews[0];
 
