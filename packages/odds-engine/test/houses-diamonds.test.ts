@@ -26,25 +26,25 @@ describe('who pays the winnings', () => {
   const odds = price(st('suit-pattern:rainbow'), 'direct').oddsCenti;
 
   it('PreFlop house: stake to PreFlop bankroll, payout from it, ledger balances', () => {
-    const p = betPostings({ mode: 'real-fiat', house: 'preflop', playerId: 'u1', stakeMinor: 1000, oddsCenti: odds, won: true });
+    const p = betPostings({ mode: 'real-fiat', currency: 'EUR', house: 'preflop', playerId: 'u1', stakeMinor: 1000, oddsCenti: odds, won: true });
     const b = balances(p);
     expect([...b.values()].reduce((a, x) => a + x, 0)).toBe(0);
-    expect(b.get('PreFlop:bankroll:real-fiat')).toBe(1000 - payoutMinor(1000, odds));
-    expect(b.get('u1:wallet:real-fiat')).toBe(payoutMinor(1000, odds) - 1000);
+    expect(b.get('PreFlop:bankroll:real-fiat:EUR')).toBe(1000 - payoutMinor(1000, odds));
+    expect(b.get('u1:wallet:real-fiat:EUR')).toBe(payoutMinor(1000, odds) - 1000);
   });
 
   it('organizer house: organizer collateral pays, PreFlop only receives its fee', () => {
-    const p = betPostings({ mode: 'real-crypto', house: 'organizer', organizerId: 'bookie', playerId: 'u2', stakeMinor: 5_000_000, oddsCenti: odds, won: true });
+    const p = betPostings({ mode: 'real-crypto', currency: 'USDC', house: 'organizer', organizerId: 'bookie', playerId: 'u2', stakeMinor: 5_000_000, oddsCenti: odds, won: true });
     const b = balances(p);
     expect([...b.values()].reduce((a, x) => a + x, 0)).toBe(0);
     const fee = platformFeeMinor('real-crypto', 5_000_000, GLOBAL_RULES.platformFee);
-    expect(b.get('PreFlop:platform-fees:real-crypto')).toBe(fee);
-    expect(b.get('bookie:collateral:real-crypto')).toBe(5_000_000 - fee - payoutMinor(5_000_000, odds));
-    expect(b.has('PreFlop:bankroll:real-crypto')).toBe(false);
+    expect(b.get('PreFlop:platform-fees:real-crypto:USDC')).toBe(fee);
+    expect(b.get('bookie:collateral:real-crypto:USDC')).toBe(5_000_000 - fee - payoutMinor(5_000_000, odds));
+    expect(b.has('PreFlop:bankroll:real-crypto:USDC')).toBe(false);
   });
 
   it('play money: no fee lines at all', () => {
-    const p = betPostings({ mode: 'play', house: 'preflop', playerId: 'u3', stakeMinor: 100, oddsCenti: odds, won: false });
+    const p = betPostings({ mode: 'play', currency: 'PLAY', house: 'preflop', playerId: 'u3', stakeMinor: 100, oddsCenti: odds, won: false });
     expect(p.every((x) => x.memo !== 'platform fee')).toBe(true);
   });
 
@@ -66,7 +66,48 @@ describe('who pays the winnings', () => {
     expect(c.availableMinor()).toBe(100_000 - 72_000);
     const net = c.settleRound('r1', 0); // flop index 0 = 2s 2h 2d → trips
     expect(net).toBe(200 - payoutMinor(200, o));
-    expect(c.balance).toBe(100_000 + net);
+    // the ledger is the balance authority: settlement releases the reservation but never moves money
+    expect(c.balance).toBe(100_000);
+    c.syncBalance(100_000 + net);
+    expect(c.availableMinor()).toBe(100_000 + net);
+  });
+
+  it('collateral reserves the platform fee too (fee owed whatever the flop)', () => {
+    const trips = st('rank-pattern:trips');
+    const o = price(trips, 'direct').oddsCenti;
+    const worst = payoutMinor(100, o) - 100; // 36,000
+    expect(new OrganizerCollateral(worst).tryBet('r', trips, 100, o, 2)).toBe(false);
+    expect(new OrganizerCollateral(worst + 2).tryBet('r', trips, 100, o, 2)).toBe(true);
+  });
+
+  it('settling with an invalid flop index throws and keeps the round reserved', () => {
+    const c = new OrganizerCollateral(100_000);
+    const trips = st('rank-pattern:trips');
+    c.tryBet('r1', trips, 100, price(trips, 'direct').oddsCenti);
+    const before = c.reservedMinor();
+    expect(() => c.settleRound('r1', 22_100)).toThrow(RangeError);
+    expect(() => c.settleRound('r1', 0.5)).toThrow(RangeError);
+    expect(c.reservedMinor()).toBe(before);
+    expect(Number.isFinite(c.balance)).toBe(true);
+  });
+
+  it('USDT and USDC never share an account', () => {
+    const a = betPostings({ mode: 'real-crypto', currency: 'USDT', house: 'preflop', playerId: 'u', stakeMinor: 1, oddsCenti: odds, won: false });
+    const b = betPostings({ mode: 'real-crypto', currency: 'USDC', house: 'preflop', playerId: 'u', stakeMinor: 1, oddsCenti: odds, won: false });
+    expect(a[0]!.from).not.toBe(b[0]!.from);
+    expect(() => betPostings({ mode: 'real-crypto', currency: 'EUR', house: 'preflop', playerId: 'u', stakeMinor: 1, oddsCenti: odds, won: false })).toThrow();
+  });
+
+  it('diamond bets post the fixed fee, the rake shares and pay on the at-risk amount', () => {
+    const rules = { rakeBps: 300, minStake: 20, rakeShares: [{ role: 'organizer', party: 'Org', bps: 10000 }] };
+    const p = betPostings({ mode: 'diamonds', currency: 'DIAMOND', house: 'organizer', organizerId: 'Org', playerId: 'u',
+      stakeMinor: 100, oddsCenti: 200, won: true, diamondRules: rules });
+    const b = balances(p);
+    expect([...b.values()].reduce((x, y) => x + y, 0)).toBe(0);
+    expect(b.get('PreFlop:diamond-treasury:diamonds:DIAMOND')).toBe(1);
+    expect(b.get('Org:rake:diamonds:DIAMOND')).toBe(3);
+    expect(b.get('u:wallet:diamonds:DIAMOND')).toBe(192 - 100); // 96 at risk × 2.00
+    expect(() => betPostings({ mode: 'diamonds', currency: 'DIAMOND', house: 'organizer', playerId: 'u', stakeMinor: 100, oddsCenti: 200, won: false })).toThrow();
   });
 });
 
@@ -83,6 +124,7 @@ describe('diamonds', () => {
       expect(s.preflopFee).toBe(GLOBAL_RULES.diamonds.preflopFeePerBet);
     }
     expect(() => splitDiamondBet(19, rules)).toThrow();
+    expect(() => splitDiamondBet(100, { ...rules, rakeBps: 5000 })).toThrow(/invalid diamond rules/);
   });
 
   it('organizer rules must stay inside the global bounds', () => {

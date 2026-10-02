@@ -1,3 +1,4 @@
+import { type DiamondRules, splitDiamondBet } from './diamonds.ts';
 import { RoundExposure } from './exposure.ts';
 import { GLOBAL_RULES } from './globalRules.ts';
 import { type HouseKind, MODES, type PlayMode, assertHouseAllowed } from './modes.ts';
@@ -22,8 +23,14 @@ export interface Posting {
   readonly memo: string;
 }
 
-/** Ledger account naming: `<owner>:<purpose>:<mode>`. */
-export const account = (owner: string, purpose: string, mode: PlayMode): string => `${owner}:${purpose}:${mode}`;
+/**
+ * Ledger account naming: `<owner>:<purpose>:<mode>:<currency>`. The currency is part of the
+ * account identity, so e.g. USDT and USDC balances in real-crypto mode are never interchangeable.
+ */
+export const account = (owner: string, purpose: string, mode: PlayMode, currency: string): string => {
+  if (!MODES[mode].currencies.includes(currency)) throw new RangeError(`currency ${currency} is not valid in mode ${mode}`);
+  return `${owner}:${purpose}:${mode}:${currency}`;
+};
 
 export interface PlatformFee {
   readonly turnoverBps: number;
@@ -41,6 +48,8 @@ export function platformFeeMinor(mode: PlayMode, stakeMinor: number, fee: Platfo
 
 export interface BetFlowInput {
   readonly mode: PlayMode;
+  /** Settlement currency; must belong to the mode (e.g. USDT or USDC in real-crypto). */
+  readonly currency: string;
   readonly house: Exclude<HouseKind, 'pool'>;
   /** The organizer's id when house = organizer. */
   readonly organizerId?: string;
@@ -49,22 +58,37 @@ export interface BetFlowInput {
   readonly oddsCenti: number;
   readonly won: boolean;
   readonly platformFee?: PlatformFee;
+  /** Required in diamonds mode: the room's rules (rake and its predefined shares). */
+  readonly diamondRules?: DiamondRules;
 }
 
 /**
  * All ledger movements of one fixed-odds bet, from placement to settlement.
  * Every posting moves money between two accounts, so the ledger always balances.
+ *
+ * Diamond bets follow their predefined split: the fixed PreFlop fee and the rake shares
+ * leave the house at placement, and winnings are paid on the at-risk amount only.
  */
 export function betPostings(b: BetFlowInput): Posting[] {
   assertHouseAllowed(b.mode, b.house);
-  const player = account(b.playerId, 'wallet', b.mode);
-  const house = b.house === 'preflop'
-    ? account('PreFlop', 'bankroll', b.mode)
-    : account(b.organizerId ?? 'organizer', 'collateral', b.mode);
+  const acct = (owner: string, purpose: string) => account(owner, purpose, b.mode, b.currency);
+  const player = acct(b.playerId, 'wallet');
+  const house = b.house === 'preflop' ? acct('PreFlop', 'bankroll') : acct(b.organizerId ?? 'organizer', 'collateral');
   const out: Posting[] = [{ from: player, to: house, amountMinor: b.stakeMinor, memo: 'stake' }];
+
+  if (b.mode === 'diamonds') {
+    if (!b.diamondRules) throw new RangeError('diamond bets need the room\'s diamond rules');
+    const split = splitDiamondBet(b.stakeMinor, b.diamondRules);
+    out.push({ from: house, to: acct('PreFlop', 'diamond-treasury'), amountMinor: split.preflopFee, memo: 'PreFlop diamond fee' });
+    for (const [party, amt] of split.rakeByParty)
+      if (amt > 0) out.push({ from: house, to: acct(party, 'rake'), amountMinor: amt, memo: 'rake share' });
+    if (b.won) out.push({ from: house, to: player, amountMinor: payoutMinor(split.atRisk, b.oddsCenti), memo: 'payout' });
+    return out;
+  }
+
   if (b.house === 'organizer') {
     const fee = platformFeeMinor(b.mode, b.stakeMinor, b.platformFee ?? GLOBAL_RULES.platformFee);
-    if (fee > 0) out.push({ from: house, to: account('PreFlop', 'platform-fees', b.mode), amountMinor: fee, memo: 'platform fee' });
+    if (fee > 0) out.push({ from: house, to: acct('PreFlop', 'platform-fees'), amountMinor: fee, memo: 'platform fee' });
   }
   if (b.won) out.push({ from: house, to: player, amountMinor: payoutMinor(b.stakeMinor, b.oddsCenti), memo: 'payout' });
   return out;
@@ -119,12 +143,19 @@ export function validateOrganizerHouse(c: OrganizerHouseConfig): OrganizerHouseC
 }
 
 /**
- * The organizer's collateral account. Every open round's worst-case loss is
- * reserved against it; a bet is refused if the reserved total would exceed the balance.
- * PreFlop therefore never has to pay an organizer's winners.
+ * Risk reservation against an organizer's collateral account.
+ *
+ * The ledger is the only source of truth for the collateral balance: postings from
+ * betPostings() move the money, and this class is told the current ledger balance with
+ * syncBalance(). It never changes the balance itself, so results are never counted twice.
+ *
+ * Every open round reserves its worst case: the lowest house result over all 22,100 flops,
+ * including certain costs such as PreFlop's platform fee. A bet is refused if the total
+ * reserved would exceed the balance, so the organizer can always pay its winners and fees
+ * and PreFlop never carries an organizer's risk.
  */
 export class OrganizerCollateral {
-  private readonly rounds = new Map<string, RoundExposure>();
+  private readonly rounds = new Map<string, { exposure: RoundExposure; certainCostsMinor: number }>();
 
   constructor(private balanceMinor: number) {
     if (!(balanceMinor >= 0)) throw new RangeError('collateral must be >= 0');
@@ -134,10 +165,20 @@ export class OrganizerCollateral {
     return this.balanceMinor;
   }
 
-  /** Sum of worst-case losses over all open rounds (independent tables can all lose). */
+  /** Update from the ledger after postings are applied (deposits, stakes, fees, payouts). */
+  syncBalance(ledgerBalanceMinor: number): void {
+    if (!Number.isFinite(ledgerBalanceMinor)) throw new RangeError('invalid balance');
+    this.balanceMinor = ledgerBalanceMinor;
+  }
+
+  private static reserveFor(minNet: number, certainCosts: number): number {
+    return Math.max(0, certainCosts - minNet);
+  }
+
+  /** Total reserved over all open rounds (independent tables can all lose). */
   reservedMinor(): number {
     let r = 0;
-    for (const e of this.rounds.values()) r += e.worstCase().lossMinor;
+    for (const x of this.rounds.values()) r += OrganizerCollateral.reserveFor(x.exposure.minNet().netMinor, x.certainCostsMinor);
     return r;
   }
 
@@ -145,28 +186,33 @@ export class OrganizerCollateral {
     return this.balanceMinor - this.reservedMinor();
   }
 
-  deposit(amountMinor: number): void {
-    this.balanceMinor += amountMinor;
-  }
-
-  tryBet(roundId: string, stats: SelectionStats, stakeMinor: number, oddsCenti: number): boolean {
-    let exp = this.rounds.get(roundId);
-    if (!exp) {
-      exp = new RoundExposure(Number.MAX_SAFE_INTEGER);
-      this.rounds.set(roundId, exp);
+  /**
+   * @param stakeMinor   amount playing against the house (the at-risk amount for diamond bets)
+   * @param certainCostMinor costs the house pays whatever the flop, e.g. PreFlop's platform fee
+   */
+  tryBet(roundId: string, stats: SelectionStats, stakeMinor: number, oddsCenti: number, certainCostMinor = 0): boolean {
+    let r = this.rounds.get(roundId);
+    if (!r) {
+      r = { exposure: new RoundExposure(Number.MAX_SAFE_INTEGER), certainCostsMinor: 0 };
+      this.rounds.set(roundId, r);
     }
-    const others = this.reservedMinor() - exp.worstCase().lossMinor;
-    if (others + exp.lossIfAdded(stats, stakeMinor, oddsCenti) > this.balanceMinor) return false;
-    exp.tryAdd(stats, stakeMinor, oddsCenti);
+    const own = OrganizerCollateral.reserveFor(r.exposure.minNet().netMinor, r.certainCostsMinor);
+    const ownAfter = OrganizerCollateral.reserveFor(r.exposure.minNetIfAdded(stats, stakeMinor, oddsCenti), r.certainCostsMinor + certainCostMinor);
+    if (this.reservedMinor() - own + ownAfter > this.balanceMinor) return false;
+    r.exposure.tryAdd(stats, stakeMinor, oddsCenti);
+    r.certainCostsMinor += certainCostMinor;
     return true;
   }
 
-  /** Applies the round's result (house net for the dealt flop) and releases its reservation. */
+  /**
+   * Closes the round for the dealt flop and releases its reservation. Returns the house's
+   * result (stakes − payouts − certain costs) for reconciliation against the ledger; the
+   * balance itself only changes through syncBalance().
+   */
   settleRound(roundId: string, flopIndex: number): number {
-    const exp = this.rounds.get(roundId);
-    if (!exp) return 0;
-    const net = exp.houseNetFor(flopIndex);
-    this.balanceMinor += net;
+    const r = this.rounds.get(roundId);
+    if (!r) throw new RangeError(`unknown round: ${roundId}`);
+    const net = r.exposure.houseNetFor(flopIndex) - r.certainCostsMinor; // throws on an invalid index, round kept
     this.rounds.delete(roundId);
     return net;
   }

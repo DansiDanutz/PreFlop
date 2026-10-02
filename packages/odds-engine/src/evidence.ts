@@ -75,11 +75,11 @@ export interface VerifyContext {
   /** Last accepted record for this device (chain continuity). */
   readonly lastSeq: number;
   readonly lastHash: string;
-  /** Image bytes as uploaded, to check against the signed hash. */
-  readonly image?: Uint8Array;
-  /** Independent manual entries of the same flop. */
-  readonly dealerEntry: readonly string[];
-  readonly floorEntry?: readonly string[];
+  /** Image bytes as uploaded, to check against the signed hash. Required: no image, no settlement. */
+  readonly image: Uint8Array | undefined;
+  /** Independent manual entries of the same flop. Both are required before settlement. */
+  readonly dealerEntry: readonly string[] | undefined;
+  readonly floorEntry: readonly string[] | undefined;
   /** Largest allowed gap between deal-start and capture (ms). */
   readonly maxCaptureDelayMs?: number;
   /** Allowed clock skew between Table Box and server (ms). */
@@ -121,7 +121,8 @@ export function verifyCapture(s: SignedCapture, ctx: VerifyContext): VerifyResul
   const skew = ctx.maxSkewMs ?? 2000;
   if (c.capturedAt + skew < ctx.dealStartAt || c.capturedAt + skew < ctx.lockedAt) reject.push('captured before the round locked / deal started');
   if (c.capturedAt > ctx.dealStartAt + (ctx.maxCaptureDelayMs ?? 180_000) + skew) reject.push('captured too long after deal-start');
-  if (ctx.image && sha256Hex(ctx.image) !== c.imageSha256) reject.push('image does not match the signed hash');
+  if (!ctx.image) reject.push('evidence image missing');
+  else if (sha256Hex(ctx.image) !== c.imageSha256) reject.push('image does not match the signed hash');
   let cards: Card[] = [];
   try {
     cards = c.cards.map(parseCard);
@@ -132,8 +133,10 @@ export function verifyCapture(s: SignedCapture, ctx: VerifyContext): VerifyResul
   if (reject.length) return { decision: 'reject', problems: reject };
 
   const review: string[] = [];
-  if (!sameCards(c.cards, ctx.dealerEntry)) review.push('camera reading differs from dealer entry');
-  if (ctx.floorEntry && !sameCards(c.cards, ctx.floorEntry)) review.push('camera reading differs from floor entry');
+  if (!ctx.dealerEntry) review.push('dealer entry missing');
+  else if (!sameCards(c.cards, ctx.dealerEntry)) review.push('camera reading differs from dealer entry');
+  if (!ctx.floorEntry) review.push('floor entry missing');
+  else if (!sameCards(c.cards, ctx.floorEntry)) review.push('camera reading differs from floor entry');
   if (review.length) return { decision: 'review', problems: review };
   return { decision: 'settle', problems: [], flop: flopFromCards(cards as [Card, Card, Card]) };
 }

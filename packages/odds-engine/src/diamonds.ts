@@ -44,6 +44,8 @@ export interface DiamondBetSplit {
 
 /** The predefined split of one diamond bet. Exact: stake = fee + rake + atRisk. */
 export function splitDiamondBet(stake: number, rules: DiamondRules): DiamondBetSplit {
+  const problems = validateDiamondRules(rules);
+  if (problems.length) throw new RangeError(`invalid diamond rules: ${problems.join('; ')}`);
   if (!Number.isSafeInteger(stake) || stake < rules.minStake) throw new RangeError(`stake must be an integer ≥ ${rules.minStake}`);
   const preflopFee = GLOBAL_RULES.diamonds.preflopFeePerBet;
   const rake = Math.floor((stake * rules.rakeBps) / 10000);

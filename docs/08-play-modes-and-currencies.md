@@ -57,6 +57,7 @@ PreFlop runs the same live flop game in five modes. Each mode has its **own curr
   - Funds are credited after N confirmations.
   - Withdrawals go through a queue with AML / Travel Rule screening.
   - Amounts are kept to 6 decimals in integer minor units.
+  - USDT and USDC have **separate accounts** (`<owner>:<purpose>:<mode>:<currency>`), so one token can never fund a bet in the other.
 
 ## Global rules (placeholders, `globalRules.ts`)
 

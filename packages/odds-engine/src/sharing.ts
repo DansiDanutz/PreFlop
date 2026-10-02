@@ -117,8 +117,14 @@ export interface Statement {
   readonly rates: Readonly<Record<string, number>>;
   /** Total external share actually applied (fraction of revenue). */
   readonly appliedShare: number;
-  /** True when the guardrail scaled the shares down. */
+  /** True when the guardrail (or the 100% ceiling) scaled the shares down. */
   readonly capped: boolean;
+  /**
+   * With a guardrail: how far PreFlop's net result falls short of its target even after
+   * capping (minor units, 0 when the target is met). A positive value means the period's
+   * economics are unfunded — external shares were cut to zero and it still wasn't enough.
+   */
+  readonly shortfallMinor: number;
   readonly amounts: Map<string, number>;
   readonly preflopMinor: number;
   /** Loss to carry into the next period (house lost money overall). */
@@ -138,25 +144,29 @@ export function computeStatement(input: StatementInput): Statement {
     rates[p.party] = r;
     total += r;
   }
-  let scale = 1;
+  // Never allocate more than 100% of revenue, guardrail or not.
+  let scale = total > 1 ? 1 / total : 1;
+  let shortfallMinor = 0;
   if (input.guardrail && input.turnoverMinor > 0 && input.revenueMinor > 0) {
     const g = input.guardrail;
     const max = maxAffordableShare(input.revenueMinor / input.turnoverMinor, g.promotionsShare, g.turnoverCostRate, g.netTarget);
-    if (total > max) scale = max / total;
+    if (total * scale > max) scale = total > 0 ? max / total : 1;
+    const netAtZeroShare = input.revenueMinor * (1 - g.promotionsShare) - input.turnoverMinor * g.turnoverCostRate;
+    shortfallMinor = Math.max(0, Math.ceil(input.turnoverMinor * g.netTarget - netAtZeroShare));
   }
   const applied = total * scale;
   if (shareable <= 0) {
     const zero = new Map(input.parties.map((p) => [p.party, 0]));
-    return { rates, appliedShare: applied, capped: scale < 1, amounts: zero, preflopMinor: shareable, carryForwardMinor: -shareable };
+    return { rates, appliedShare: applied, capped: scale < 1, shortfallMinor, amounts: zero, preflopMinor: shareable, carryForwardMinor: -shareable };
   }
   // Integer weights in millionths keep the split exact.
   const weights = new Map<string, number>(input.parties.map((p) => [p.party, Math.round(rates[p.party]! * scale * 1e6)]));
   const externalTotal = weights.size ? [...weights.values()].reduce((a, b) => a + b, 0) : 0;
-  weights.set('PreFlop', 1e6 - externalTotal);
+  weights.set('PreFlop', Math.max(0, 1e6 - externalTotal));
   const amounts = allocateLargestRemainder(shareable, weights);
   const preflopMinor = amounts.get('PreFlop')!;
   amounts.delete('PreFlop');
-  return { rates, appliedShare: applied, capped: scale < 1, amounts, preflopMinor, carryForwardMinor: 0 };
+  return { rates, appliedShare: applied, capped: scale < 1, shortfallMinor, amounts, preflopMinor, carryForwardMinor: 0 };
 }
 
 // ---------- Placeholder policies (planning assumptions, not agreed terms) ----------

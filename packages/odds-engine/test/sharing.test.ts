@@ -74,6 +74,26 @@ describe('statements', () => {
     expect(preflopNet).toBeGreaterThanOrEqual(turnover * g.netTarget - 2);
   });
 
+  it('never allocates more than 100% of revenue, even without a guardrail', () => {
+    const p45: SharePolicy = { ...greedy, components: [{ name: 'x', metric: 'activePlayers', mode: 'whole-volume', tiers: [{ from: 0, bps: 4500 }] }] };
+    const st = computeStatement({ revenueMinor: 10_000, turnoverMinor: 100_000, parties: ['A', 'B', 'C'].map((party) => ({ party, policy: p45, metrics: {} })) });
+    const external = [...st.amounts.values()].reduce((a, b) => a + b, 0);
+    expect(external).toBeLessThanOrEqual(10_000);
+    expect(st.preflopMinor).toBeGreaterThanOrEqual(0);
+    expect(external + st.preflopMinor).toBe(10_000);
+    expect(st.capped).toBe(true);
+  });
+
+  it('reports a shortfall when even zero shares cannot meet the net target', () => {
+    const g = { promotionsShare: 0.1, turnoverCostRate: 0.01, netTarget: 0.025 };
+    const st = computeStatement({ revenueMinor: 3_000, turnoverMinor: 100_000, parties: [{ party: 'Club', policy: CLUB_POLICY, metrics: {} }], guardrail: g });
+    // net at zero share = 3,000·0.9 − 1,000 = 1,700 < target 2,500
+    expect(st.shortfallMinor).toBe(800);
+    expect(st.amounts.get('Club')).toBe(0);
+    const fine = computeStatement({ revenueMinor: 7_000, turnoverMinor: 100_000, parties: [{ party: 'Club', policy: CLUB_POLICY, metrics: {} }], guardrail: g });
+    expect(fine.shortfallMinor).toBe(0);
+  });
+
   it('a losing month pays no shares and carries the loss forward', () => {
     const st = computeStatement({ revenueMinor: -5000, turnoverMinor: 100_000, parties: [{ party: 'Club', policy: CLUB_POLICY, metrics: {} }] });
     expect(st.amounts.get('Club')).toBe(0);

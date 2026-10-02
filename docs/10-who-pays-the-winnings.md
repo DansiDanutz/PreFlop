@@ -36,7 +36,7 @@ period: organizer ──provider share of its GGR──▶ provider club   (mone
 Several rules protect players, the organizer and PreFlop:
 
 1. **Validated book.** An organizer may only be the house if its book keeps a margin of at least the global minimum (3%, and the per-market tier floors still apply), and if it still has positive expected value after PreFlop's fee and the provider share (at least 0.5%). `validateOrganizerHouse()` rejects anything else. *Example:* 6% margin, 10% provider share and a 1.5% fee leave the organizer **+3.9%** per unit staked.
-2. **Collateral before betting.** Each open round reserves its worst-case loss, computed exactly over the 22,100 flops. A bet that would push the total reserved above the collateral is **refused**. Winners are therefore always paid, and PreFlop never carries an organizer's risk.
+2. **Collateral before betting.** Each open round reserves its worst-case loss, computed exactly over the 22,100 flops, plus PreFlop's platform fee, which is owed whatever the flop. A bet that would push the total reserved above the collateral is **refused**. The ledger is the only record of the collateral balance; the risk engine reads it from the ledger and never changes it, so no result is ever counted twice. Winners are therefore always paid, and PreFlop never carries an organizer's risk.
 3. **Licence.** In real-money modes, an organizer that is the house must hold the licence itself; this is typically a betting company. In chips and diamonds no money is at stake, so any approved organizer can be the house.
 4. **Diamonds:** the organizer is always the house (or runs pools). PreFlop's income is the fixed diamond fee per bet, which leaves the organizer's economy, so the organizer rebuys diamonds.
 

@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.28.0",
   "engines": { "node": ">=20" },
   "scripts": {
+    "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "book": "pnpm --filter @preflop/odds-engine book"

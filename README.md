@@ -40,8 +40,9 @@ A TypeScript library with no runtime dependencies. It covers:
 
 ```bash
 pnpm install
-pnpm test        # 99 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness, signed evidence
+pnpm test        # 106 tests: combinatorics, house edge, net EV, exposure, settlement, fees, sharing, houses, diamonds, scenarios, table readiness, signed evidence
 pnpm typecheck
+pnpm build       # compile the engine to JavaScript (dist/) for plain Node consumers
 pnpm book        # regenerate docs/odds-book.{md,json} and docs/profitability.md
 ```
 

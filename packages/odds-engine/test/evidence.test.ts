@@ -47,6 +47,15 @@ describe('signed flop evidence', () => {
     expect(verifyCapture(signCapture({ ...capture, roundId: 'r41' }, privateKey), ctx).decision).toBe('reject');
   });
 
+  it('never settles without the image or both manual entries', () => {
+    const s = signCapture(capture, privateKey);
+    expect(verifyCapture(s, { ...ctx, image: undefined }).problems).toContain('evidence image missing');
+    const noFloor = verifyCapture(s, { ...ctx, floorEntry: undefined });
+    expect(noFloor.decision).toBe('review');
+    expect(noFloor.problems).toContain('floor entry missing');
+    expect(verifyCapture(s, { ...ctx, dealerEntry: undefined }).decision).toBe('review');
+  });
+
   it('sends disagreements with the dealer or floor to manual review, never to settlement', () => {
     const r = verifyCapture(signCapture(capture, privateKey), { ...ctx, dealerEntry: ['Kh', 'Kd', '8h'] });
     expect(r.decision).toBe('review');

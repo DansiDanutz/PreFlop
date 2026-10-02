@@ -24,19 +24,25 @@ export class RoundExposure {
     return this.stakes;
   }
 
-  /** Largest possible house loss over all flops (0 if every flop is profitable) and the flop that causes it. */
-  worstCase(): { lossMinor: number; flopIndex: number } {
+  /** Lowest house net result over all flops (negative = a loss) and the flop that causes it. */
+  minNet(): { netMinor: number; flopIndex: number } {
     let min = Number.POSITIVE_INFINITY;
     let at = 0;
     for (let f = 0; f < FLOP_COUNT; f++) {
       const v = this.houseNet[f]!;
       if (v < min) { min = v; at = f; }
     }
-    return { lossMinor: Math.max(0, -min), flopIndex: at };
+    return { netMinor: min, flopIndex: at };
   }
 
-  /** Worst-case loss if this bet were added, without adding it. */
-  lossIfAdded(stats: SelectionStats, stakeMinor: number, oddsCenti: number): number {
+  /** Largest possible house loss over all flops (0 if every flop is profitable) and the flop that causes it. */
+  worstCase(): { lossMinor: number; flopIndex: number } {
+    const { netMinor, flopIndex } = this.minNet();
+    return { lossMinor: Math.max(0, -netMinor), flopIndex };
+  }
+
+  /** Lowest house net result over all flops if this bet were added, without adding it. */
+  minNetIfAdded(stats: SelectionStats, stakeMinor: number, oddsCenti: number): number {
     const pay = payoutMinor(stakeMinor, oddsCenti);
     const win = new Uint8Array(FLOP_COUNT);
     for (const f of stats.winningFlops) win[f] = 1;
@@ -45,7 +51,12 @@ export class RoundExposure {
       const v = this.houseNet[f]! + stakeMinor - (win[f] ? pay : 0);
       if (v < min) min = v;
     }
-    return Math.max(0, -min);
+    return min;
+  }
+
+  /** Worst-case loss if this bet were added, without adding it. */
+  lossIfAdded(stats: SelectionStats, stakeMinor: number, oddsCenti: number): number {
+    return Math.max(0, -this.minNetIfAdded(stats, stakeMinor, oddsCenti));
   }
 
   canAccept(stats: SelectionStats, stakeMinor: number, oddsCenti: number): boolean {
@@ -66,6 +77,7 @@ export class RoundExposure {
 
   /** House net result if the given flop is dealt. */
   houseNetFor(flopIndex: number): number {
+    if (!Number.isInteger(flopIndex) || flopIndex < 0 || flopIndex >= FLOP_COUNT) throw new RangeError(`invalid flop index: ${flopIndex}`);
     return this.houseNet[flopIndex]!;
   }
 
