@@ -14,7 +14,7 @@ await migrate(db);
 const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs });
 console.log('PreFlop worker running');
 const shutdown = async () => {
-  stop();
+  await stop();
   await db.end();
   process.exit(0);
 };

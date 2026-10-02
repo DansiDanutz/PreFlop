@@ -11,11 +11,11 @@ const applied = await migrate(db);
 if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 const app = await buildApp(db, config);
 const stopFanout = startWebhookFanout(db);
-const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }) : () => {};
+const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }) : async () => {};
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`PreFlop API on :${config.port}`);
 const shutdown = async () => {
-  stop();
+  await stop();
   stopFanout();
   await app.close();
   await db.end();

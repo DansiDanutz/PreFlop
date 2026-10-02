@@ -22,6 +22,8 @@ export interface Config {
   log: boolean;
   /** In-process limits per window of one minute (per API instance). */
   rateLimit: RateLimitConfig;
+  /** GET /v1/health/ready fails when the freshest worker heartbeat is older than this. */
+  workerHeartbeatMaxAgeMs: number;
 }
 
 export interface RateLimitConfig {
@@ -91,6 +93,7 @@ const Env = z.object({
   LOG: bool(false),
   WEBHOOK_ALLOW_PRIVATE: bool(false),
   ADMIN_PASSWORD: z.string().optional(),
+  WORKER_HEARTBEAT_MAX_AGE_MS: ms(15_000),
   RATE_LIMIT_ENABLED: bool(true),
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_PARTNER_TOKEN_PER_MIN: z.coerce.number().int().positive().default(30),
@@ -162,6 +165,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       partnerTokenPerMinute: e.RATE_LIMIT_PARTNER_TOKEN_PER_MIN,
       betsPerMinute: e.RATE_LIMIT_BETS_PER_MIN,
     },
+    workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
   };
 }
 

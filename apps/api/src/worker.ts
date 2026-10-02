@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { hostname } from 'node:os';
 import { type Db, tx } from './lib/db.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
@@ -70,24 +72,38 @@ export async function sweepOnce(db: Db, t: Timing): Promise<{ voided: number; re
   return { voided, reenqueued, opened };
 }
 
-export function startWorker(db: Db, t: Timing, everyMs = 1000): () => void {
+/** Records that this worker loop is alive (GET /v1/health/ready checks the freshest beat). */
+export async function beat(db: Db, workerId: string): Promise<void> {
+  await db.query(`insert into worker_heartbeats (worker_id) values ($1)
+    on conflict (worker_id) do update set beat_at = now(), ticks = worker_heartbeats.ticks + 1`, [workerId]);
+}
+
+export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
+
+/** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
+export function startWorker(db: Db, t: Timing, everyMs = 1000): () => Promise<void> {
   let stopped = false;
-  let running = false;
-  const timer = setInterval(async () => {
-    if (running || stopped) return;
-    running = true;
+  let current: Promise<void> | null = null;
+  const workerId = newWorkerId();
+  const tick = async () => {
     try {
+      // A tick that hangs stops the beats, so readiness reports the stuck worker.
+      await beat(db, workerId);
       await runOutboxOnce(db, t);
       await sweepOnce(db, t);
       await deliverDue(db);
     } catch (e) {
       console.error('worker error', e);
-    } finally {
-      running = false;
     }
+  };
+  const timer = setInterval(() => {
+    if (current || stopped) return;
+    current = tick().finally(() => { current = null; });
   }, everyMs);
-  return () => {
+  return async () => {
     stopped = true;
     clearInterval(timer);
+    await current;
+    await db.query('delete from worker_heartbeats where worker_id = $1', [workerId]).catch(() => {});
   };
 }

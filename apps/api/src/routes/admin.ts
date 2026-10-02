@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { statsOf } from '../bets/service.ts';
 import { audit, verifyAuditChain } from '../lib/audit.ts';
-import { tx } from '../lib/db.ts';
+import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
@@ -12,7 +12,7 @@ import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { ensureOpenRound, lockRound, voidRound } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
-import { tableSummaries } from './public.ts';
+import { readinessChecks, tableSummaries } from './public.ts';
 
 export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...roles: string[]) {
   const u = await ctx.user(req);
@@ -50,6 +50,43 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       rounds_24h: await q(`select count(*) filter (where state='SETTLED')::int as settled, count(*) filter (where state='VOID')::int as voided from rounds where opened_at > now() - interval '24 hours'`),
       open_alerts: await q('select count(*)::int as n from alerts where resolved_at is null'),
       tables: await tableSummaries(ctx),
+    };
+  });
+
+  /**
+   * Operational counters (JSON). Database counters are global; deadlock retries and WebSocket
+   * clients are per API instance (this process, since it started).
+   */
+  app.get('/v1/admin/metrics', async (req) => {
+    await requirePlatform(ctx, req);
+    const one = async <T>(sql: string) => (await ctx.db.query(sql)).rows[0] as T;
+    const outbox = await one<{ pending: number; oldest_age_s: number | null }>(
+      `select count(*)::int as pending, extract(epoch from (now() - min(created_at)))::float8 as oldest_age_s from outbox where done_at is null`);
+    const webhooks = await one<{ pending: number; failed: number; oldest_pending_age_s: number | null }>(
+      `select count(*) filter (where status = 'pending')::int as pending, count(*) filter (where status = 'failed')::int as failed,
+              extract(epoch from (now() - min(created_at) filter (where status = 'pending')))::float8 as oldest_pending_age_s
+         from webhook_deliveries where status in ('pending','failed')`);
+    const alerts = await one<{ open: number; critical: number }>(
+      `select count(*)::int as open, count(*) filter (where severity = 'critical')::int as critical from alerts where resolved_at is null`);
+    const states = (await ctx.db.query<{ state: string; n: number }>('select state, count(*)::int as n from rounds group by state order by state')).rows;
+    const sweeper = await one<{ n: number }>(
+      `select count(*)::int as n from rounds where state = 'VOID' and voided_by like 'system:sweeper%' and voided_at > now() - interval '1 hour'`);
+    const ready = await readinessChecks(ctx);
+    return {
+      at: new Date().toISOString(),
+      outbox: { pending: outbox.pending, oldest_pending_age_s: outbox.oldest_age_s === null ? null : Math.round(outbox.oldest_age_s * 10) / 10 },
+      webhook_deliveries: { pending: webhooks.pending, failed: webhooks.failed, oldest_pending_age_s: webhooks.oldest_pending_age_s === null ? null : Math.round(webhooks.oldest_pending_age_s * 10) / 10 },
+      alerts: { open: alerts.open, open_critical: alerts.critical },
+      rounds_by_state: Object.fromEntries(states.map((r) => [r.state, r.n])),
+      sweeper_voids_last_hour: sweeper.n,
+      worker: ready.worker,
+      instance: {
+        pid: process.pid,
+        started_at: ctx.stats.startedAt.toISOString(),
+        uptime_s: Math.round((Date.now() - ctx.stats.startedAt.getTime()) / 1000),
+        db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
+        ws_clients: ctx.stats.wsClients,
+      },
     };
   });
 
