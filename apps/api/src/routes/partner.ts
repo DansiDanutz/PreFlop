@@ -15,6 +15,7 @@ import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
 import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
+import { WidgetSettings, widgetSnippet } from './widget.ts';
 
 /**
  * Partner (betting company) integration, docs/02 §2:
@@ -138,21 +139,18 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
          from bets b join users u on u.id = b.user_id join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.partner_id = $1 order by b.placed_at desc limit $2`, [org.id, limit])).rows };
   });
-  const widgetView = (orgId: string, settings: Record<string, unknown>) => {
-    const web = process.env.WEB_URL ?? 'http://localhost:5173';
-    const table = String(settings.default_table ?? 'green-room');
-    return {
-      settings,
-      snippet: `<iframe src="${web}/embed/table/${table}?token=PLAYER_SESSION_TOKEN&accent=${encodeURIComponent(String(settings.accent ?? '#53e6a7'))}" style="width:100%;max-width:440px;height:820px;border:0;border-radius:18px" allow="autoplay" title="PreFlop"></iframe>\n<!-- Get PLAYER_SESSION_TOKEN server-side: POST /v1/partner/players/{player_ref}/session (partner ${orgId}) -->`,
-    };
-  };
+  const widgetView = (orgId: string, settings: Record<string, unknown>) => ({ settings, snippet: widgetSnippet(orgId, settings) });
   app.get(`${P}/widget`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'] });
     return widgetView(org.id, (org.settings.widget as Record<string, unknown>) ?? {});
   });
   app.put(`${P}/widget`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
-    const { settings } = z.object({ settings: z.record(z.unknown()) }).parse(req.body);
+    const { settings } = z.object({ settings: WidgetSettings }).parse(req.body);
+    if (settings.default_table_id) {
+      const t = (await ctx.db.query('select 1 from poker_tables where id = $1', [settings.default_table_id])).rows[0];
+      if (!t) throw unprocessable('unknown_table', `no table ${settings.default_table_id}`);
+    }
     await ctx.db.query(`update organizations set settings = jsonb_set(settings, '{widget}', $2::jsonb) where id = $1`, [org.id, JSON.stringify(settings)]);
     return widgetView(org.id, settings);
   });

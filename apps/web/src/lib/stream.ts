@@ -1,6 +1,7 @@
 import { type StreamEvent, connectStream } from '@preflop/client';
 import { useEffect, useRef, useState } from 'react';
 import { WS_URL } from './api.ts';
+import type { StreamStatus } from './live.ts';
 
 /**
  * Subscribes to WS /v1/stream topics for the lifetime of the component. The handler can change
@@ -9,7 +10,7 @@ import { WS_URL } from './api.ts';
 export function useStream(topics: string[], onEvent: (e: StreamEvent) => void, token?: string | null) {
   const handler = useRef(onEvent);
   handler.current = onEvent;
-  const [status, setStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [status, setStatus] = useState<StreamStatus>('connecting');
   const key = topics.join('|');
   useEffect(() => {
     if (typeof WebSocket === 'undefined') return;

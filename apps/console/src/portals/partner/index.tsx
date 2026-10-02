@@ -192,7 +192,7 @@ export function Widget() {
   const presetList = presets.split(',').map((x) => x.trim()).filter(Boolean);
   const errs = {
     accent: !/^#[0-9a-fA-F]{6}$/.test(accent) ? 'Use a 6-digit hex colour like #53e6a7.' : null,
-    presets: presetList.length < 1 || presetList.length > 5 || presetList.some((x) => !/^\d+$/.test(x) || Number(x) < 1) ? 'Enter 1–5 positive whole stakes, comma-separated.' : null,
+    presets: presetList.length < 1 || presetList.length > 5 || presetList.some((x) => !/^\d{1,7}$/.test(x) || Number(x) < 1 || Number(x) > 1_000_000) ? 'Enter 1–5 whole stakes from 1 to 1,000,000, comma-separated.' : null,
   };
   const save = useAction(() => api.partnerSaveWidget(id, { accent, default_table_id: table || null, markets, stake_presets: presetList.map(Number) }), {
     invalidate: [['org', id, 'widget']], success: 'Widget settings saved.',

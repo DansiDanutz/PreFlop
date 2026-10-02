@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Typed browser/Node client for the PreFlop API (REST + WebSocket stream)",
   "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit" },
-  "devDependencies": { "typescript": "^5.7.0" }
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "zod": "^3.24.0" },
+  "devDependencies": { "typescript": "^5.7.0", "vitest": "^3.0.0" }
 }

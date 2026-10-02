@@ -7,7 +7,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../../lib/api.ts';
 import { type BetOption, MAIN_GRID, MAX_FAVORITES, removeFavorite, resolveOption } from '../../lib/bets.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
-import { openHandNo, phaseOf, tableStatus } from '../../lib/live.ts';
+import { openHandNo, phaseOf, streamGate, tableStatus } from '../../lib/live.ts';
+import { marketAllowed } from '../../lib/embed.ts';
 import { type BetProblem, betProblem } from '../../lib/problems.ts';
 import { useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
 import { amountLabel, balanceLabel, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
@@ -18,8 +19,11 @@ import { MiniFlop } from '../MiniFlop.tsx';
 import { StreamView, feltLabel, feltTheme } from '../StreamView.tsx';
 import { ErrorState, Notice, Sheet, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from './Catalogue.tsx';
+import { LiveBanner } from './LiveBanner.tsx';
 import { RoundCompleteSheet } from './RoundCompleteSheet.tsx';
 import { EmptyFavoriteSlot, FavoriteTile } from './Tiles.tsx';
+
+const PRESET_COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5' };
 
 /** Choose → Lock → Reveal, numbered, as on the practice table. */
 function Steps({ phase }: { phase: RoundPhase }) {
@@ -49,9 +53,12 @@ const PROMPT: Record<RoundPhase, { eyebrow: string; title: string }> = {
  * full catalogue one tap away, amount and confirm, then Round complete when the round settles.
  * With ?room=<id> the same screen plays in an organizer's room: the room's odds, the room's
  * closed-loop wallet (chips or diamonds) and room_id on every bet.
- * Used by /app/table/:id (and …/bets, which opens the catalogue) and by /embed/table/:id.
+ * Used by /app/table/:id (and …/bets, which opens the catalogue) and by /embed/table/:id, where
+ * the partner's `embedOptions` limit the markets shown and set the stake pills.
  */
-export function TableScreen({ tableId, embed = false, catalogue = false }: { tableId: string; embed?: boolean; catalogue?: boolean }) {
+export function TableScreen({ tableId, embed = false, catalogue = false, embedOptions }: {
+  tableId: string; embed?: boolean; catalogue?: boolean; embedOptions?: { markets: string[] | null; stakes: number[] | null } | undefined;
+}) {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
@@ -68,7 +75,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
   const roomQs = roomId ? `?room=${encodeURIComponent(roomId)}` : '';
 
   const [selectedId, setSelectedId] = useState<string>(() => params.get('sel') ?? 'hand-class:pair');
-  const [stake, setStake] = useState<number>(() => readJson<number>(KEYS.stake) ?? 100);
+  const [stake, setStake] = useState<number>(() => embedOptions?.stakes?.[0] ?? readJson<number>(KEYS.stake) ?? 100);
   const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState<BetProblem | null>(null);
   const [placedMsg, setPlacedMsg] = useState<string | null>(null);
@@ -95,20 +102,33 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
     if (catalogue && !embed) nav(`/app/table/${tableId}${roomQs}`, { replace: true });
   };
 
-  const optionFor = useCallback((id: string): BetOption | undefined => roomOption(resolveOption(book.index, id), room), [book.index, room]);
+  // A partner widget can limit the markets shown (?markets=…); everything else is unchanged.
+  const marketFilter = embedOptions?.markets ?? null;
+  const optionFor = useCallback((id: string): BetOption | undefined => {
+    const o = resolveOption(book.index, id);
+    return o && !marketAllowed(marketFilter, o.marketId) ? undefined : roomOption(o, room);
+  }, [book.index, room, marketFilter]);
   const option = optionFor(selectedId);
   const nameOf = useCallback((id: string) => {
     const tile = MAIN_GRID.find((g) => g.id === id || resolveOption(book.index, g.id)?.id === id);
     return resolveOption(book.index, id)?.name ?? tile?.title ?? id;
   }, [book.index]);
-  const allOptions = useMemo(() => [...book.index.values()].map((o) => roomOption(o, room)!), [book.index, room]);
+  const allOptions = useMemo(() => [...book.index.values()].filter((o) => marketAllowed(marketFilter, o.marketId)).map((o) => roomOption(o, room)!), [book.index, room, marketFilter]);
+  const favIds = useMemo(() => (marketFilter && book.index.size ? favs.ids.filter((id) => optionFor(id)) : favs.ids), [favs.ids, optionFor, marketFilter, book.index.size]);
+  // The default pick may be outside the partner's markets: start on the first one shown instead.
+  useEffect(() => {
+    if (!marketFilter || !book.index.size || optionFor(selectedId)) return;
+    const first = favIds[0] ?? allOptions[0]?.id;
+    if (first) setSelectedId(first);
+  }, [marketFilter, book.index.size, optionFor, selectedId, favIds, allOptions]);
 
   // Money context: the room's closed-loop wallet, or free chips.
   const currency = room?.currency ?? t?.currency ?? 'PLAY';
   const balance = room ? (rm.walletsLoaded ? rm.wallet?.balance_minor ?? 0 : null) : play.balance;
   const [p1, p2, p3] = stakePresets(room?.rules.min_stake_minor);
-  const presets = [p1, p2, p3, p3 * 2];
   const minStake = room?.rules.min_stake_minor ?? 1;
+  const partnerPresets = embedOptions?.stakes?.filter((x) => x >= minStake);
+  const presets = partnerPresets?.length ? partnerPresets : [p1, p2, p3, p3 * 2];
   const step = Math.max(10, minStake);
   const roomMismatch = !!room && room.table_id !== tableId;
 
@@ -158,14 +178,17 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
   }
 
   const tooMuch = balance !== null && stake > balance;
-  const canConfirm = !!openId && !!option?.offered && stake >= minStake && !tooMuch && !place.isPending && status?.open !== false && !roomMismatch && !(roomId && !room);
-  const favCount = favs.ids.length;
+  // No bets while the live stream is down: the round may already be locked without us seeing it.
+  const gate = streamGate(live.ws);
+  const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !place.isPending && status?.open !== false && !roomMismatch && !(roomId && !room);
+  const favCount = favIds.length;
   const unavailable = !!t && (t.status !== 'active' || status?.label === 'Stream unavailable');
   const prompt = PROMPT[phase];
   const returns = option?.offered && !pool ? Math.floor((stake * option.oddsCenti) / 100) : null;
 
   return (
     <div className={cx('@container', embed && 'px-4 pb-8 pt-4')}>
+      <LiveBanner ws={live.ws} className="mb-4" />
       {/* heading */}
       {!embed && t && (
         <Link to={`/app/clubs/${t.club_id}`} className="inline-flex items-center gap-1.5 text-[14px] text-ink/85 hover:text-ink">
@@ -248,7 +271,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
             <button type="button" onClick={() => setEditing((e) => !e)} className="text-[13px] text-accent hover:underline">{editing ? 'Done' : 'Edit'}</button>
           </div>
           <div className="mt-5 grid grid-cols-2 gap-3">
-            {favs.ids.map((id) => (
+            {favIds.map((id) => (
               <FavoriteTile key={id} id={id} option={optionFor(id)} selected={selectedId === id || optionFor(id)?.id === selectedId} editing={editing} pool={pool}
                 onSelect={() => setSelectedId(id)} onRemove={() => favs.save(removeFavorite(favs.ids, id))} />
             ))}
@@ -286,7 +309,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
                 className="min-w-0 flex-1 bg-transparent text-center text-[16px] text-ink focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
               <button type="button" aria-label="Increase amount" onClick={() => setStake((s) => s + step)} className="grid w-12 place-items-center bg-surface-3 hover:text-accent"><Plus className="h-4 w-4" /></button>
             </div>
-            <div className="mt-2.5 grid grid-cols-4 gap-2">
+            <div className={cx('mt-2.5 grid gap-2', PRESET_COLS[presets.length] ?? 'grid-cols-4')}>
               {presets.map((p) => (
                 <button key={p} type="button" aria-pressed={stake === p} onClick={() => setStake(p)}
                   className={cx('h-10 rounded-[6px] border text-[13px] transition-colors', stake === p ? 'border-accent/60 bg-accent-deep text-accent' : 'border-line-strong/70 text-ink/90 hover:border-accent/50')}>
@@ -307,14 +330,14 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
 
             {problem && (
               <div className="mt-4">
-                <ProblemNotice problem={problem} pending={place.isPending} canReset={!room}
+                <ProblemNotice problem={problem} pending={place.isPending || gate.paused} canReset={!room}
                   onAccept={(odds) => place.mutate({ acceptPrice: odds })} onReset={() => setConfirmReset(true)} onDismiss={() => setProblem(null)} />
               </div>
             )}
             {placedMsg && !problem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
 
             <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => place.mutate({})}>
-              {place.isPending ? 'Placing…' : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
+              {place.isPending ? 'Placing…' : gate.paused ? 'Bets paused · reconnecting' : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
             </Button>
             <p className="mt-4 text-center text-[12px] text-ink/80">{currency === 'PLAY' ? 'Free chips. No purchases, prizes or cash-out.' : noCashValueLine(currency)}</p>
           </div>
@@ -342,7 +365,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false }: { tab
       </div>
 
       <CatalogueSheet open={catalogueOpen} onClose={closeCatalogue} options={allOptions} loading={book.isLoading} error={book.isError} onRetry={() => void book.refetch()}
-        favorites={favs.ids} onSaveFavorites={(ids) => favs.save(ids)} pool={pool} inRoom={!!room}
+        favorites={favIds} onSaveFavorites={(ids) => favs.save(ids)} pool={pool} inRoom={!!room}
         onPick={(o) => { setSelectedId(o.id); closeCatalogue(); }} />
 
       <RoundCompleteSheet summary={live.completed} nameOf={nameOf} voidReason={live.completed ? live.voidReasons[live.completed.roundId] : undefined}
