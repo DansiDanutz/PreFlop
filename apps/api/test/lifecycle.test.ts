@@ -33,8 +33,9 @@ describe('round lifecycle on the simulated table (docs/13 §4, §8)', () => {
     const r = await openRound();
     const book = (await h.api('GET', '/v1/book')).body;
     const sels = book.markets.flatMap((m: any) => m.selections).filter((s: any) => s.offered);
-    const pair = sels.find((s: any) => s.id === 'rank-pattern:pair');
-    const noPair = sels.find((s: any) => s.id === 'rank-pattern:no-pair');
+    // Complementary selections, so exactly one wins whatever the flop (pair/no-pair both lose on trips).
+    const pair = sels.find((s: any) => s.id === 'paired-board:yes');
+    const noPair = sels.find((s: any) => s.id === 'paired-board:no');
     expect((await bet(h, p.token, r.id, pair.id, 100)).status).toBe(201);
     expect((await bet(h, p.token, r.id, noPair.id, 100)).status).toBe(201);
     expect(await walletOf(h, p.token)).toBe(9_800);
