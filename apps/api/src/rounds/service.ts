@@ -434,6 +434,9 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
       where id = $1 and state = $2 returning id`,
     [r.id, expected, cards, flopIndex(parsed.map((x) => x.id) as unknown as [number, number, number])]);
   if (won.rowCount !== 1) return false;
+  // Global lock order: round → (user) → table → wallets. Take the table row now, before any
+  // posting key-share-locks a wallet account, exactly as bet placement does.
+  const t = (await c.query<{ monitor: Record<string, number> }>('select monitor from poker_tables where id = $1 for update', [r.table_id])).rows[0]!;
   const bets = (await c.query<BetRow>(`select * from bets where round_id = $1 and status = 'accepted' order by id`, [r.id])).rows;
   let paid = 0, staked = 0;
   const record = async (b: BetRow, status: 'won' | 'lost' | 'void', payout: number) => {
@@ -469,7 +472,6 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
   await audit(c, { type: 'round.settled', roundId: r.id, cards, by, bets: bets.length, stakedMinor: staked, paidMinor: paid });
 
   // Outcome monitoring: a stacked deck trips the CUSUM and pauses the table (docs/12 §2a).
-  const t = (await c.query<{ monitor: Record<string, number> }>('select monitor from poker_tables where id = $1 for update', [r.table_id])).rows[0]!;
   const m = updateMonitor(t.monitor ?? {}, flop);
   if (m.alarms.length) {
     await c.query(`update poker_tables set monitor = '{}'::jsonb, monitor_hands = monitor_hands + 1, status = 'paused',
