@@ -1,11 +1,13 @@
 import { EmptyState } from '@preflop/ui';
-import { ChevronRight, Star } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ChevronRight, Star, Swords } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useOutletContext } from 'react-router';
 import { HelpButton, PageHeader, type ShellContext } from '../../components/AppShell.tsx';
 import { RoomCard } from '../../components/RoomCard.tsx';
 import { TableCard, tableGrid } from '../../components/TableCards.tsx';
 import { ErrorState, SearchField, Skeleton, Tabs } from '../../components/ui.tsx';
+import { api } from '../../lib/api.ts';
 import { tableStatus } from '../../lib/live.ts';
 import { useLobby, useRooms, useSavedTables, useWallets } from '../../lib/queries.ts';
 import { KEYS, readString } from '../../lib/storage.ts';
@@ -89,8 +91,25 @@ export function LobbyPage() {
         </section>
       )}
 
+      <TournamentsRow />
       <RoomsSection />
     </div>
+  );
+}
+
+/** A small way into tournaments; says how many are running when the API answers. */
+function TournamentsRow() {
+  const running = useQuery({ queryKey: ['tournaments', 'running'], queryFn: () => api.tournaments('running'), refetchInterval: 60_000 });
+  const n = running.data?.tournaments.length ?? 0;
+  return (
+    <Link to="/app/tournaments" className="group mt-4 flex items-center gap-4 rounded-[12px] border border-line-strong/60 bg-surface px-6 py-4 hover:border-line-strong sm:px-10">
+      <Swords className="h-6 w-6 shrink-0 text-accent/80" strokeWidth={1.6} aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block font-serif text-[18px] tracking-[-0.03em]">Tournaments{n > 0 && <span className="ml-2 align-middle font-sans text-[12px] font-semibold text-accent">{n} running now</span>}</span>
+        <span className="block text-[13px] text-ink/80">Same stack, same bets. The biggest stack when the clock runs out wins.</span>
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-muted group-hover:text-ink" aria-hidden />
+    </Link>
   );
 }
 
