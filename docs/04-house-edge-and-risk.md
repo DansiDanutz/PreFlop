@@ -64,7 +64,15 @@ Example prices (direct channel; the full list is in [`odds-book.md`](./odds-book
 Sportsbooks move their odds because the true probability is unknown. Here it is known exactly, so odds are **fixed per book version** and risk is managed through limits:
 
 1. **Exact round exposure** (`RoundExposure`). For each round the engine keeps the house's net result for every one of the 22,100 flops. A new bet is accepted only if the *worst possible flop* still keeps the round's loss within its limit. Correlated bets, such as "pair", "pair of kings" and "all red" on the same flop, are handled exactly. The tests check this against a brute-force calculation.
-2. **Maximum payout per bet and per user per round**, which matters most on long shots such as trips at 361.
+2. **Maximum stake, and maximum payout per bet and per user per round**, which matters most on long shots such as trips at 361. Limits are set in major units and scaled by each currency's minor-unit digits (`apps/api/src/lib/limits.ts`):
+
+   | Currency | Max stake per bet | Default round loss limit of a new table |
+   |---|---|---|
+   | EUR | 10,000 | 100,000 |
+   | USDT, USDC | 10,000 | 100,000 |
+   | PLAY, CHIP, DIAMOND | 1,000,000 | 5,000,000 |
+
+   One bet may pay at most the table's round loss limit. All of one player's bets on one round together may pay at most `max_user_round_payout_minor`, which defaults to the same amount. A bet past that gets `403 user_round_limit`.
 3. **Bankroll sizing.** Set the round loss limit to a small fraction of the risk bankroll; 0.5–1% is suggested. The edge is positive on every bet, so over many rounds the law of large numbers works for the house. The limits are what keep a single unlucky round survivable.
 4. **Hedging internally.** Opposite sides of a market offset each other in the exposure vector, so balanced action leaves room for more bets automatically.
 

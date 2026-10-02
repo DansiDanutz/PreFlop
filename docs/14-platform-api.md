@@ -31,7 +31,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `GET /v1/me` · `/v1/me/wallets` | Profile, memberships, and wallets. Wallets cover play, chips, diamonds per organization, fiat and stablecoins |
 | `PATCH /v1/me` | Change the display name (1–60 characters). Email and password changes are not part of this route |
 | `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user |
-| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History |
+| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History. A bet's `potential_payout_minor` is what settlement pays if it wins: the at-risk stake at the accepted odds, and 0 for a pool bet (its share is known only at settlement), as in the placement response |
 | `POST /v1/me/play/reset` | Resets play money at any time |
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
@@ -73,8 +73,8 @@ Other provider routes:
 - `transfers`.
 
 **Club:**
-- `tables` (GET, POST);
-- `tables/:id/certification`: 9 items, each recording who and when, with an expiry. The three per-shift items expire after 12 h;
+- `tables` (GET, POST). A new table's round loss limit is set in its currency (`docs/04` §3). A `real-fiat` or `real-crypto` table starts **not approved** for real money (see *PreFlop team*);
+- `tables/:id/certification`: 9 items, each recording who and when, with an expiry. The three per-shift items expire after 12 h. Re-confirming per-shift items as OK keeps a real-money approval; any other change clears it, and so does a change of the table's mode, currency, kind or club;
 - `staff` (GET, POST to enroll an Ed25519 SPKI PEM) and `staff/:id/revoke`.
 
 **Organizers and clubs:**
@@ -85,7 +85,7 @@ Other provider routes:
 - `dilution`.
 
 **Partner:**
-- `api-clients` (the secret is shown once) and `api-clients/:id/revoke`;
+- `api-clients` (the secret is shown once) and `api-clients/:id/revoke`. Revoking a client also ends every session of the partner's players;
 - `webhooks`, `webhooks/:id/test` and DELETE;
 - `bets`;
 - `widget` (GET, PUT): settings plus an iframe snippet.
@@ -95,14 +95,17 @@ Other provider routes:
 |---|---|
 | `POST /v1/partner/oauth/token` | Client credentials → bearer token (1 h). Rate-limited per IP |
 | `POST /v1/partner/players` · `/v1/partner/players/:ref/session` | Partner players, and the widget session token |
-| `POST /v1/partner/players/:ref/deposits` | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`) |
-| `POST /v1/partner/bets` · `GET /v1/partner/bets` | Bets on the `partner` channel |
+| `POST /v1/partner/players/:ref/deposits` (+ `Idempotency-Key`, 8–200 characters) | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`). A retry with the same key returns the original response and never credits twice; the same key with a different request gets `422 idempotency_mismatch`. No key: `400` |
+| `POST /v1/partner/bets` (+ `Idempotency-Key`) · `GET /v1/partner/bets` | Bets on the `partner` channel |
+
+**Suspension:** while a partner organization is not `active`, its tokens stop working, and its players get `403 partner_suspended` on every signed-in call and on bets. Suspending the partner (`PUT /v1/admin/orgs/:id/status`) also ends its players' sessions.
 
 **Webhooks:**
 - Payloads are signed with the header `X-PreFlop-Signature: t=<unix>, v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`.
 - Failed deliveries retry with exponential backoff for 24 h.
 - Deduplicate by `event_id`.
 - Delivery rows are written **in the same transaction** as the settlement or void that produced the event, so an event cannot be lost between the commit and the fan-out, whichever process (API or worker) settled the round. `round.voided` goes to every subscribed partner; `bet.settled` and `bet.voided` only to the partner whose player placed the bet.
+- A sender **claims** rows before sending (`for update skip locked`, status `sending`), so several workers never send one delivery twice. A claim older than 5 minutes is taken over, and the late sender's result is then ignored.
 
 ## PreFlop team (`/v1/admin/...`)
 **Monitoring:**
@@ -110,7 +113,8 @@ Other provider routes:
 - `metrics`: operational counters as JSON (see *Health and metrics*);
 - `alerts` and `alerts/:id/resolve`;
 - `review-queue`;
-- `rounds`, `rounds/:id/evidence` and `rounds/:id/void`. The team can void and refund, but **never settle by hand**;
+- `rounds`, `rounds/:id/evidence` and `rounds/:id/void`. The team can void and refund any round;
+- `rounds/:id/review` (`admin`, `ops`): `{action: settle, cards} | {action: void, reason}` on a **real-money** round in REVIEW. The club cannot settle its own real-money rounds (`403 platform_review_required` on the provider route). Other modes stay with the club's floor manager (`403 club_review_required` here);
 - `risk`: worst-case exposure per open round, plus the CUSUM outcome monitor.
 
 **Administration:**
@@ -121,6 +125,7 @@ Other provider routes:
   - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
 - **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
 - `tables` and `tables/:id/status`;
+- `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a `real-fiat`/`real-crypto` table for real money (`422 not_real_money` for other modes). Until approved, real-money bets there, including tournament bets, get `403 table_not_approved`. Audited as `table.real_money_approved` / `table.real_money_revoked`;
 - `settings` (`modes_enabled`, `physical_play_enabled`, `territories`).
 
 **Finance and audit:**
@@ -139,6 +144,16 @@ Other provider routes:
 
 The rate limits are fixed one-minute windows kept in each API process, so behind a load balancer with N instances a client can get up to N × the limit. Set `TRUST_PROXY=true` behind a load balancer, otherwise every client shares the balancer's address.
 
+Betting limits and gates (`docs/04` §3):
+
+| Status · `type` | When |
+|---|---|
+| `422 invalid_stake` | Stake above the currency's maximum (EUR or USDT/USDC 10,000; PLAY, CHIP, DIAMOND 1,000,000) |
+| `422 limit_exceeded` | One bet's payout above the table's round loss limit, or the round's worst case would pass it |
+| `403 user_round_limit` | The player's bets on this round would together pay more than `max_user_round_payout_minor` (default: the round loss limit) |
+| `403 table_not_approved` | Real-money bet at a table the PreFlop team has not approved |
+| `403 partner_suspended` | The player belongs to a partner that is not active |
+
 ## Health and metrics
 - `GET /v1/health` is the liveness probe and `GET /v1/health/ready` the readiness probe (see *Public*). Every worker loop (`RUN_WORKER=true` in the API, or `pnpm --filter @preflop/api worker`) upserts a row in `worker_heartbeats` once a second.
 - `GET /v1/admin/metrics` (PreFlop team, any platform role) returns:
@@ -146,7 +161,7 @@ The rate limits are fixed one-minute windows kept in each API process, so behind
 | Field | Meaning |
 |---|---|
 | `outbox.pending` · `outbox.oldest_pending_age_s` | Outbox lag: jobs not done yet, and the age of the oldest |
-| `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog, and deliveries that gave up after 24 h |
+| `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog (including deliveries being sent), and deliveries that gave up after 24 h |
 | `alerts.open` · `alerts.open_critical` | Unresolved alerts |
 | `rounds_by_state` | Count of rounds per state (`OPEN`, `LOCKED`, …, `SETTLED`, `VOID`) |
 | `sweeper_voids_last_hour` | Rounds the deadline sweeper voided in the last hour |
