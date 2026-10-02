@@ -70,8 +70,29 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const rounds = (await ctx.db.query(
       `select id, hand_no, state, procedure_step as step, cut_depth, locked_at, deal_start_at, flop, review_reasons
          from rounds where table_id = $1 order by hand_no desc limit 3`, [t])).rows;
-    const entries = rounds[0] ? (await ctx.db.query('select source, person_id, cards from flop_entries where round_id = $1', [rounds[0].id])).rows : [];
-    return { table: { id: table.id, name: table.name, status: table.status, pause_reason: table.pause_reason, kind: table.kind }, readiness: await tableReadiness(ctx.db, table), rounds, entries };
+    // Entries per round. Independence (docs/12 §6): another person's cards are only visible once the
+    // caller has submitted their own entry for that round, or the round is decided / under review.
+    const all = (await ctx.db.query<{ round_id: string; source: string; person_id: string; cards: string[] }>(
+      'select round_id, source, person_id, cards from flop_entries where round_id = any($1::text[])', [rounds.map((r) => r.id)])).rows;
+    const me = p.kind === 'staff' ? p.personId : null;
+    for (const r of rounds) {
+      const mine = all.some((e) => e.round_id === r.id && e.person_id === me);
+      const open = mine || ['SETTLED', 'VOID', 'REVIEW', 'EVIDENCE_REJECTED'].includes(r.state);
+      r.entries = all.filter((e) => e.round_id === r.id).map((e) => ({ source: e.source, person_id: e.person_id, mine: e.person_id === me, cards: open || e.person_id === me ? e.cards : null }));
+      r.has_dealer_entry = all.some((e) => e.round_id === r.id && e.source === 'dealer');
+      r.has_floor_entry = all.some((e) => e.round_id === r.id && e.source === 'floor');
+      r.my_entry = all.find((e) => e.round_id === r.id && e.person_id === me)?.cards ?? null;
+      if (!open) r.flop = null;
+    }
+    return { table: { id: table.id, name: table.name, status: table.status, pause_reason: table.pause_reason, kind: table.kind }, readiness: await tableReadiness(ctx.db, table), rounds, entries: rounds[0]?.entries ?? [] };
+  });
+
+  /** Who this credential is (role, person, table), so a tablet can confirm its enrollment. */
+  app.get('/v1/provider/whoami', async (req) => {
+    const p = await auth(req);
+    return p.kind === 'staff'
+      ? { kind: 'staff', credential_id: p.id, role: p.role, person_id: p.personId, table_id: p.tableId }
+      : { kind: 'device', credential_id: p.id, table_id: p.tableId };
   });
 
   app.post('/v1/provider/tables/:t/hands/:n/start', write(async (c, p, req, ev) => {
@@ -143,7 +164,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const r = await lockRound(c, hand(req).rid);
     const ok = await voidRound(c, r, reason, s.id, ev);
     if (ok) await ensureOpenRound(c, r.table_id, ev);
-    return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state' } };
+    return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is already settled or voided', status: 409 } };
   }));
 
   /** Evidence for the floor manager's review on the club tablet (same data the PreFlop team sees). */

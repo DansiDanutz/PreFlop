@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "sim": "tsx --conditions=preflop-source src/sim/cli.ts",
-    "demo": "tsx --conditions=preflop-source src/demo.ts"
+    "demo": "tsx --conditions=preflop-source src/demo.ts",
+    "soak": "tsx --conditions=preflop-source src/sim/soak.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

@@ -233,8 +233,8 @@ export interface DeviceRow {
 
 export type CaptureResult =
   | { status: 200; body: { authentic: true; admitted: boolean } }
-  | { status: 409; body: { type: 'capture_conflict' | 'invalid_round_state'; last_seq?: number; last_hash?: string } }
-  | { status: 422; body: { type: 'evidence_rejected'; expected_seq: number; expected_prev_hash: string; problems: string[] } };
+  | { status: 409; body: { type: 'capture_conflict' | 'invalid_round_state'; title: string; status: 409; last_seq?: number; last_hash?: string } }
+  | { status: 422; body: { type: 'evidence_rejected'; title: string; status: 422; expected_seq: number; expected_prev_hash: string; problems: string[] } };
 
 const ms = (d: Date | null) => (d ? d.getTime() : undefined);
 
@@ -261,14 +261,14 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
       if (prev.signature === body.signature) return { status: 200, body: { authentic: true, admitted: prev.admitted } };
       await attempt(['capture_conflict: same seq, different signature']);
       await alert(c, { tableId, roundId: rid, kind: 'capture_conflict', severity: 'critical', details: { deviceId, seq: cap.seq } });
-      return { status: 409, body: { type: 'capture_conflict', last_seq: d.last_seq, last_hash: d.last_hash } };
+      return { status: 409, body: { type: 'capture_conflict', title: 'same sequence number with a different signature', status: 409, last_seq: d.last_seq, last_hash: d.last_hash } };
     }
   }
 
   // 2. Otherwise the round must be LOCKED.
   if (r.state !== 'LOCKED') {
     await attempt([`round is ${r.state}`]);
-    return { status: 409, body: { type: 'invalid_round_state' } };
+    return { status: 409, body: { type: 'invalid_round_state', title: 'the round is not in a state that allows this', status: 409 } };
   }
 
   // 3. Authenticity, once, against the checkpoint before this capture.
@@ -290,7 +290,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
       await c.query(`update poker_tables set status = 'paused', pause_reason = 'Table Box inspection required (3 failed captures)' where id = $1`, [tableId]);
       await alert(c, { tableId, kind: 'device_flagged', severity: 'critical', details: { deviceId } });
     }
-    return { status: 422, body: { type: 'evidence_rejected', expected_seq: d.last_seq + 1, expected_prev_hash: d.last_hash, problems: auth.problems } };
+    return { status: 422, body: { type: 'evidence_rejected', title: 'capture failed authenticity checks', status: 422, expected_seq: d.last_seq + 1, expected_prev_hash: d.last_hash, problems: auth.problems } };
   }
 
   // 4. Chain ingestion (always, for an authentic record) + admission.
@@ -513,13 +513,13 @@ export async function resolveReview(
   const now = (await c.query<{ now: Date }>('select clock_timestamp() as now')).rows[0]!.now.getTime();
   if (now >= ms(r.review_started_at)! + t.reviewSlaMs) {
     await voidRound(c, r, 'review deadline passed', 'system:review-deadline', ev, ['REVIEW']);
-    return { status: 409, body: { type: 'review_expired' } };
+    return { status: 409, body: { type: 'review_expired', title: 'the review deadline passed; the round was voided and refunded', status: 409 } };
   }
   if (decision.action === 'void') {
     const ok = await voidRound(c, r, `review: ${decision.reason}`, p.id, ev, ['REVIEW']);
-    return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state' } };
+    return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is not in a state that allows this', status: 409 } };
   }
   const cards = parseThreeCards(decision.cards);
   const ok = await settleRound(c, r, cards, 'REVIEW', p.id, ev);
-  return ok ? { status: 200, body: { state: 'SETTLED' } } : { status: 409, body: { type: 'invalid_round_state' } };
+  return ok ? { status: 200, body: { state: 'SETTLED' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is not in a state that allows this', status: 409 } };
 }

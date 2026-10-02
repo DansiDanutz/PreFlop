@@ -200,6 +200,21 @@ describe('request authentication (docs/13 §8.5)', () => {
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'cleanup' });
   });
 
+  it("the floor cannot see the dealer's entry before entering its own (independence); whoami reports the role", async () => {
+    const n = await open();
+    const { cards } = await h.sim.procedure(n);
+    await h.sim.enter(n, 'dealer', cards);
+    const before = (await h.sim.call('floor', 'GET', '/v1/provider/tables/sim-1/state')).body.rounds.find((r: any) => r.hand_no === n);
+    expect(before.has_dealer_entry).toBe(true);
+    expect(before.entries[0].cards).toBeNull();
+    expect(before.my_entry).toBeNull();
+    await h.sim.enter(n, 'floor', cards);
+    const after = (await h.sim.call('floor', 'GET', '/v1/provider/tables/sim-1/state')).body.rounds.find((r: any) => r.hand_no === n);
+    expect(after.entries.every((e: any) => Array.isArray(e.cards))).toBe(true);
+    expect((await h.sim.call('floor', 'GET', '/v1/provider/whoami')).body).toMatchObject({ kind: 'staff', role: 'floor', table_id: 'sim-1' });
+    await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'cleanup' });
+  });
+
   it('physical tables never open while physical play is disabled', async () => {
     await h.db.query(`insert into poker_tables (id, club_id, name, kind) values ('phys-1', 'club-sim', 'Real felt', 'physical')`);
     await h.work();
