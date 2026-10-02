@@ -40,8 +40,8 @@ export function PortalMenu({ current }: { current: Portal }) {
   return (
     <div className="relative" ref={ref}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
-        className="flex w-full items-center gap-3 rounded-[14px] border border-line bg-surface-2 px-3 py-2.5 text-left hover:border-line-strong">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent-soft text-accent ring-1 ring-accent/50"><Icon size={17} aria-hidden /></span>
+        className="flex w-full items-center gap-3 rounded-[10px] border border-line-strong/70 bg-surface px-3 py-2.5 text-left hover:border-line-strong">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/40 bg-accent-deep text-accent"><Icon size={17} aria-hidden /></span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{current.name}</span>
           <span className="block truncate text-xs text-muted">{KIND_LABEL[current.kind]} · {current.role}</span>
@@ -49,7 +49,7 @@ export function PortalMenu({ current }: { current: Portal }) {
         <ChevronsUpDown size={15} className="text-faint" aria-hidden />
       </button>
       {open && (
-        <div role="menu" className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-[14px] border border-line-strong bg-surface-2 py-1 shadow-2xl">
+        <div role="menu" className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-[10px] border border-line-strong bg-surface-2 py-1 shadow-2xl">
           {portals.map((p) => {
             const PI = PORTAL_ICON[p.kind];
             return (
@@ -75,19 +75,20 @@ function UserMenu() {
   const initials = (me?.display_name || me?.email || '?').split(/\s+/).map((s) => s[0]).join('').slice(0, 2).toUpperCase();
   return (
     <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} className="flex items-center gap-2 rounded-full border border-line py-1 pl-1 pr-2.5 hover:border-line-strong">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-surface-3 text-[11px] font-bold">{initials}</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} className="flex items-center gap-2 rounded-full border border-line-strong/70 py-1 pl-1 pr-2.5 hover:border-line-strong">
+        <span className="grid h-8 w-8 place-items-center rounded-full border border-line-strong bg-surface-3 font-serif text-[13px]">{initials}</span>
         <span className="hidden max-w-[180px] truncate text-sm sm:inline">{me?.display_name}</span>
         <ChevronDown size={14} className="text-faint" aria-hidden />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-[14px] border border-line-strong bg-surface-2 shadow-2xl">
+        <div role="menu" className="absolute right-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-[10px] border border-line-strong bg-surface-2 shadow-2xl">
           <div className="border-b border-line px-4 py-3">
             <div className="truncate text-sm font-semibold">{me?.display_name}</div>
             <div className="truncate text-xs text-muted">{me?.email}</div>
             {me?.platform_role && <div className="mt-1 text-[11px] uppercase tracking-wider text-accent">PreFlop {me.platform_role}</div>}
           </div>
           <Link role="menuitem" to="/portals" onClick={() => setOpen(false)} className="block px-4 py-2.5 text-sm hover:bg-surface-3">Switch portal</Link>
+          <Link role="menuitem" to="/design" onClick={() => setOpen(false)} className="block px-4 py-2.5 text-sm hover:bg-surface-3">Design system</Link>
           <button role="menuitem" type="button" onClick={async () => { await logout(); nav('/login'); }} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-danger hover:bg-surface-3">
             <LogOut size={14} aria-hidden />Sign out
           </button>
@@ -111,21 +112,21 @@ export function EnvBadge() {
 function Sidebar({ portal, onNavigate }: { portal: Portal; onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-4 px-4 py-5">
-      <Link to={portal.key} className="flex items-baseline gap-2 px-2" onClick={onNavigate}>
-        <Wordmark size="md" />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Console</span>
+      <Link to={portal.key} className="block px-2 pt-2" onClick={onNavigate}>
+        <Wordmark size="lg" />
+        <span className="mt-1.5 block text-[10px] font-medium uppercase tracking-[0.2em] text-muted">Console</span>
       </Link>
       <PortalMenu current={portal} />
       <nav aria-label={`${KIND_LABEL[portal.kind]} navigation`} className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
         {NAV[portal.kind].map((g, i) => (
           <div key={i}>
-            {g.label && <div className="mb-1 px-3 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">{g.label}</div>}
+            {g.label && <div className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-muted">{g.label}</div>}
             <ul className="space-y-0.5">
               {g.items.map((it) => (
                 <li key={it.to}>
                   <NavLink to={it.to ? `${portal.key}/${it.to}` : portal.key} end={it.end ?? false} onClick={onNavigate}
-                    className={({ isActive }) => cx('flex items-center gap-3 rounded-[10px] px-3 py-[7px] text-[14px] transition-colors',
-                      isActive ? 'bg-accent-soft font-semibold text-accent' : 'text-muted hover:bg-surface-2 hover:text-ink')}>
+                    className={({ isActive }) => cx('flex items-center gap-3 rounded-[8px] border px-3 py-[8px] text-[14px] transition-colors',
+                      isActive ? 'border-accent/25 bg-accent-deep text-accent' : 'border-transparent text-ink/80 hover:bg-surface-2 hover:text-ink')}>
                     <it.icon size={16} aria-hidden />{it.label}
                   </NavLink>
                 </li>
@@ -153,27 +154,29 @@ export function Shell({ noAccess }: { noAccess: ReactNode }) {
   return (
     <PortalCtx.Provider value={portal}>
       <div className="min-h-screen lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
-        <aside className="sticky top-0 hidden h-screen border-r border-line bg-[#0b0d0c] lg:block"><Sidebar portal={portal} /></aside>
+        <aside className="sticky top-0 hidden h-screen border-r border-line bg-bg lg:block"><Sidebar portal={portal} /></aside>
         {drawer && (
           <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
             <div className="absolute inset-0 bg-black/70" onClick={() => setDrawer(false)} />
-            <aside className="absolute inset-y-0 left-0 w-[280px] max-w-[85vw] border-r border-line bg-[#0b0d0c]">
+            <aside className="absolute inset-y-0 left-0 w-[280px] max-w-[85vw] border-r border-line bg-bg">
               <button type="button" className="absolute right-3 top-4 p-1 text-muted" onClick={() => setDrawer(false)} aria-label="Close navigation"><X size={18} /></button>
               <Sidebar portal={portal} onNavigate={() => setDrawer(false)} />
             </aside>
           </div>
         )}
         <div className="min-w-0">
-          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-bg/85 px-4 backdrop-blur md:px-8">
+          <header className="sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur md:px-10">
             <button type="button" className="rounded-[10px] border border-line p-2 text-muted lg:hidden" onClick={() => setDrawer(true)} aria-label="Open navigation"><Menu size={18} /></button>
             <span className="truncate text-sm text-muted lg:hidden"><Wordmark size="sm" /></span>
-            <div className="hidden min-w-0 items-center gap-2 text-sm text-muted lg:flex">
-              <span className="text-faint">{KIND_LABEL[portal.kind]}</span><span className="text-faint">/</span><span className="truncate text-ink">{portal.kind === 'admin' ? 'Back office' : portal.name}</span>
+            <div className="hidden min-w-0 items-center gap-3 text-sm lg:flex">
+              <span className="text-[13px] font-medium uppercase tracking-[0.14em] text-muted">{KIND_LABEL[portal.kind]}</span>
+              <span className="rounded-[6px] border border-accent/45 bg-accent-deep px-2.5 py-1 text-[11px] font-semibold tracking-[0.08em] text-accent">{portal.kind === 'admin' ? (portal.role === 'admin' ? 'SUPER ADMIN' : portal.role.toUpperCase()) : portal.role.toUpperCase()}</span>
+              <span className="truncate text-ink/85">{portal.kind === 'admin' ? 'Back office' : portal.name}</span>
               {portal.role === 'viewer' && <span className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-muted">read-only</span>}
             </div>
             <div className="ml-auto flex items-center gap-3"><EnvBadge /><UserMenu /></div>
           </header>
-          <main className="mx-auto w-full max-w-[1400px] px-4 py-8 md:px-8">
+          <main className="mx-auto w-full max-w-[1400px] px-4 py-8 md:px-10 md:py-10">
             <Outlet />
           </main>
         </div>

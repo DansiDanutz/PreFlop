@@ -76,7 +76,7 @@ export function Diamonds() {
                       { label: 'Circulating', value: d.circulating, color: SERIES[0] },
                     ]} format={(v) => nf(v)} />
                   </div>
-                  <div className="space-y-3 rounded-[14px] border border-line bg-surface-2 p-4 text-sm">
+                  <div className="space-y-3 rounded-[10px] border border-line bg-surface-2 p-4 text-sm">
                     <div className="font-serif text-lg">Reading the tracker</div>
                     <p className="text-muted"><strong className="text-ink">Circulating</strong> is every diamond still in your economy: your treasury, your collateral and your players' wallets.</p>
                     <p className="text-muted">Each bet burns the fixed <strong className="text-ink">1 ◆</strong> PreFlop fee. <strong className="text-ink">Bets until empty</strong> estimates how many more bets your circulating supply carries before you need to rebuy.</p>

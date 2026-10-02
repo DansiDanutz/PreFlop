@@ -58,7 +58,7 @@ export function Book() {
       </div>
       <div className="mb-5 overflow-x-auto"><Pills label="Market family" options={families} value={family} onChange={setFamily} render={(f) => f === 'all' ? 'All' : (base.families[f] ?? f).replace(/^[A-G]\.\s*/, '')} /></div>
       <div className="space-y-4">
-        {markets.length === 0 && <p className="rounded-[14px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No markets match.</p>}
+        {markets.length === 0 && <p className="rounded-[10px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No markets match.</p>}
         {markets.map((m) => {
           const bp = bookPercent(m);
           return (

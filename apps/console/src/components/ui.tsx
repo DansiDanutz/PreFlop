@@ -8,11 +8,11 @@ import { errorMessage, isNotAvailable } from '../lib/format.ts';
 
 export function PageHeader({ title, subtitle, actions, eyebrow }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; eyebrow?: ReactNode }) {
   return (
-    <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        {eyebrow && <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-faint">{eyebrow}</div>}
-        <h1 className="font-serif text-[34px] leading-tight tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-1 max-w-3xl text-sm text-muted">{subtitle}</p>}
+        {eyebrow && <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-accent">{eyebrow}</div>}
+        <h1 className="font-serif text-[34px] leading-[1.15] tracking-[-0.045em] md:text-[42px]">{title}</h1>
+        {subtitle && <p className="mt-2 max-w-3xl text-[15px] text-ink/80">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </header>
@@ -21,12 +21,12 @@ export function PageHeader({ title, subtitle, actions, eyebrow }: { title: React
 
 export function Section({ title, subtitle, actions, children, className }: { title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <Card className={cx('p-5', className)}>
+    <Card className={cx('p-5 md:p-6', className)}>
       {(title || actions) && (
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            {title && <h2 className="font-serif text-xl leading-tight">{title}</h2>}
-            {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+            {title && <h2 className="text-[18px] font-bold leading-tight">{title}</h2>}
+            {subtitle && <p className="mt-1 text-[13px] text-ink/75">{subtitle}</p>}
           </div>
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
@@ -38,10 +38,10 @@ export function Section({ title, subtitle, actions, children, className }: { tit
 
 export function Kpi({ label, value, hint, tone }: { label: ReactNode; value: ReactNode; hint?: ReactNode; tone?: 'accent' | 'warn' | 'danger' | undefined }) {
   return (
-    <Card className="px-5 py-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-faint">{label}</div>
-      <div className={cx('mt-2 text-[28px] font-semibold leading-none tabular-nums', tone === 'accent' && 'text-accent', tone === 'warn' && 'text-warn', tone === 'danger' && 'text-danger')}>{value}</div>
-      {hint && <div className="mt-2 text-xs text-muted">{hint}</div>}
+    <Card className="px-5 py-5">
+      <div className="text-[13px] text-ink/80">{label}</div>
+      <div className={cx('mt-3 font-serif text-[32px] leading-none tabular-nums', tone === 'accent' && 'text-accent', tone === 'warn' && 'text-warn', tone === 'danger' && 'text-danger')}>{value}</div>
+      {hint && <div className="mt-2.5 text-xs text-muted">{hint}</div>}
     </Card>
   );
 }
@@ -50,7 +50,7 @@ export function Callout({ tone = 'info', title, children, icon }: { tone?: 'info
   const t = { info: 'border-info/40 bg-info/10', warn: 'border-warn/40 bg-warn/10', danger: 'border-danger/50 bg-danger/10', accent: 'border-accent/40 bg-accent-soft' }[tone];
   const ic = { info: 'text-info', warn: 'text-warn', danger: 'text-danger', accent: 'text-accent' }[tone];
   return (
-    <div className={cx('flex gap-3 rounded-[14px] border px-4 py-3 text-sm', t)} role={tone === 'danger' ? 'alert' : undefined}>
+    <div className={cx('flex gap-3 rounded-[10px] border px-4 py-3 text-sm', t)} role={tone === 'danger' ? 'alert' : undefined}>
       <span className={cx('mt-0.5 shrink-0', ic)}>{icon ?? <AlertTriangle size={16} aria-hidden />}</span>
       <div className="min-w-0">
         {title && <div className="font-semibold text-ink">{title}</div>}
@@ -64,7 +64,7 @@ export function Callout({ tone = 'info', title, children, icon }: { tone?: 'info
 
 export function NotAvailable({ what }: { what: string }) {
   return (
-    <div className="rounded-[18px] border border-dashed border-line-strong px-6 py-10 text-center">
+    <div className="rounded-[12px] border border-dashed border-line-strong px-6 py-10 text-center">
       <Construction className="mx-auto text-warn" size={28} aria-hidden />
       <div className="mt-3 font-serif text-xl">Not available yet</div>
       <p className="mx-auto mt-1 max-w-md text-sm text-muted">
@@ -76,7 +76,7 @@ export function NotAvailable({ what }: { what: string }) {
 
 export function ErrorBox({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-danger/50 bg-danger/10 px-4 py-3 text-sm" role="alert">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-danger/50 bg-danger/10 px-4 py-3 text-sm" role="alert">
       <span className="flex items-center gap-2 text-ink"><AlertTriangle size={16} className="text-danger" aria-hidden />{errorMessage(error)}</span>
       {onRetry && <Button size="sm" variant="secondary" onClick={onRetry}><RefreshCw size={14} aria-hidden />Retry</Button>}
     </div>
@@ -121,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={cx('pointer-events-auto flex items-start gap-2 rounded-[14px] border bg-surface-2 px-4 py-3 text-sm shadow-xl', t.tone === 'ok' ? 'border-accent/50' : 'border-danger/60')}>
+          <div key={t.id} className={cx('pointer-events-auto flex items-start gap-2 rounded-[10px] border bg-surface-2 px-4 py-3 text-sm shadow-xl', t.tone === 'ok' ? 'border-accent/50' : 'border-danger/60')}>
             {t.tone === 'ok' ? <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden /> : <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden />}
             <span className="min-w-0 flex-1 break-words">{t.text}</span>
             <button className="text-faint hover:text-ink" aria-label="Dismiss" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}><X size={14} /></button>
@@ -163,7 +163,7 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
   return (
     <dialog ref={ref} aria-labelledby={titleId} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}
       onClick={(e) => { if (e.target === ref.current) onClose(); }}
-      className={cx('m-auto w-[calc(100vw-2rem)] rounded-[18px] border border-line-strong bg-surface p-0 text-ink shadow-2xl backdrop:bg-black/70 backdrop:backdrop-blur-[2px]', wide ? 'max-w-3xl' : 'max-w-lg')}>
+      className={cx('m-auto w-[calc(100vw-2rem)] rounded-[12px] border border-line-strong bg-surface p-0 text-ink shadow-2xl backdrop:bg-black/70 backdrop:backdrop-blur-[2px]', wide ? 'max-w-3xl' : 'max-w-lg')}>
       {open && (
         <div className="flex max-h-[85vh] flex-col">
           <div className="flex items-center justify-between gap-4 border-b border-line px-5 py-4">
@@ -297,7 +297,7 @@ export function SecretOnce({ label, secret }: { label: string; secret: string })
 
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
-    <div className="relative rounded-[14px] border border-line bg-bg">
+    <div className="relative rounded-[10px] border border-line bg-bg">
       <div className="flex items-center justify-between border-b border-line px-4 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">{lang}</span>
         <CopyButton text={code} />

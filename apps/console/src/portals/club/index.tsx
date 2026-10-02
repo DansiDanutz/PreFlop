@@ -101,7 +101,7 @@ export function Tables() {
       {!physicalEnabled && <div className="mb-4"><Callout tone="info" title="Physical-table play is disabled">Until the PreFlop Trusted Shuffler is certified, only simulated tables deal. Physical tables can be created and certified now.</Callout></div>}
       <QueryView q={q} what="your tables">
         {(d) => d.tables.length === 0
-          ? <div className="rounded-[18px] border border-dashed border-line-strong p-10 text-center text-sm text-muted">No tables yet. Create one to start certification.</div>
+          ? <div className="rounded-[12px] border border-dashed border-line-strong p-10 text-center text-sm text-muted">No tables yet. Create one to start certification.</div>
           : <div className="space-y-4">{d.tables.map((t) => <ClubTableCard key={t.id} t={t} />)}</div>}
       </QueryView>
       <CreateTable open={creating} onClose={() => setCreating(false)} physicalEnabled={physicalEnabled} />

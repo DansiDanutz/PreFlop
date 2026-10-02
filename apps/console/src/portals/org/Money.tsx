@@ -37,7 +37,7 @@ export function Statements({ variant }: { variant?: 'revenue' }) {
       <div className="space-y-4">
         <QueryView q={q} what="statements">
           {(d) => d.statements.length === 0
-            ? <p className="rounded-[14px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No statement for {period} yet. Statements are produced from the ledger after the period closes.</p>
+            ? <p className="rounded-[10px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No statement for {period} yet. Statements are produced from the ledger after the period closes.</p>
             : <><StatementTotals statements={d.statements} />{groupByParty(d.statements).flatMap((g) => g.statements.map((s, i) => <StatementCard key={`${g.party}-${i}`} s={s} />))}</>}
         </QueryView>
         {policy && <Section title="How the share is tiered" subtitle="The tier your statement reached is highlighted."><TierLadder policy={policy} metrics={metrics} /></Section>}
@@ -150,7 +150,7 @@ export function Chips() {
       <PageHeader eyebrow={portal.name} title="Chips" subtitle="Buy virtual chips from PreFlop and give them to your players — a welcome balance, a prize or a loyalty reward. Chips are never cashed out." />
       <div className="mb-4 flex flex-wrap gap-3">
         {t.isError && !isNotAvailable(t.error) ? null : chipAccts.map((a) => (
-          <div key={a.purpose} className="rounded-[18px] border border-line bg-surface px-5 py-3">
+          <div key={a.purpose} className="rounded-[12px] border border-line bg-surface px-5 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{a.purpose}</div>
             <div className="text-2xl font-semibold tabular-nums">{formatMoney(a.balance_minor, a.currency)}</div>
           </div>

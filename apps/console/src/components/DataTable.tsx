@@ -43,7 +43,7 @@ export function DataTable<T>({ rows, columns, rowKey, initialSort, empty, onRowC
   const sorted = useMemo(() => (sort ? sortRows(rows, columns.find((c) => c.key === sort.key), sort.dir) : rows), [rows, columns, sort]);
 
   if (!rows.length) {
-    return <div className="rounded-[14px] border border-dashed border-line-strong px-6 py-10 text-center text-sm text-muted">{empty ?? 'Nothing here yet.'}</div>;
+    return <div className="rounded-[10px] border border-dashed border-line-strong px-6 py-10 text-center text-sm text-muted">{empty ?? 'Nothing here yet.'}</div>;
   }
 
   const toggle = (k: string) =>

@@ -110,7 +110,7 @@ export function Statements() {
         actions={<Button size="sm" variant="secondary" onClick={exportCsv} disabled={!q.data?.statements.length}><Download size={14} aria-hidden />Export CSV</Button>} />
       <div className="mb-4"><PeriodPicker value={period} onChange={setPeriod} /></div>
       <QueryView q={q} what="statements">
-        {(d) => d.statements.length === 0 ? <p className="rounded-[14px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No statements for {period}.</p> : (
+        {(d) => d.statements.length === 0 ? <p className="rounded-[10px] border border-dashed border-line-strong p-8 text-center text-sm text-muted">No statements for {period}.</p> : (
           <div className="space-y-4">
             <StatementTotals statements={d.statements} />
             {groupByParty(d.statements).map((g) => g.statements.map((s, i) => <StatementCard key={`${g.party}-${i}`} s={s} />))}

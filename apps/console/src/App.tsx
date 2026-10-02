@@ -5,6 +5,7 @@ import { session } from './lib/api.ts';
 import { pickLandingPortal } from './lib/portals.ts';
 import { Shell } from './components/Shell.tsx';
 import { Loading, ErrorBox } from './components/ui.tsx';
+import { DesignPage } from './pages/Design.tsx';
 import { LoginPage } from './pages/Login.tsx';
 import { PortalsPage, NoAccessPage, NotFoundPage } from './pages/Portals.tsx';
 import * as A from './portals/admin/index.ts';
@@ -33,6 +34,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/design" element={<DesignPage />} />
       <Route path="/" element={<RequireAuth><Landing /></RequireAuth>} />
       <Route path="/portals" element={<RequireAuth><PortalsPage /></RequireAuth>} />
 

@@ -1,30 +1,27 @@
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { MapPin, Radio } from 'lucide-react';
-import { Card, cx } from '@preflop/ui';
+import { Card, Felt, cx, feltLabel, feltTheme } from '@preflop/ui';
 import type { TableSummary } from '@preflop/client';
 import { api } from '../../lib/api.ts';
 import { nf, pad3 } from '../../lib/format.ts';
 import { Kpi, PageHeader, QueryView } from '../../components/ui.tsx';
-import { KindChip, MiniFlop, Problems, RoundStateBadge, TableStatus } from '../../components/domain.tsx';
+import { KindChip, Problems, RoundStateBadge, TableStatus } from '../../components/domain.tsx';
 
 export function TableWallCard({ t }: { t: TableSummary }) {
   const r = t.current_round;
   return (
-    <Card className={cx('flex flex-col gap-4 p-4', (!t.ready || t.status !== 'active') && 'border-warn/40')}>
+    <Card className={cx('flex flex-col overflow-hidden', (!t.ready || t.status !== 'active') && 'border-warn/40')}>
+      <Felt cards={t.last_flop?.cards} size="sm" unavailable={t.status !== 'active' || !t.stream_live} theme={feltTheme(t.club_id)} label={feltLabel(t.name)}
+        badge={t.kind === 'simulated'} className="h-[150px] border-b border-white/5"
+        action={t.kind === 'simulated' ? undefined : <KindChip kind={t.kind} />} />
+      <div className="flex flex-col gap-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate font-serif text-lg leading-tight">{t.name}</div>
-          <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted"><MapPin size={11} aria-hidden />{t.club_name}{t.city ? ` · ${t.city}` : ''}</div>
+          <div className="truncate font-serif text-[20px] leading-tight tracking-[-0.03em]">{t.name}</div>
+          <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted"><MapPin size={11} aria-hidden />{t.club_name}{t.city ? ` · ${t.city}` : ''}</div>
         </div>
-        <KindChip kind={t.kind} />
-      </div>
-      <div className="felt flex items-center justify-between gap-3 rounded-[14px] px-3 py-3">
-        <MiniFlop cards={t.last_flop?.cards} />
-        <div className="text-right text-[11px] leading-tight text-ink/70">
-          <div>Last flop</div>
-          <div className="font-semibold text-ink">{t.last_flop ? `#${pad3(t.last_flop.hand_no)}` : '—'}</div>
-        </div>
+        <span className="text-right text-[11px] leading-tight text-ink/70">Last flop<br /><span className="font-semibold text-ink">{t.last_flop ? `#${pad3(t.last_flop.hand_no)}` : '—'}</span></span>
       </div>
       <div className="flex items-center justify-between gap-2">
         <TableStatus t={t} />
@@ -35,6 +32,7 @@ export function TableWallCard({ t }: { t: TableSummary }) {
         {r && <RoundStateBadge state={r.state} />}
       </div>
       {t.problems.length > 0 && <Problems problems={t.problems} />}
+      </div>
     </Card>
   );
 }
@@ -60,7 +58,7 @@ export function Overview() {
               </div>
               <section aria-labelledby="wall">
                 <div className="mb-3 flex items-baseline justify-between">
-                  <h2 id="wall" className="font-serif text-2xl">Table wall</h2>
+                  <h2 id="wall" className="text-[20px] font-bold">Table wall</h2>
                   <span className="text-sm text-muted">{live} of {d.tables.length} dealing · <Link to="/admin/tables" className="text-accent hover:underline">Manage tables</Link></span>
                 </div>
                 {d.tables.length === 0 ? <p className="text-sm text-muted">No tables registered.</p> : (

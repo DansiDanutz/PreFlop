@@ -66,7 +66,7 @@ export function OrgOverviewPage() {
         {QUICK[portal.kind] && (
           <div className="grid gap-3 md:grid-cols-3">
             {QUICK[portal.kind]!.map((x) => (
-              <Link key={x.to} to={`${portal.key}/${x.to}`} className="group rounded-[18px] border border-line bg-surface p-5 transition-colors hover:border-accent/60">
+              <Link key={x.to} to={`${portal.key}/${x.to}`} className="group rounded-[12px] border border-line bg-surface p-5 transition-colors hover:border-accent/60">
                 <div className="flex items-center justify-between font-serif text-lg">{x.label}<ArrowRight size={16} className="text-faint group-hover:text-accent" aria-hidden /></div>
                 <div className="mt-1 text-sm text-muted">{x.hint}</div>
               </Link>

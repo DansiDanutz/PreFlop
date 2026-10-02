@@ -240,7 +240,7 @@ export function Widget() {
               </Section>
             </div>
             <Section title="Live preview" actions={<a href={previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-accent hover:underline">Open <ExternalLink size={12} aria-hidden /></a>}>
-              <div className="overflow-hidden rounded-[18px] border border-line bg-bg">
+              <div className="overflow-hidden rounded-[12px] border border-line bg-bg">
                 {tableId ? <iframe key={previewUrl} src={previewUrl} title="Widget preview" className="h-[720px] w-full border-0" /> : <div className="grid h-[400px] place-items-center text-sm text-muted">No tables in the lobby.</div>}
               </div>
               <p className="mt-2 text-xs text-faint">Preview served by the PreFlop web app at {WEB_URL}. If it is not running, the frame stays blank.</p>

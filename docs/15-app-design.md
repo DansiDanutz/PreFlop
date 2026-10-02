@@ -108,6 +108,38 @@ The tokens live in `packages/ui/src/tokens.css` and the shared components in `pa
 
 The concepts' odds are illustrative. The app always shows the engine's real prices from `GET /v1/book`. Those prices have the house edge applied and are proven by the odds book. Odds display as decimal "×" values that include the stake (`formatOdds`).
 
+## The design system page
+
+The console serves a live reference at **`/design`** (public, no sign-in). It renders the real components, so it cannot drift from the apps. It covers:
+- **Principles:** calm, honest numbers, simulated tables labelled, one system.
+- **Colour:** every token, with values read from the running page, and the felt themes.
+- **Type** scale.
+- **Components:** buttons, badges and pills, status dots, presets and tabs, callouts, the balance chip and the empty state.
+- **Cards and tables:** playing cards, lobby table cards and favorite tiles.
+- **Dashboard pattern:** an eyebrow, a serif title, a strip of key numbers, then section cards.
+- **Layers and roles:** the six surfaces with their live navigation, and the PreFlop team access matrix as the API enforces it.
+
+The felt (`Felt`, `feltTheme`, `feltLabel`) now lives in `packages/ui`. The player app and the console table wall share it.
+
+## Console (dashboards)
+
+The four portals use the same language:
+- the left rail with the wordmark and an active item in `accent-deep`;
+- a top bar with the portal name and a role pill (**SUPER ADMIN** for the `admin` platform role; OWNER, ADMIN or VIEWER inside an organization);
+- page headers with a mint eyebrow and a serif title;
+- key-number cards with serif figures;
+- section cards with bold sans titles.
+
+The PreFlop team's table wall shows each table on its club's felt.
+
+## Roles
+
+| Layer | Roles | Who can change things |
+|---|---|---|
+| PreFlop team | `admin` (super admin), `ops`, `risk`, `support` | Settings and team roles: super admin only. Voiding rounds and pausing tables: admin, ops, risk. Users' status and KYC: admin, risk, support. Organizations and applications: admin, ops. Ledger: admin, ops, risk. Audit: admin, risk. The full matrix is on `/design`. |
+| Club, partner, organizer | owner, admin, viewer | Owner and admin change things. Viewer is read-only. |
+| Club tablet | dealer, floor, floor manager | Signed device keys, enrolled per table |
+
 ## Beyond the concepts
 
 The concepts cover the player in play mode. The other surfaces apply the same tokens and components:

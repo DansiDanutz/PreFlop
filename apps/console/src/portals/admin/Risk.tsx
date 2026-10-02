@@ -45,7 +45,7 @@ export function Risk() {
                     const threshold = (m as { threshold?: number }).threshold ?? CUSUM_THRESHOLD;
                     const worst = Math.max(0, ...m.top.map((t) => t.statistic));
                     return (
-                      <div key={m.table_id} className={cx('rounded-[14px] border p-4', worst >= threshold ? 'border-danger/60 bg-danger/5' : worst >= threshold * 0.7 ? 'border-warn/50' : 'border-line')}>
+                      <div key={m.table_id} className={cx('rounded-[10px] border p-4', worst >= threshold ? 'border-danger/60 bg-danger/5' : worst >= threshold * 0.7 ? 'border-warn/50' : 'border-line')}>
                         <div className="mb-3 flex items-baseline justify-between"><span className="font-serif text-lg">{m.table_name}</span><span className="text-xs text-muted">{nf(m.hands)} hands</span></div>
                         {m.top.length === 0 ? <p className="text-xs text-muted">No statistics.</p> : (
                           <ul className="space-y-2.5">

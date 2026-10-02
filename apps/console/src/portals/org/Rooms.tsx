@@ -144,7 +144,7 @@ export function Rooms() {
         actions={write && <Button size="sm" onClick={() => setEditing('new')}><Plus size={15} aria-hidden />Create room</Button>} />
       <QueryView q={q} what="rooms">
         {(d) => d.rooms.length === 0 ? (
-          <div className="rounded-[18px] border border-dashed border-line-strong p-10 text-center">
+          <div className="rounded-[12px] border border-dashed border-line-strong p-10 text-center">
             <div className="font-serif text-xl">No rooms yet</div>
             <p className="mt-1 text-sm text-muted">Create a room on any live table, set the margin and rake, then share it publicly or by invite code.</p>
           </div>

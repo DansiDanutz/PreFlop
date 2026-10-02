@@ -82,7 +82,7 @@ export function Settings() {
                 <Callout tone="danger" icon={<ShieldAlert size={16} />} title="Owner decision: off until the Trusted Shuffler is certified">
                   Physical-table play stays <strong>disabled</strong> until the <strong>PreFlop Trusted Shuffler</strong> is laboratory-certified (docs/06 #7, docs/12 §2a). No defence exists at the table against a shuffler that controls the deck order; the random cut does not prevent it. While this is off, physical tables cannot open rounds and every live table is simulated.
                 </Callout>
-                <div className="mt-4 flex items-center justify-between gap-4 rounded-[14px] border border-line px-4 py-3">
+                <div className="mt-4 flex items-center justify-between gap-4 rounded-[10px] border border-line px-4 py-3">
                   <div>
                     <div className="text-sm font-medium">Allow rounds on physical tables</div>
                     <div className={cx('text-xs', physical ? 'text-danger' : 'text-muted')}>{physical ? 'ENABLED — physical tables can open rounds' : 'Disabled (default)'}</div>

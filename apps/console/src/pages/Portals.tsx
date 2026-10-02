@@ -47,9 +47,9 @@ export function PortalsPage() {
               return (
                 <li key={p.key}>
                   {p.enabled ? (
-                    <Link to={p.key} className={cx('group flex items-center gap-4 rounded-[18px] border bg-surface px-5 py-4 transition-colors hover:border-accent/60', p.key === last ? 'border-accent/40' : 'border-line')}>{inner}</Link>
+                    <Link to={p.key} className={cx('group flex items-center gap-4 rounded-[12px] border bg-surface px-5 py-4 transition-colors hover:border-accent/60', p.key === last ? 'border-accent/40' : 'border-line')}>{inner}</Link>
                   ) : (
-                    <div className="flex items-center gap-4 rounded-[18px] border border-line bg-surface px-5 py-4 opacity-55" aria-disabled>{inner}</div>
+                    <div className="flex items-center gap-4 rounded-[12px] border border-line bg-surface px-5 py-4 opacity-55" aria-disabled>{inner}</div>
                   )}
                 </li>
               );
