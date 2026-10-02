@@ -286,6 +286,31 @@ describe('tournament lifecycle', () => {
     await finishRound(r.n);
   });
 
+  it('a buy-in and a real-money bet at the same moment cannot both pass the daily loss limit', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    await modes(true);
+    try {
+      const p = await user('Racer');
+      await h.api('POST', '/v1/me/kyc', p.token, {});
+      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
+      await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 });
+      const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Race', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body;
+      const r = await openRound();
+      // The simulated tables play free chips; make this flop a real-money one for the race.
+      await h.db.query(`update rounds set mode = 'real-fiat', currency = 'EUR' where id = $1`, [r.id]);
+      const sel = 'paired-board:no';
+      const [reg, b] = await Promise.all([
+        h.api('POST', `/v1/tournaments/${t.id}/register`, p.token),
+        h.api('POST', '/v1/bets', p.token, { round_id: r.id, selection_id: sel, stake_minor: 1_000, odds_centi: odds(sel) }, { 'idempotency-key': `race-${Date.now()}` }),
+      ]);
+      const ok = [reg.status === 200, b.status === 201];
+      expect(ok.filter(Boolean)).toHaveLength(1);
+      expect((reg.status === 200 ? b : reg).body.type).toBe('limit_reached');
+      await h.api('POST', `/v1/admin/rounds/${r.id}/void`, admin, { reason: 'race test' });
+      await h.api('POST', `/v1/admin/tournaments/${t.id}/cancel`, admin, { reason: 'race test' });
+    } finally { await modes(false); }
+  });
+
   it('refuses real money while it is off, closed-loop modes from the team, and bad settings', async () => {
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'real-fiat', currency: 'EUR' }))).body.type).toBe('mode_disabled');
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ mode: 'diamonds', currency: 'DIAMOND' }))).body.type).toBe('org_required');

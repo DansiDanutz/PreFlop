@@ -8,6 +8,7 @@ import type { EventBatch } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
+import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 
 /**
  * Bet placement where PreFlop is the house (docs/13 §5).
@@ -160,9 +161,14 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
       // the exposure computed below includes every bet committed before this one.
       const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for update', [r.id])).rows[0]!;
       if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
+      // Real money: the player row is taken exclusively, so a concurrent bet, buy-in or deposit commits
+      // strictly before or after this one and the loss limit below sees it.
+      const real = r.mode === 'real-fiat' || r.mode === 'real-crypto';
+      if (real) await c.query('select 1 from users where id = $1 for update', [i.userId]);
       await assertEligibleInTx(c, i.userId, r.table_id);
       const replay = (await c.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
       if (replay) return { replay: true as const, row: replay };
+      if (real) await assertLossLimit(c, i.userId, toEurCents(r.currency, i.stakeMinor));
       // exposure, from the database, under the round lock; the table's limit as of now
       const maxLoss = (await c.query<{ max_round_loss_minor: number }>('select max_round_loss_minor from poker_tables where id = $1', [r.table_id])).rows[0]!.max_round_loss_minor;
       if ((await roundLossIfAdded(c, r.id, stats, i.stakeMinor, odds)) > maxLoss) throw unprocessable('limit_exceeded', 'the round has reached its risk limit for this selection');

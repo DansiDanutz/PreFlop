@@ -146,6 +146,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       publish(ev);
       return reply.code(201).send(rb);
     }
+    // Fast refusal before any lock; placeBet repeats the check under the player lock (the one that counts).
     await assertRgAllows(ctx, u.id, b.round_id, b.stake_minor);
     const out = await placeBet(ctx.db, {
       userId: u.id, idempotencyKey: key, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi,
