@@ -194,3 +194,21 @@ Verdict: *request changes*. F02, F03, F05, F06 and F11 materially addressed; F07
 - exposure after a crash;
 - 200 simulated hands reconciling to zero;
 - stacked-deck detection.
+
+### Production hardening (2026-10-02)
+
+Owner decisions unchanged: physical-table play stays disabled and real money stays off (sandbox rails only).
+
+| # | Change | Where |
+|---|---|---|
+| H-1 | **Validated config.** The environment is parsed with zod at start; malformed values stop the API and the worker with every problem listed. With `NODE_ENV=production` they also refuse `CORS_ORIGINS` `*` or empty, an unset `DATABASE_URL`, a database password that is a demo value or shorter than 32 characters, a weak `ADMIN_PASSWORD`, `WEBHOOK_ALLOW_PRIVATE=true` and `RATE_LIMIT_ENABLED=false` | `apps/api/src/config.ts`, README *Running in production* |
+| H-2 | **Rate limits and login lockout.** Per-IP limits on login, register and partner token issuance, per-user on `POST /v1/bets` (`429 rate_limited` + `Retry-After`); an in-process limiter, since `@fastify/rate-limit` is not available offline. 5 failed logins for an email in 15 minutes give `429 login_locked`; the failures are stored in PostgreSQL (migration `005`), so the lockout holds across instances, and a per-email advisory lock stops concurrent guesses from slipping past it | `lib/rateLimit.ts`, `lib/loginLockout.ts` |
+| H-3 | **Observability.** `X-Request-Id` on every request and log line; `GET /v1/health/ready` (database + worker heartbeat, migration `006`; `503 not_ready` otherwise); `GET /v1/admin/metrics` with outbox lag, webhook backlog, open alerts, rounds by state, sweeper voids, deadlock/serialization retries (the `tx()` helper now counts them by cause) and WebSocket clients | `app.ts`, `worker.ts`, `routes/public.ts`, `routes/admin.ts` |
+| H-4 | **Durable webhook fan-out.** Deliveries were queued by an in-process listener after commit, so a crash in between lost the event, and a standalone worker that settled a round queued nothing. Settlement and void now insert the `webhook_deliveries` rows in their own transaction. Tests show the row inside the settlement transaction, invisible to others before commit, and gone after a rollback | `lib/webhooks.ts`, `rounds/service.ts` |
+| H-5 | **Exposure across API processes.** The PreFlop round-loss check used an in-process mutex and cache (one API process per region). It now runs inside the bet transaction after `select … for update` on the round (first in the lock order round → user → table → wallets) and computes the exact worst case from the database. A test runs two API processes against one database and races bets on both: the cap holds, while the previous code accepted 6 bets where 5 fit. Rooms were already safe (collateral reserve under the collateral account lock) | `bets/service.ts`, `docs/13` §5 |
+
+This supersedes R2-2's "`FOR SHARE` for bets": PreFlop-house bets now take the round row `FOR UPDATE`, which serialises bets on one round (also across instances). The lock order itself is unchanged, and the "no deadlock retries" race test still passes.
+
+**Re-run after hardening:** 84 API tests pass. `ROUNDS=2000 pnpm --filter @preflop/api soak` on a fresh database: 2,000 rounds settled, 2,000 late bets refused, 16,000 bets, ledger sums to zero, audit chain verifies (26,009 events).
+
+**Known limits:** per-IP and per-user rate limits are counted per process (N instances allow up to N × the limit); the login lockout and the exposure cap are global. `deliverDue` is unchanged: two workers can still pick the same due delivery and send it twice, which partners already handle by deduplicating on `event_id`.
