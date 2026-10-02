@@ -29,8 +29,8 @@
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0 — Foundations** ✅ (this PR) | Odds engine: exact probabilities, pricing with net EV, exposure, settlement, fees, dynamic sharing, play modes, house models, diamonds, profitability scenarios. Generated odds book and P&L; architecture and API docs | 122 tests green; generated docs checked in CI |
-| **0.5 — External audit** (now) | Codex and Kimi audit the plan, the engine and the backend spec (`AUDIT.md`); Codex prepares the app designs | Findings resolved; plan frozen |
-| **1 — Core backend** | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
+| **0.5 — External audit** ✅ (rounds 1–2 addressed) | Codex and Kimi audit the plan, the engine and the backend spec (`AUDIT.md`); Codex prepares the app designs | Findings resolved; plan frozen |
+| **1 — Core backend** ✅ (`apps/api`, 35 integration tests) | Fastify API, Postgres ledger, round state machine, Provider API, bet placement with exposure, settlement, back-office minimum | A simulated table runs 10k rounds; ledger reconciles to zero; no bet accepted after lock |
 | **2 — Player app + pilot club** | Web lobby, live table with video, bet slip, history; club tablet app; dual-entry results; play chips. **The live-club part starts only if the owner re-enables physical play (decision 7)**; until then the apps run against the simulated table | 4 weeks live at one table; ≥ 99.9% of rounds verified; zero settlement errors |
 | **3 — Contests** | Pools, tournaments, heads-up, challenges, invitations, organizer reports | Fees reconcile across Models A–D; standings and ties match the rules |
 | **4 — Real money and partners** | KYC, payments, responsible gaming, Partner API + widget, seamless wallet, statements | Licence in place; first partner live in the sandbox, then in production |

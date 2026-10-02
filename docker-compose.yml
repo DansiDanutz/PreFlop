@@ -1,0 +1,34 @@
+# Local / staging stack. Real money stays OFF (settings.modes_enabled) and physical-table play
+# stays disabled (owner decision) — the stack runs on simulated tables.
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: preflop, POSTGRES_DB: preflop }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 20 }
+  api:
+    build: { context: ., target: api }
+    environment:
+      DATABASE_URL: postgres://postgres:preflop@postgres:5432/preflop
+      CORS_ORIGINS: http://localhost:8080,http://localhost:8081,http://localhost:8082
+      WEB_URL: http://localhost:8080
+    ports: ["4000:4000"]
+    depends_on: { postgres: { condition: service_healthy } }
+  sim:
+    build: { context: ., target: sim }
+    environment:
+      API_URL: http://api:4000
+      DATABASE_URL: postgres://postgres:preflop@postgres:5432/preflop
+      BETTING_WINDOW_MS: "20000"
+    depends_on: [api]
+  web:
+    build: { context: ., target: web }
+    ports: ["8080:80"]
+  console:
+    build: { context: ., target: console, args: { VITE_WEB_URL: http://localhost:8080 } }
+    ports: ["8081:80"]
+  table:
+    build: { context: ., target: table }
+    ports: ["8082:80"]
+volumes:
+  pgdata: {}

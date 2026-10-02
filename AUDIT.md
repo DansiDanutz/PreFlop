@@ -4,7 +4,8 @@
 
 **State of the repo:**
 - Specification and the mathematical core are done.
-- The backend and apps are **not** built yet. `docs/13` is the backend spec to audit and then implement.
+- The backend (`apps/api`) implements `docs/13` with PostgreSQL integration tests for its acceptance criteria; the player app, console portals and club tablet are in `apps/`.
+- Physical-table play is disabled (owner decision); everything runs on simulated tables.
 
 ## 1. What PreFlop is (one paragraph)
 
@@ -35,7 +36,7 @@ Clubs supply tables and live video. Betting companies integrate through an API. 
 | **Phase 1 backend spec (to implement)** | `docs/13-phase1-backend-spec.md` |
 | Generated odds book (every market's probability, odds, net EV) | `docs/odds-book.md`, `docs/odds-book.json` |
 | Generated profit per participant (8 scenarios) | `docs/profitability.md` |
-| Engine code (TypeScript, 130 tests) | `packages/odds-engine/src/*` |
+| Engine code (TypeScript, 131 tests) | `packages/odds-engine/src/*` |
 
 Run it:
 
@@ -166,3 +167,25 @@ Verdict: *request changes*. F02, F03, F05, F06 and F11 materially addressed; F07
 | Note | Generic write idempotency and procedure ordinals | **Added to the spec:** `idempotency_responses` (stored response written with the effect) for every non-bet write; `round_events` with server-assigned ordinals |
 
 **Distinction kept, as requested:** every backend item above, and the three Greptile-driven changes at `8cb639b` (atomic terminal transition, deadline at settlement, checkpoint sync), are **specification** fixes. They become executed guarantees only when the backend's PostgreSQL integration tests in `docs/13` §8 pass. The engine items (R2-1, R2-4's procedure check) are executed and tested now.
+
+### Round 3: found while implementing the backend (2026-10-02)
+
+| # | Finding | Status |
+|---|---|---|
+| I-1 | `OrganizerCollateral` reserved only each round's net loss (−minNet), but the ledger balance it is compared with already contains the open rounds' stakes. Example: an organizer with 850 plus a posted 100 stake (balance 950) could accept a bet paying 1,000 | **Fixed in the engine and the backend:** the reserve is the full worst-case outgo (stakes + certain costs − minNet). A regression test was added (`houses-diamonds.test.ts`), and the room bet path checks it under a per-organizer lock |
+| I-2 | The daily deposit limit compared EUR cents with USDT/USDC micro-units | **Fixed:** limits are EUR-equivalent across currencies (integration test) |
+| I-3 | The outcome monitor's first calibration (ratio 3, threshold 7) gave 327 false alarms in 50,000 fair flops | **Fixed:** with ratio 5 and threshold 14 there were 0 false alarms in 50,000 fair flops, and a stacked "all red" deck is caught in 9 hands (`apps/api/src/rounds/monitor.ts`) |
+
+**Now executed, not only specified:** these `docs/13` §8 acceptance criteria are covered by PostgreSQL integration tests in `apps/api/test`:
+- terminal compare-and-set;
+- deadline voids;
+- capture idempotency and conflict;
+- durable void of rejected evidence;
+- lock order, with no deadlock retries under a bet and settlement race;
+- review settlement;
+- generic idempotency;
+- nonce replay;
+- route-bound signatures;
+- exposure after a crash;
+- 200 simulated hands reconciling to zero;
+- stacked-deck detection.
