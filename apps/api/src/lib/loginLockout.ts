@@ -1,5 +1,5 @@
 import { type Db, type Tx, tx } from './db.ts';
-import { tooManyRequests, unauthorized } from './errors.ts';
+import { type ApiError, tooManyRequests, unauthorized } from './errors.ts';
 
 export interface LockoutPolicy {
   /** Failed logins for one email within the window that lock it. */
@@ -8,6 +8,15 @@ export interface LockoutPolicy {
 }
 
 export const LOGIN_LOCKOUT: LockoutPolicy = { maxFailures: 5, windowMs: 15 * 60_000 };
+
+/**
+ * Returned by verify() to refuse with a specific error. `countsAsFailure` records it like a wrong
+ * password (e.g. a wrong one-time code); otherwise nothing is recorded and nothing is cleared
+ * (e.g. "a one-time code is required"), so it can never reset the failure count.
+ */
+export class LoginRefusal {
+  constructor(readonly error: ApiError, readonly countsAsFailure: boolean) {}
+}
 
 /**
  * Runs a password check under the per-email login lockout, stored in Postgres so it holds across
@@ -20,7 +29,7 @@ export const LOGIN_LOCKOUT: LockoutPolicy = { maxFailures: 5, windowMs: 15 * 60_
  * - verify() returns null → the failure is recorded, then 401 invalid_credentials;
  * - success → the email's failures are cleared.
  */
-export async function guardedLogin<T>(db: Db, email: string, ip: string, policy: LockoutPolicy, verify: (c: Tx) => Promise<T | null>): Promise<T> {
+export async function guardedLogin<T>(db: Db, email: string, ip: string, policy: LockoutPolicy, verify: (c: Tx) => Promise<T | LoginRefusal | null>): Promise<T> {
   const out = await tx(db, async (c) => {
     await c.query('select pg_advisory_xact_lock(7462, hashtext($1))', [email]);
     const window = String(policy.windowMs);
@@ -32,6 +41,10 @@ export async function guardedLogin<T>(db: Db, email: string, ip: string, policy:
         order by at desc offset $3 limit 1`, [email, window, policy.maxFailures - 1])).rows[0];
     if (nth) return { locked: Number(nth.retry_ms) } as const;
     const ok = await verify(c);
+    if (ok instanceof LoginRefusal) {
+      if (ok.countsAsFailure) await c.query('insert into login_failures (email, ip) values ($1, $2)', [email, ip]);
+      return { refused: ok.error } as const;
+    }
     if (ok === null) {
       await c.query('insert into login_failures (email, ip) values ($1, $2)', [email, ip]);
       return { failed: true } as const;
@@ -41,5 +54,6 @@ export async function guardedLogin<T>(db: Db, email: string, ip: string, policy:
   });
   if ('locked' in out) throw tooManyRequests('login_locked', 'too many failed logins for this account; retry later', out.locked);
   if ('failed' in out) throw unauthorized('invalid_credentials', 'wrong email or password');
+  if ('refused' in out) throw out.refused;
   return out.ok;
 }

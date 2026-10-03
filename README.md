@@ -18,7 +18,7 @@ Clubs supply tables and live video. Betting companies integrate through an API a
 | `packages/odds-engine` | The maths. Exact probabilities over all 22,100 flops, house-edge pricing with net EV after costs, exact exposure, settlement, fees and pools, dynamic sharing, play modes, house models and collateral, diamonds, table readiness and signed evidence. 131 tests |
 | `packages/db` | PostgreSQL 16 schema and migrations, including an append-only balanced ledger and a hash-chained audit log |
 | `apps/api` | Fastify API, WebSocket stream, worker (outbox, deadline sweeper, webhooks) and simulated tables. It implements `docs/13`. PostgreSQL integration tests plus a 10,000-round soak test |
-| `apps/web` | Public website and player app (PWA). Mobile-first, following Codex's concepts (`docs/15`), with the partner widget at `/embed` |
+| `apps/web` | Public website and player app: an installable PWA (manifest, app-shell service worker that never caches API calls). Mobile-first, following Codex's concepts (`docs/15`), with the partner widget at `/embed` |
 | `apps/console` | Dashboards for the PreFlop team, poker clubs, partners (betting companies) and organizers |
 | `apps/table` | Club tablet for the dealer, floor and floor manager. Each person has an Ed25519 key in WebCrypto, and every request is signed |
 | `packages/ui`, `packages/client` | Design tokens and components, and the typed API client (the contract) |
@@ -66,7 +66,9 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `RESULT_SLA_MS` · `REVIEW_SLA_MS` · `MAX_CAPTURE_DELAY_MS` | 5 min · 30 min · 3 min | Round deadlines (`docs/13` §4) |
 | `PLAY_START` | `10000` | Starting play-money balance |
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
-| `WEB_URL` | `http://localhost:5173` | Origin used in the partner widget snippet |
+| `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
+| `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails |
+| `SMTP_URL` | unset | Reserved for a mail provider. No transport ships yet: in production, emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
 
 Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
 

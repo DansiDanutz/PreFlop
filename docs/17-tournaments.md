@@ -28,7 +28,7 @@ The owner's decisions apply as everywhere else:
 
 ## 2. Playing
 - **Registering** pays the buy-in into the tournament pool account (`tournament.buyin`). The player may unregister for a full refund until the start.
-- **Responsible gaming:** a real-money buy-in counts against the player's daily loss limit (`403 limit_reached`), together with real-money bets. A tournament counts as buy-in minus prize; a cancelled or left tournament counts nothing.
+- **Responsible gaming:** a real-money buy-in counts against the player's daily loss limit (`403 limit_reached`), together with real-money bets. A tournament counts as buy-in minus prize; a cancelled or left tournament counts nothing. A real-money entry also needs the account checks of `docs/14` (*Accounts and security*: age, verified email, licensed territory), and tournament bets stop at the player's session limit (`403 session_limit`).
 - **Betting.** Between `starts_at` and `ends_at`, an entrant bets tournament points on any open flop at the PreFlop odds of the moment (the same prices as the lobby). Each bet:
   - uses one of the entrant's bets at once, whatever the result;
   - takes the stake off the stack at once;

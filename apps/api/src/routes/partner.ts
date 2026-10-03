@@ -6,15 +6,18 @@ import type { AppContext } from '../app.ts';
 import { createSession, hashPassword } from '../auth/players.ts';
 import { placeBet } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
-import { type Db, tx } from '../lib/db.ts';
-import { badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
+import { type Db, type Tx, tx } from '../lib/db.ts';
+import { DateOfBirth, isAdult } from '../lib/accounts.ts';
+import { ApiError, badRequest, conflict, notFound, unauthorized, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
+import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
 import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { requireOrg } from './org.ts';
+import { WidgetSettings, widgetSnippet } from './widget.ts';
 
 /**
  * Partner (betting company) integration, docs/02 §2:
@@ -31,28 +34,47 @@ export function signWebhook(secret: string, body: string, t = Math.floor(Date.no
   return `t=${t}, v1=${createHmac('sha256', secret).update(`${t}.${body}`).digest('hex')}`;
 }
 
-async function partnerFromToken(db: Db, req: FastifyRequest): Promise<{ orgId: string; clientId: string }> {
+/**
+ * The partner behind a bearer token. With `lock`, the token's client and organization rows are held
+ * FOR SHARE until the transaction ends: a client revoke or a suspension (which update those rows and
+ * then end the partner's player sessions) waits, so it can't miss a session issued meanwhile.
+ */
+async function partnerFromToken(db: Db | Tx, req: FastifyRequest, lock = false): Promise<{ orgId: string; clientId: string }> {
   const h = req.headers.authorization;
   const token = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
   if (!token) throw unauthorized('unauthorized', 'partner bearer token required');
   const r = (await db.query<{ org_id: string; client_id: string }>(
     `select p.org_id, p.client_id from partner_tokens p join api_clients c on c.id = p.client_id join organizations o on o.id = p.org_id
-      where p.token_sha256 = $1 and p.expires_at > now() and not c.revoked and o.status = 'active'`, [sha(token)])).rows[0];
+      where p.token_sha256 = $1 and p.expires_at > now() and not c.revoked and o.status = 'active'${lock ? ' for share of c, o' : ''}`, [sha(token)])).rows[0];
   if (!r) throw unauthorized('unauthorized', 'token expired or revoked');
   return { orgId: r.org_id, clientId: r.client_id };
 }
 
-async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: string): Promise<string> {
+/**
+ * Signs out every player of a partner (users created through its Partner API, users.partner_id).
+ * Used when a client is revoked or the partner is suspended: widget sessions die with the partner's
+ * access, and the partner must issue new ones. Returns the number of sessions ended.
+ */
+export async function endPartnerSessions(c: Tx, orgId: string): Promise<number> {
+  const r = await c.query('delete from sessions where user_id in (select id from users where partner_id = $1)', [orgId]);
+  return r.rowCount ?? 0;
+}
+
+async function partnerPlayer(db: Db, orgId: string, ref: string, displayName?: string, dob?: string): Promise<string> {
   const existing = (await db.query<{ id: string }>('select id from users where partner_id = $1 and external_ref = $2', [orgId, ref])).rows[0];
-  if (existing) return existing.id;
+  if (existing) {
+    // The licensed partner verifies age; a date of birth it sends is recorded once (never overwritten).
+    if (dob) await db.query('update users set date_of_birth = $2 where id = $1 and date_of_birth is null', [existing.id, dob]);
+    return existing.id;
+  }
   const id = newId('u');
   // Partner players never log in with a password: they get sessions from their operator.
   const hash = await hashPassword(randomBytes(24).toString('base64url'));
   // The placeholder email is derived from a hash of (org, ref), so distinct refs never collide.
   const email = `p_${sha(`${orgId}\u0000${ref}`).slice(0, 32)}@${orgId}.partner.preflop`;
   await tx(db, async (c) => {
-    const created = await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref) values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
-      [id, email, hash, displayName ?? ref, orgId, ref]);
+    const created = await c.query(`insert into users (id, email, password_hash, display_name, partner_id, external_ref, date_of_birth) values ($1, $2, $3, $4, $5, $6, $7) on conflict do nothing`,
+      [id, email, hash, displayName ?? ref, orgId, ref, dob ?? null]);
     if (created.rowCount !== 1) return; // a concurrent request created this player: no second grant
     await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: 10_000 }]);
     await audit(c, { type: 'partner.player', userId: id, orgId, ref });
@@ -87,7 +109,10 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
       const r = await c.query('update api_clients set revoked = true where id = $1 and org_id = $2', [clientId, org.id]);
       if (!r.rowCount) throw notFound('client');
       await c.query('delete from partner_tokens where client_id = $1', [clientId]);
-      await audit(c, { type: 'partner.client_revoked', clientId, by: user.id });
+      // Player sessions are not tied to one client, so revoking any client signs out every player of
+      // this partner; the partner issues fresh sessions with a client it still trusts.
+      const ended = await endPartnerSessions(c, org.id);
+      await audit(c, { type: 'partner.client_revoked', clientId, partnerSessionsEnded: ended, by: user.id });
     });
     return { ok: true };
   });
@@ -138,21 +163,18 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
          from bets b join users u on u.id = b.user_id join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.partner_id = $1 order by b.placed_at desc limit $2`, [org.id, limit])).rows };
   });
-  const widgetView = (orgId: string, settings: Record<string, unknown>) => {
-    const web = process.env.WEB_URL ?? 'http://localhost:5173';
-    const table = String(settings.default_table ?? 'green-room');
-    return {
-      settings,
-      snippet: `<iframe src="${web}/embed/table/${table}?token=PLAYER_SESSION_TOKEN&accent=${encodeURIComponent(String(settings.accent ?? '#53e6a7'))}" style="width:100%;max-width:440px;height:820px;border:0;border-radius:18px" allow="autoplay" title="PreFlop"></iframe>\n<!-- Get PLAYER_SESSION_TOKEN server-side: POST /v1/partner/players/{player_ref}/session (partner ${orgId}) -->`,
-    };
-  };
+  const widgetView = (orgId: string, settings: Record<string, unknown>) => ({ settings, snippet: widgetSnippet(orgId, settings) });
   app.get(`${P}/widget`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'] });
     return widgetView(org.id, (org.settings.widget as Record<string, unknown>) ?? {});
   });
   app.put(`${P}/widget`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
-    const { settings } = z.object({ settings: z.record(z.unknown()) }).parse(req.body);
+    const { settings } = z.object({ settings: WidgetSettings }).parse(req.body);
+    if (settings.default_table_id) {
+      const t = (await ctx.db.query('select 1 from poker_tables where id = $1', [settings.default_table_id])).rows[0];
+      if (!t) throw unprocessable('unknown_table', `no table ${settings.default_table_id}`);
+    }
     await ctx.db.query(`update organizations set settings = jsonb_set(settings, '{widget}', $2::jsonb) where id = $1`, [org.id, JSON.stringify(settings)]);
     return widgetView(org.id, settings);
   });
@@ -169,41 +191,64 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.post('/v1/partner/players', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
-    const b = z.object({ player_ref: z.string().min(1).max(100), display_name: z.string().max(60).optional() }).parse(req.body);
-    const id = await partnerPlayer(ctx.db, p.orgId, b.player_ref, b.display_name);
+    const b = z.object({ player_ref: z.string().min(1).max(100), display_name: z.string().max(60).optional(), date_of_birth: DateOfBirth.optional() }).parse(req.body);
+    if (b.date_of_birth && !isAdult(b.date_of_birth)) throw new ApiError(403, 'underage', 'players must be 18 or over');
+    const id = await partnerPlayer(ctx.db, p.orgId, b.player_ref, b.display_name, b.date_of_birth);
     return reply.code(201).send({ player_ref: b.player_ref, user_id: id });
   });
   /** A player session for the widget iframe (?token=…). Never expose the partner token to browsers. */
   app.post('/v1/partner/players/:ref/session', async (req) => {
     const p = await partnerFromToken(ctx.db, req);
     const { ref } = req.params as { ref: string };
-    const id = await partnerPlayer(ctx.db, p.orgId, ref);
-    return { token: await createSession(ctx.db, id), user_id: id };
+    const { date_of_birth: dob } = z.object({ date_of_birth: DateOfBirth.optional() }).parse(req.body ?? {});
+    if (dob && !isAdult(dob)) throw new ApiError(403, 'underage', 'players must be 18 or over');
+    const id = await partnerPlayer(ctx.db, p.orgId, ref, undefined, dob);
+    // Recheck the token with its client and partner locked, then issue in the same transaction.
+    return tx(ctx.db, async (c) => {
+      const locked = await partnerFromToken(c, req, true);
+      if (locked.orgId !== p.orgId) throw unauthorized('unauthorized', 'token expired or revoked');
+      return { token: await createSession(c, id), user_id: id };
+    });
   });
   /**
    * Transfer wallet mode: move value into the partner's player's PreFlop wallet. Free chips are
    * issued (no value); virtual chips come out of the partner's treasury, which it funds by buying
    * chips, and never exceed what it holds.
    */
+  /**
+   * Idempotent: the `Idempotency-Key` header (as for partner bets) keys both the stored response and
+   * the ledger posting, so a retry after a lost response returns the original deposit and never
+   * credits twice. The same key with a different request gets 422 idempotency_mismatch.
+   */
   app.post('/v1/partner/players/:ref/deposits', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
+    const key = req.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header required (8–200 characters)');
     const { ref } = req.params as { ref: string };
     const b = z.object({ amount_minor: z.number().int().positive(), mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
-    if (!(await ctx.modeEnabled(b.mode))) throw conflict('mode_disabled', `${b.mode} is not enabled`);
-    const ref2 = newId('pdep');
-    await tx(ctx.db, async (c) => {
-      let from = acct('PreFlop', 'play-issuance', 'play', 'PLAY');
-      if (b.mode === 'virtual-chips') {
-        from = acct(p.orgId, 'treasury', b.mode, currency);
-        await lockAccount(c, from);
-        if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_treasury', 'buy chips for your treasury first');
-      }
-      await post(c, 'partner.deposit', ref2, [{ from, to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }]);
-      await audit(c, { type: 'partner.deposit', orgId: p.orgId, userId: id, amountMinor: b.amount_minor, mode: b.mode });
+    const principal = `partner:${p.orgId}`;
+    const res = await tx(ctx.db, async (c) => {
+      // Two concurrent requests with one key queue here; the second then finds the stored response.
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`partner.deposit:${p.orgId}:${key}`]);
+      return idempotent(c, principal, key, req.method, req.url, req.rawBody ?? '', async () => {
+        if (!(await ctx.modeEnabled(b.mode))) throw conflict('mode_disabled', `${b.mode} is not enabled`);
+        const depositId = newId('pdep');
+        let from = acct('PreFlop', 'play-issuance', 'play', 'PLAY');
+        if (b.mode === 'virtual-chips') {
+          from = acct(p.orgId, 'treasury', b.mode, currency);
+          await lockAccount(c, from);
+          if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_treasury', 'buy chips for your treasury first');
+        }
+        // Keyed by the partner's key, not a fresh id: the ledger itself refuses a second credit.
+        if (!(await post(c, 'partner.deposit', `${p.orgId}:${key}`, [{ from, to: acct(id, 'wallet', b.mode, currency), amountMinor: b.amount_minor }])))
+          throw conflict('duplicate_deposit', 'this Idempotency-Key was already used for a deposit');
+        await audit(c, { type: 'partner.deposit', orgId: p.orgId, userId: id, depositId, idempotencyKey: key, amountMinor: b.amount_minor, mode: b.mode });
+        return { status: 201, body: { id: depositId, player_ref: ref, amount_minor: b.amount_minor, currency } };
+      });
     });
-    return reply.code(201).send({ id: ref2, player_ref: ref, amount_minor: b.amount_minor, currency });
+    return reply.code(res.status).send(res.body);
   });
   app.post('/v1/partner/bets', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
@@ -232,11 +277,31 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
 // ---------------------------------------------------------------- webhook delivery
 // Fan-out is durable: lib/webhooks.ts queues the rows inside the settlement/void transaction.
 
-/** Delivers due webhooks with an HMAC signature; exponential backoff for 24 h, then failed. */
-export async function deliverDue(db: Db, limit = 20): Promise<number> {
+/** A claim older than this is taken over: its sender died (the HTTP call itself times out after 5 s). */
+export const WEBHOOK_CLAIM_STALE_MS = 5 * 60_000;
+
+/**
+ * Delivers due webhooks with an HMAC signature; exponential backoff for 24 h, then failed.
+ *
+ * Safe with several workers and API processes: rows are CLAIMED first, in one statement that
+ * selects them `for update skip locked` and marks them `sending` (claimed_at, attempts + 1), so two
+ * callers never send the same row. The outcome is written only while the claim is still ours
+ * (status 'sending' and the same attempts count); a claim older than WEBHOOK_CLAIM_STALE_MS is
+ * taken over, and then the late sender's result is ignored.
+ */
+export async function deliverDue(db: Db, limit = 20, staleMs = WEBHOOK_CLAIM_STALE_MS): Promise<number> {
   const due = (await db.query<{ id: string; url: string; secret: string; payload: unknown; attempts: number; created_at: Date }>(
-    `select d.id, w.url, w.secret, d.payload, d.attempts, d.created_at from webhook_deliveries d join webhooks w on w.id = d.webhook_id
-      where d.status = 'pending' and d.next_attempt_at <= now() order by d.next_attempt_at limit $1`, [limit])).rows;
+    `with claimed as (
+       update webhook_deliveries d set status = 'sending', claimed_at = now(), attempts = d.attempts + 1
+        where d.id in (
+          select id from webhook_deliveries
+           where (status = 'pending' and next_attempt_at <= now())
+              or (status = 'sending' and claimed_at <= now() - ($2 || ' milliseconds')::interval)
+           order by next_attempt_at limit $1
+           for update skip locked)
+        returning d.id, d.webhook_id, d.payload, d.attempts, d.created_at)
+     select c.id, w.url, w.secret, c.payload, c.attempts, c.created_at from claimed c join webhooks w on w.id = c.webhook_id`,
+    [limit, String(staleMs)])).rows;
   for (const d of due) {
     const body = JSON.stringify(d.payload);
     let error: string | null = null;
@@ -249,12 +314,16 @@ export async function deliverDue(db: Db, limit = 20): Promise<number> {
     } catch (e) {
       error = (e as Error).message;
     }
-    if (!error) await db.query(`update webhook_deliveries set status = 'delivered', attempts = attempts + 1, delivered_at = now(), last_error = null where id = $1`, [d.id]);
-    else {
+    // Guarded by the claim: a row taken over after a stale claim is not overwritten by this sender.
+    if (!error) {
+      await db.query(`update webhook_deliveries set status = 'delivered', delivered_at = now(), last_error = null, claimed_at = null
+                       where id = $1 and status = 'sending' and attempts = $2`, [d.id, d.attempts]);
+    } else {
       const expired = Date.now() - d.created_at.getTime() > 24 * 3600_000;
-      const backoff = Math.min(3600, 2 ** Math.min(d.attempts + 1, 12));
-      await db.query(`update webhook_deliveries set attempts = attempts + 1, last_error = $2, status = $3, next_attempt_at = now() + ($4 || ' seconds')::interval where id = $1`,
-        [d.id, error.slice(0, 300), expired ? 'failed' : 'pending', String(backoff)]);
+      const backoff = Math.min(3600, 2 ** Math.min(d.attempts, 12));
+      await db.query(`update webhook_deliveries set last_error = $2, status = $3, next_attempt_at = now() + ($4 || ' seconds')::interval, claimed_at = null
+                       where id = $1 and status = 'sending' and attempts = $5`,
+        [d.id, error.slice(0, 300), expired ? 'failed' : 'pending', String(backoff), d.attempts]);
     }
   }
   return due.length;

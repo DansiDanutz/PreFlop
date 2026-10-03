@@ -1,5 +1,5 @@
 import {
-  GLOBAL_RULES, MIN_ODDS_CENTI, type PlayMode, RoundExposure, assertOrganizerBet, oddsForMargin, payoutMinor,
+  GLOBAL_RULES, MIN_ODDS_CENTI, type PlayMode, RoundExposure, assertOrganizerBet, oddsForMargin,
   platformFeeMinor, splitDiamondBet, validateDiamondRules, validateOrganizerHouse,
 } from '@preflop/odds-engine';
 import { audit } from '../lib/audit.ts';
@@ -10,7 +10,7 @@ import { newId } from '../lib/ids.ts';
 import { type Transfer, acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { poolAccount } from '../rounds/service.ts';
-import { type BetView, assertEligibleInTx, statsOf, withKeyLock } from './service.ts';
+import { type BetView, assertEligibleInTx, potentialPayoutMinor, statsOf, withKeyLock } from './service.ts';
 
 /**
  * Rooms: books run by an organizer or club in virtual chips or diamonds (docs/08, docs/10).
@@ -128,7 +128,7 @@ export interface RoomBetInput {
 
 export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, modeEnabled: (m: PlayMode) => Promise<boolean>): Promise<BetView> {
   const prior = (await db.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
-  if (prior) return { bet_id: prior.id, round_id: prior.round_id, selection_id: prior.selection_id, stake_minor: prior.stake_minor, odds_centi: prior.odds_centi, potential_payout_minor: prior.house_kind === 'pool' ? 0 : payoutMinor(prior.at_risk_minor ?? prior.stake_minor, prior.odds_centi), mode: prior.mode, currency: prior.currency, status: prior.status };
+  if (prior) return { bet_id: prior.id, round_id: prior.round_id, selection_id: prior.selection_id, stake_minor: prior.stake_minor, odds_centi: prior.odds_centi, potential_payout_minor: potentialPayoutMinor(prior), mode: prior.mode, currency: prior.currency, status: prior.status };
 
   const room = (await db.query<RoomRow>('select * from rooms where id = $1', [i.roomId])).rows[0];
   if (!room) throw notFound('room');
@@ -219,6 +219,6 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
       return ins.rows[0];
     });
     ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId: row.id, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: room.id } });
-    return { bet_id: row.id, round_id: row.round_id, selection_id: row.selection_id, stake_minor: row.stake_minor, odds_centi: row.odds_centi, potential_payout_minor: room.house === 'pool' ? 0 : payoutMinor(atRisk, odds), mode: row.mode, currency: row.currency, status: row.status };
+    return { bet_id: row.id, round_id: row.round_id, selection_id: row.selection_id, stake_minor: row.stake_minor, odds_centi: row.odds_centi, potential_payout_minor: potentialPayoutMinor(row), mode: row.mode, currency: row.currency, status: row.status };
   });
 }

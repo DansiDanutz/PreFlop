@@ -6,13 +6,13 @@ import { type Principal, assertTableScope, requireDevice, requireStaff, verifySi
 import { audit } from '../lib/audit.ts';
 import { evidenceOf } from './admin.ts';
 import { type Tx, tx } from '../lib/db.ts';
-import { badRequest, notFound } from '../lib/errors.ts';
+import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent, type StoredResponse } from '../lib/idempotency.ts';
 import { tableReadiness } from '../rounds/readiness.ts';
 import {
-  cut, dealStart, ensureOpenRound, flopEntry, getTable, lockRound, receiveCapture, receiveImage, resolveReview,
-  roundId, shuffleCommand, shuffleComplete, startHand, voidRound,
+  carriesRealMoney, cut, dealStart, ensureOpenRound, flopEntry, getTable, lockRound, receiveCapture, receiveImage, resolveReview,
+  type RoundState, roundId, shuffleCommand, shuffleComplete, startHand, voidRound,
 } from '../rounds/service.ts';
 
 const Heartbeat = z.object({
@@ -162,7 +162,13 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const s = requireStaff(p, 'floor_manager');
     const reason = String((req.body as { reason?: string })?.reason ?? 'floor decision').slice(0, 200);
     const r = await lockRound(c, hand(req).rid);
-    const ok = await voidRound(c, r, reason, s.id, ev);
+    // Once cards are on the felt, voiding a real-money round would let the club cancel results it
+    // has seen; from then on only the PreFlop team decides (POST /v1/admin/rounds/:id/review).
+    const from: RoundState[] | undefined = (await carriesRealMoney(c, r)) ? ['OPEN', 'LOCKED'] : undefined;
+    if (from && !from.includes(r.state)) {
+      throw new ApiError(403, 'platform_review_required', 'after the deal, a real-money round is voided by the PreFlop team');
+    }
+    const ok = await voidRound(c, r, reason, s.id, ev, from);
     if (ok) await ensureOpenRound(c, r.table_id, ev);
     return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is already settled or voided', status: 409 } };
   }));

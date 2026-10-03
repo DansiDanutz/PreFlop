@@ -1,7 +1,7 @@
 import { Flop, Spinner, cx } from '@preflop/ui';
 import { CheckCircle2, Hand, Play, Scissors, Shuffle } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { ActionStatus, BigButton, HoldButton } from '../components/controls.tsx';
+import { ActionStatus, HoldButton } from '../components/controls.tsx';
 import { FlopEntry } from '../components/FlopEntry.tsx';
 import { StateBadge, Timeline } from '../components/RoundBits.tsx';
 import type { TableApi } from '../lib/api.ts';
@@ -63,19 +63,19 @@ export function DealerScreen({ api, live, mem, runner, submitFlop }: {
               <span className="font-sans text-6xl font-extrabold tracking-tight text-muted">CUT AT</span>
               <span className="font-sans text-[200px] font-extrabold tabular-nums tracking-tighter text-accent" data-testid="cut-depth">{r.cut_depth}</span>
             </div>
-            <p className="max-w-2xl text-2xl text-ink/90">Cut the deck at <b>{r.cut_depth}</b> cards from the top with the cut card, then tap <b>CUT</b>.</p>
-            <BigButton className="h-24 w-full max-w-xl text-3xl" busy={busy} onClick={() => void runner.run(api.hand(r.hand_no, 'cut', `Cut hand ${r.hand_no}`))} data-testid="btn-cut">
-              <Scissors className="h-8 w-8" /> CUT
-            </BigButton>
+            <p className="max-w-2xl text-2xl text-ink/90">Cut the deck at <b>{r.cut_depth}</b> cards from the top with the cut card, then press and hold <b>CUT</b>.</p>
+            <HoldButton className="h-28 w-full max-w-xl text-3xl" busy={busy} onHold={() => void runner.run(api.hand(r.hand_no, 'cut', `Cut hand ${r.hand_no}`))}>
+              <span className="inline-flex items-center gap-3" data-testid="btn-cut"><Scissors className="h-8 w-8" /> CUT</span>
+            </HoldButton>
           </Stage>
         );
       } else if (r.step === 'cut') {
         main = (
           <Stage testid="dealer-deal" eyebrow={`Hand ${r.hand_no} · deck cut at ${r.cut_depth}`} title="Deal the hand">
-            <p className="max-w-2xl text-2xl text-muted">Tap <b className="text-ink">DEAL START</b>, then deal the hole cards, burn, and the flop.</p>
-            <BigButton className="h-24 w-full max-w-xl text-3xl" busy={busy} onClick={() => void runner.run(api.hand(r.hand_no, 'deal-start', `Deal start hand ${r.hand_no}`))} data-testid="btn-deal-start">
-              <Hand className="h-8 w-8" /> DEAL START
-            </BigButton>
+            <p className="max-w-2xl text-2xl text-muted">Press and hold <b className="text-ink">DEAL START</b>, then deal the hole cards, burn, and the flop.</p>
+            <HoldButton className="h-28 w-full max-w-xl text-3xl" busy={busy} onHold={() => void runner.run(api.hand(r.hand_no, 'deal-start', `Deal start hand ${r.hand_no}`))}>
+              <span className="inline-flex items-center gap-3" data-testid="btn-deal-start"><Hand className="h-8 w-8" /> DEAL START</span>
+            </HoldButton>
           </Stage>
         );
       } else {

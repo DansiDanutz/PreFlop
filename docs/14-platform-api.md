@@ -22,23 +22,28 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `GET /v1/tables/:id/rounds/current` · `GET /v1/rounds/:id` | Round state |
 | `GET /v1/rooms` · `GET /v1/rooms/:id` | Public rooms run by organizers. A room's `odds` map shows its own book |
 | `POST /v1/applications` | Website application forms for a club, partner or organizer |
-| `WS /v1/stream` | Subscribe with `{"subscribe":["lobby","table:<id>"]}`. Add `?token=` to receive your own bet events |
+| `WS /v1/stream` | Subscribe with `{"subscribe":["lobby","table:<id>"]}`. To receive your own bet events, send `{"type":"auth","token":"<session>"}` as the **first** frame (answered with `{"type":"auth","ok":true}`). Tokens in the URL are ignored |
 
 ## Player
 | Route | Purpose |
 |---|---|
-| `POST /v1/auth/register` · `login` · `logout` | Sessions. A new account gets 10,000 free play chips. `register` takes an optional `ref` (an agent code, docs/16 §4). `register` and `login` are rate-limited per IP; `login` also locks an email after 5 failures in 15 minutes (`429 login_locked`) |
-| `GET /v1/me` · `/v1/me/wallets` | Profile, memberships, and wallets. Wallets cover play, chips, diamonds per organization, fiat and stablecoins |
-| `PATCH /v1/me` | Change the display name (1–60 characters). Email and password changes are not part of this route |
+| `POST /v1/auth/register` · `login` · `logout` | Sessions. A new account gets 10,000 free play chips. `register` needs `date_of_birth` (YYYY-MM-DD, 18+, `403 underage`) and `country` (ISO 3166-1 alpha-2; `403 territory_blocked`), takes an optional `ref` (an agent code, docs/16 §4), and emails a verification link. `login` takes `otp` when the account has two-factor authentication (`401 mfa_required`, `401 invalid_otp`). `register` and `login` are rate-limited per IP; `login` also locks an email after 5 failures in 15 minutes (`429 login_locked`). See *Accounts and security* |
+| `GET /v1/me` · `/v1/me/wallets` | Profile, memberships, and wallets. Wallets cover play, chips, diamonds per organization, fiat and stablecoins. `/v1/me` also carries `date_of_birth`, `email_verified`, `mfa_enabled` and `mfa_enrollment_required` |
+| `PATCH /v1/me` | Change the display name (1–60 characters). `date_of_birth` and `country` can be added once when missing (`409 already_set` afterwards; support corrects them). Email changes are not part of this route |
+| `POST /v1/auth/verify-email {token}` · `POST /v1/me/resend-verification` | Email verification (single-use links, 48 h). `400 invalid_token`, `409 already_verified` |
+| `POST /v1/auth/forgot-password {email}` · `POST /v1/auth/reset-password {token, password}` | Password reset by email (1 h link). `forgot-password` always answers `200 {ok: true}`. A reset signs the account out everywhere |
+| `POST /v1/me/password {current, new}` | Change the password; signs out every other session. A wrong `current` counts toward the login lockout (`403 wrong_password`; the session stays valid) |
+| `POST /v1/me/mfa/setup` · `mfa/enable {code}` · `mfa/disable {code}` | Two-factor authentication (TOTP). `setup` returns `{secret, otpauth_uri}`; nothing changes at sign-in until `enable` confirms a code |
+| `GET /v1/me/session` | The play session of this sign-in: `started_at`, `minutes_played`, `limit_minutes`, `ends_at`, `limit_reached`, `reality_check_minutes`, and `results` (bets, staked, returned, open stakes and `net_minor` per wallet) |
 | `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user |
-| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History |
+| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History. A bet's `potential_payout_minor` is what settlement pays if it wins: the at-risk stake at the accepted odds, and 0 for a pool bet (its share is known only at settlement), as in the placement response |
 | `POST /v1/me/play/reset` | Resets play money at any time |
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
 | `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one waits 24 h. Self-exclusion ends the sessions |
 | `POST /v1/me/kyc` | KYC through the sandbox provider. The sandbox KYC, deposit and withdrawal rails return `503 provider_not_configured` when `NODE_ENV=production` |
 | `POST /v1/me/org-claims` | Redeem a single-use owner link (`claim_used`, `claim_expired`) |
-| `POST /v1/me/deposits` · `withdrawals` · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent) |
+| `POST /v1/me/deposits` · `withdrawals` · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent). Deposits also need the account checks in *Accounts and security*; withdrawals never do |
 | `POST /v1/me/chips/purchases` | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC |
 
 ## Provider (club tables)
@@ -73,8 +78,8 @@ Other provider routes:
 - `transfers`.
 
 **Club:**
-- `tables` (GET, POST);
-- `tables/:id/certification`: 9 items, each recording who and when, with an expiry. The three per-shift items expire after 12 h;
+- `tables` (GET, POST). A new table's round loss limit is set in its currency (`docs/04` §3). A `real-fiat` or `real-crypto` table starts **not approved** for real money (see *PreFlop team*);
+- `tables/:id/certification`: 9 items, each recording who and when, with an expiry. The three per-shift items expire after 12 h. Re-confirming per-shift items as OK keeps a real-money approval; any other change clears it, and so does a change of the table's mode, currency, kind or club;
 - `staff` (GET, POST to enroll an Ed25519 SPKI PEM) and `staff/:id/revoke`.
 
 **Organizers and clubs:**
@@ -85,7 +90,7 @@ Other provider routes:
 - `dilution`.
 
 **Partner:**
-- `api-clients` (the secret is shown once) and `api-clients/:id/revoke`;
+- `api-clients` (the secret is shown once) and `api-clients/:id/revoke`. Revoking a client also ends every session of the partner's players;
 - `webhooks`, `webhooks/:id/test` and DELETE;
 - `bets`;
 - `widget` (GET, PUT): settings plus an iframe snippet.
@@ -94,15 +99,18 @@ Other provider routes:
 | Route | Purpose |
 |---|---|
 | `POST /v1/partner/oauth/token` | Client credentials → bearer token (1 h). Rate-limited per IP |
-| `POST /v1/partner/players` · `/v1/partner/players/:ref/session` | Partner players, and the widget session token |
-| `POST /v1/partner/players/:ref/deposits` | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`) |
-| `POST /v1/partner/bets` · `GET /v1/partner/bets` | Bets on the `partner` channel |
+| `POST /v1/partner/players` · `/v1/partner/players/:ref/session` | Partner players, and the widget session token. Both take an optional `date_of_birth` (recorded once; `403 underage` under 18). The partner is the licensed operator: it verifies its players' age, identity and location |
+| `POST /v1/partner/players/:ref/deposits` (+ `Idempotency-Key`, 8–200 characters) | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`). A retry with the same key returns the original response and never credits twice; the same key with a different request gets `422 idempotency_mismatch`. No key: `400` |
+| `POST /v1/partner/bets` (+ `Idempotency-Key`) · `GET /v1/partner/bets` | Bets on the `partner` channel |
+
+**Suspension:** while a partner organization is not `active`, its tokens stop working, and its players get `403 partner_suspended` on every signed-in call and on bets. Suspending the partner (`PUT /v1/admin/orgs/:id/status`) also ends its players' sessions.
 
 **Webhooks:**
 - Payloads are signed with the header `X-PreFlop-Signature: t=<unix>, v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`.
 - Failed deliveries retry with exponential backoff for 24 h.
 - Deduplicate by `event_id`.
 - Delivery rows are written **in the same transaction** as the settlement or void that produced the event, so an event cannot be lost between the commit and the fan-out, whichever process (API or worker) settled the round. `round.voided` goes to every subscribed partner; `bet.settled` and `bet.voided` only to the partner whose player placed the bet.
+- A sender **claims** rows before sending (`for update skip locked`, status `sending`), so several workers never send one delivery twice. A claim older than 5 minutes is taken over, and the late sender's result is then ignored.
 
 ## PreFlop team (`/v1/admin/...`)
 **Monitoring:**
@@ -110,7 +118,8 @@ Other provider routes:
 - `metrics`: operational counters as JSON (see *Health and metrics*);
 - `alerts` and `alerts/:id/resolve`;
 - `review-queue`;
-- `rounds`, `rounds/:id/evidence` and `rounds/:id/void`. The team can void and refund, but **never settle by hand**;
+- `rounds`, `rounds/:id/evidence` and `rounds/:id/void`. The team can void and refund any round;
+- `rounds/:id/review` (`admin`, `ops`): `{action: settle, cards} | {action: void, reason}` on a **real-money** round in REVIEW. The club cannot settle its own real-money rounds (`403 platform_review_required` on the provider route). Other modes stay with the club's floor manager (`403 club_review_required` here);
 - `risk`: worst-case exposure per open round, plus the CUSUM outcome monitor.
 
 **Administration:**
@@ -121,7 +130,8 @@ Other provider routes:
   - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
 - **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
 - `tables` and `tables/:id/status`;
-- `settings` (`modes_enabled`, `physical_play_enabled`, `territories`).
+- `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a table for real money. Until approved, real-money bets there get `403 table_not_approved`, and so do bets of a real-money tournament on any table, including play-money tables. Audited as `table.real_money_approved` / `table.real_money_revoked`;
+- `settings` (`modes_enabled`, `physical_play_enabled`, `territories`, `require_staff_mfa`). `territories` must be `{"blocked": [...], "real_money_allowed": [...]}` and `require_staff_mfa` a boolean (`422 invalid_value`).
 
 **Finance and audit:**
 - `ledger`;
@@ -135,9 +145,58 @@ Other provider routes:
 | `429 rate_limited` | More than `RATE_LIMIT_AUTH_PER_MIN` (20) calls a minute to `POST /v1/auth/login`, or separately to `/v1/auth/register` | Per client IP, per API instance |
 | `429 rate_limited` | More than `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` (30) calls a minute to `POST /v1/partner/oauth/token` | Per client IP, per API instance |
 | `429 rate_limited` | More than `RATE_LIMIT_BETS_PER_MIN` (120) calls a minute to `POST /v1/bets` | Per signed-in user, per API instance |
-| `429 login_locked` | 5 failed logins for one email within 15 minutes. The right password is refused too until the oldest of those failures is 15 minutes old; `Retry-After` says when. A successful login clears the count. Unknown emails behave the same | Per email, **all instances** (stored in Postgres) |
+| `429 rate_limited` | More than `RATE_LIMIT_AUTH_PER_MIN` (20) calls a minute to `verify-email`, `forgot-password` and `reset-password` together | Per client IP, per API instance |
+| `429 rate_limited` | More than 3 emails in 15 minutes from `forgot-password` (per address) or `resend-verification` (per account) | Per address or account, per API instance |
+| `429 rate_limited` | More than 10 codes in 15 minutes to `mfa/enable` or `mfa/disable` | Per user, per API instance |
+| `429 login_locked` | 5 failed logins for one email within 15 minutes. A wrong one-time code and a wrong current password on `POST /v1/me/password` count as failures. The right password is refused too until the oldest of those failures is 15 minutes old; `Retry-After` says when. A successful login clears the count. Unknown emails behave the same | Per email, **all instances** (stored in Postgres) |
 
 The rate limits are fixed one-minute windows kept in each API process, so behind a load balancer with N instances a client can get up to N × the limit. Set `TRUST_PROXY=true` behind a load balancer, otherwise every client shares the balancer's address.
+
+Betting limits and gates (`docs/04` §3):
+
+| Status · `type` | When |
+|---|---|
+| `422 invalid_stake` | Stake above the currency's maximum (EUR or USDT/USDC 10,000; PLAY, CHIP, DIAMOND 1,000,000) |
+| `422 limit_exceeded` | One bet's payout above the table's round loss limit, or the round's worst case would pass it |
+| `403 user_round_limit` | The player's bets on this round would together pay more than `max_user_round_payout_minor` (default: the round loss limit) |
+| `403 table_not_approved` | Real-money bet at a table the PreFlop team has not approved |
+| `403 partner_suspended` | The player belongs to a partner that is not active |
+
+## Accounts and security
+Real money is off today. These rules are in place so it can be switched on.
+
+**Age.** Registration requires a date of birth and refuses anyone under 18 (`403 underage`). Age is counted in whole years on the UTC calendar; someone born on 29 February comes of age on 1 March. Accounts created before the age gate have no date of birth: they can add it once (`PATCH /v1/me`) and cannot use real money until they do. A recorded age under 18 also refuses every bet.
+
+**Territories.** `settings.territories` is `{"blocked": ["US"], "real_money_allowed": ["MT"]}` (ISO 3166-1 alpha-2, upper case; a country cannot be in both). Registration requires a country. A blocked country cannot register or bet at all. Real money is accepted only from a country in `real_money_allowed`; free chips work from any country that is not blocked. **The country is self-declared** until a KYC or geolocation provider confirms it. `countryHint()` in `apps/api/src/lib/accounts.ts` is where that signal plugs in; the API does not read `cf-ipcountry` or similar headers today.
+
+**Real-money checks.** A real-money bet, real-money tournament entry or deposit needs, after the mode switch and KYC: a date of birth (`403 dob_required`) showing 18+ (`403 underage`), a verified email (`403 email_unverified`), a country that is not blocked (`403 territory_blocked`) and is licensed (`403 territory_not_licensed`). Partner players skip the email and licensed-country checks (their operator is responsible), but an under-18 date of birth or a blocked country still refuses them. Withdrawals are never held back by these checks.
+
+**Session limit and reality checks.** A play session starts at sign-in (`sessions.play_started_at`). With a `session_minutes` limit, bets (`POST /v1/bets`, tournament bets) are refused with `403 session_limit` once that many minutes have passed. Betting resumes in a new session: the player signs out and in again, and the new session starts at once (no enforced pause; the limit makes the player stop and decide). `GET /v1/me/session` drives the clock in the player app and a reality check every `reality_check_minutes` (the limit, or 60): time played, net result this session, *Continue* or *Take a break* (sign out).
+
+**Email.** Verification (48 h) and reset (1 h) links are random tokens; only their SHA-256 is stored (`email_tokens`), each works once, and only while the account keeps the address it was sent to. A new link replaces the earlier unused one. Messages go to `email_outbox` in the same transaction and the worker sends them. No email provider is integrated: outside production the log transport prints each message (with its link) to stdout; in production messages stay queued and the API warns at start. To plug a provider, implement `MailTransport` and return it from `mailTransportFor()` in `apps/api/src/lib/mailer.ts` (an HTTP mail API needs only `fetch`); `MAIL_FROM`, `SMTP_URL` and `WEB_URL` (the link base) are read into `config.mail`. A sent message keeps its row but loses its body.
+
+**Passwords.** Player passwords are 8–200 characters. PreFlop team accounts (`platform_role` set) need a strong one on change and reset (12+ characters, 3 character classes, no common words; `422 weak_password`). A reset signs out every session and also verifies the email; a change signs out every other session.
+
+**Two-factor authentication (TOTP, RFC 6238).** HMAC-SHA1, 6 digits, 30-second steps, ±1 step accepted, and a step is never accepted twice (`user_mfa.last_step`). With 2FA on, `POST /v1/auth/login` without `otp` answers `401 mfa_required` and issues no session; that answer neither records nor clears a failure. A wrong or replayed code is `401 invalid_otp` and counts toward the lockout. Any account can enrol; the console offers it to the PreFlop team. The secret is stored as is in `user_mfa.secret`: no encryption key is configured yet; encrypt it with a KMS-held key before real money.
+
+**`require_staff_mfa`** (default `false`, console admin Settings). When `true`, a PreFlop team account without 2FA gets `403 mfa_enrollment_required` everywhere except `GET /v1/me`, `POST /v1/me/mfa/setup` and `POST /v1/me/mfa/enable`; the console sends it to its enrolment page. Organization members (clubs, partners, organizers) and players are not affected. Turn it on once the team has enrolled.
+
+| Status · `type` | Meaning |
+|---|---|
+| `403 underage` | Under 18 (registration, partner players, bets, real money) |
+| `403 dob_required` | Real money without a date of birth on file |
+| `403 email_unverified` | Real money before the email is verified |
+| `403 territory_blocked` | Registration or a bet from a blocked country |
+| `403 territory_not_licensed` | Real money from a country not in `real_money_allowed` |
+| `403 session_limit` | The `session_minutes` limit of this session is reached (`ends_at` in the body) |
+| `403 mfa_enrollment_required` | Team account without 2FA while `require_staff_mfa` is on |
+| `401 mfa_required` · `401 invalid_otp` | Sign-in needs a one-time code; the code is wrong, stale or replayed |
+| `422 invalid_otp` | Wrong code on `mfa/enable` or `mfa/disable` |
+| `400 invalid_token` | Email link unknown, used, expired or for an old address |
+| `409 already_verified` · `409 email_not_applicable` | Resend for a verified address, or for a partner player |
+| `409 already_set` | `PATCH /v1/me` changing a recorded date of birth or country |
+| `409 mfa_already_enabled` · `mfa_not_set_up` · `mfa_not_enabled` | 2FA state does not allow the call |
+| `422 weak_password` · `same_password` | Team password too weak; new password equals the current one |
 
 ## Health and metrics
 - `GET /v1/health` is the liveness probe and `GET /v1/health/ready` the readiness probe (see *Public*). Every worker loop (`RUN_WORKER=true` in the API, or `pnpm --filter @preflop/api worker`) upserts a row in `worker_heartbeats` once a second.
@@ -146,7 +205,7 @@ The rate limits are fixed one-minute windows kept in each API process, so behind
 | Field | Meaning |
 |---|---|
 | `outbox.pending` · `outbox.oldest_pending_age_s` | Outbox lag: jobs not done yet, and the age of the oldest |
-| `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog, and deliveries that gave up after 24 h |
+| `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog (including deliveries being sent), and deliveries that gave up after 24 h |
 | `alerts.open` · `alerts.open_critical` | Unresolved alerts |
 | `rounds_by_state` | Count of rounds per state (`OPEN`, `LOCKED`, …, `SETTLED`, `VOID`) |
 | `sweeper_voids_last_hour` | Rounds the deadline sweeper voided in the last hour |

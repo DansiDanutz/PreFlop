@@ -1,12 +1,13 @@
 import type { Limits, Wallet } from '@preflop/client';
 import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney } from '@preflop/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Briefcase, Check, ChevronDown, Copy, Network, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
-import { type FormEvent, type ReactNode, useState } from 'react';
+import { Briefcase, Check, ChevronDown, Copy, KeyRound, Network, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
+import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { PageHeader, initials } from '../../components/AppShell.tsx';
 import { Field, Notice, Select, Sheet, Skeleton, TextArea } from '../../components/ui.tsx';
 import { api, setToken } from '../../lib/api.ts';
+import { countryOptions, dobProblem } from '../../lib/account.ts';
 import { errorText, isNotImplemented } from '../../lib/problems.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { qk, useBook, useFavorites, useMe, useRealMoney, useResetPlay } from '../../lib/queries.ts';
@@ -101,7 +102,7 @@ export function ProfilePage() {
       </div>
 
       {money.length > 0 && (
-        <WalletCard title="Money wallets" wallets={money} note="Real-money balance. Play responsibly; deposits and withdrawals are under Identity & payments." />
+        <WalletCard title="Money wallets" wallets={money} note="Real-money balance. Play responsibly. Deposits and withdrawals open in the app when real money is enabled for your account." />
       )}
       {organizer.length > 0 && (
         <WalletCard title="Organizer wallets" wallets={organizer} note="Chips and diamonds from organizers have no cash value." />
@@ -113,6 +114,12 @@ export function ProfilePage() {
         <AgentSection />
       </Section>
       <Section icon={<Briefcase className="h-5 w-5" />} title="Become an organizer" subtitle="Run your own room with chips or diamonds"><OrganizerForm email={u?.email ?? ''} name={u?.display_name ?? ''} /></Section>
+      {u && !u.partner_id && (
+        <Section icon={<KeyRound className="h-5 w-5" />} title="Sign-in & security" subtitle={u.date_of_birth && u.country ? 'Password and your details' : 'Add your missing details'}
+          defaultOpen={!u.date_of_birth || !u.country}>
+          <Security dob={u.date_of_birth} country={u.country} />
+        </Section>
+      )}
       <Section icon={<HeartHandshake className="h-5 w-5" />} title="Responsible play" subtitle="Limits, time-outs and self-exclusion"><ResponsiblePlay /></Section>
       <Section icon={<ShieldCheck className="h-5 w-5" />} title="Identity & payments" subtitle={real ? 'Verify your identity, deposit and withdraw' : 'Real money is switched off'}>
         <RealMoney enabled={real} kyc={u?.kyc_status ?? 'none'} />
@@ -313,7 +320,7 @@ function ResponsiblePlay() {
       }}>
         <Field label="Daily loss limit (free chips)" inputMode="numeric" disabled={unavailable} placeholder={cur?.loss_day_minor != null ? String(cur.loss_day_minor) : 'No limit'} value={loss} onChange={(e) => setLoss(e.target.value.replace(/\D/g, ''))} />
         <Field label="Daily deposit limit" inputMode="numeric" disabled={unavailable} placeholder={cur?.deposit_day_minor != null ? String(cur.deposit_day_minor) : 'No limit'} value={deposit} onChange={(e) => setDeposit(e.target.value.replace(/\D/g, ''))} hint="Applies to real-money deposits when they are available." />
-        <Field label="Session reminder (minutes)" inputMode="numeric" disabled={unavailable} placeholder={cur?.session_minutes != null ? String(cur.session_minutes) : 'Off'} value={session} onChange={(e) => setSession(e.target.value.replace(/\D/g, ''))} />
+        <Field label="Session time limit (minutes)" hint="A reminder at every interval; when the time is up, predictions stop until you sign in again. 5 minutes or more." inputMode="numeric" disabled={unavailable} placeholder={cur?.session_minutes != null ? String(cur.session_minutes) : 'Off'} value={session} onChange={(e) => setSession(e.target.value.replace(/\D/g, ''))} />
         <Button type="submit" variant="secondary" className="w-full" disabled={unavailable || save.isPending}>Save limits</Button>
         {save.isSuccess && <Notice tone="accent">Limits saved.</Notice>}
         {save.isError && <Notice tone="warn">{errorText(save.error)}</Notice>}
@@ -379,6 +386,53 @@ function RealMoney({ enabled, kyc }: { enabled: boolean; kyc: string }) {
         )}
         <p className="mt-2 text-xs text-faint">Deposits require verified identity and respect your limits.</p>
       </div>
+    </div>
+  );
+}
+
+/** Change password (signs out other devices), and the date of birth / country for accounts created without them (set once). */
+function Security({ dob, country }: { dob: string | null; country: string | null }) {
+  const qc = useQueryClient();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const change = useMutation({
+    mutationFn: () => api.changePassword(current, next),
+    onSuccess: () => { setCurrent(''); setNext(''); },
+  });
+  const [newDob, setNewDob] = useState('');
+  const [newCountry, setNewCountry] = useState('');
+  const countries = useMemo(() => countryOptions(), []);
+  const details = useMutation({
+    mutationFn: () => api.updateMe({ ...(dob ? {} : { date_of_birth: newDob }), ...(country ? {} : { country: newCountry }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.me }),
+  });
+  const dobErr = dob ? null : newDob ? dobProblem(newDob) : null;
+  const canSave = (!!dob || (!!newDob && !dobErr)) && (!!country || !!newCountry);
+  return (
+    <div className="space-y-6">
+      {(!dob || !country) && (
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (canSave) details.mutate(); }}>
+          <p className="text-sm text-muted">We need these once. They can only be corrected by support afterwards.</p>
+          {!dob && <Field label="Date of birth" type="date" value={newDob} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setNewDob(e.target.value)} error={dobErr} />}
+          {!country && (
+            <Select label="Country of residence" value={newCountry} onChange={(e) => setNewCountry(e.target.value)}>
+              <option value="" disabled>Choose your country</option>
+              {countries.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
+            </Select>
+          )}
+          <Button type="submit" variant="secondary" className="w-full" disabled={!canSave || details.isPending}>Save my details</Button>
+          {details.isError && <Notice tone="warn">{errorText(details.error)}</Notice>}
+        </form>
+      )}
+      {dob && country && <p className="text-sm text-muted">Date of birth {dob} · country {country}. Contact support to correct them.</p>}
+      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (current && next.length >= 8) change.mutate(); }}>
+        <h3 className="font-semibold">Change password</h3>
+        <Field label="Current password" type="password" autoComplete="current-password" value={current} onChange={(e) => { setCurrent(e.target.value); change.reset(); }} />
+        <Field label="New password" type="password" autoComplete="new-password" minLength={8} value={next} onChange={(e) => { setNext(e.target.value); change.reset(); }} hint="At least 8 characters. Other devices are signed out." />
+        <Button type="submit" variant="secondary" className="w-full" disabled={!current || next.length < 8 || change.isPending}>Change password</Button>
+        {change.isSuccess && <Notice tone="accent">Password changed. Other devices are signed out.</Notice>}
+        {change.isError && <Notice tone="warn">{errorText(change.error)}</Notice>}
+      </form>
     </div>
   );
 }

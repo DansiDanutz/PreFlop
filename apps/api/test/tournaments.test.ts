@@ -6,7 +6,7 @@ import { verifyAuditChain } from '../src/lib/audit.ts';
 import { tx } from '../src/lib/db.ts';
 import { balance } from '../src/lib/ledger.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, walletOf } from './helpers.ts';
+import { type Harness, harness, ledgerSums, realMoneyReady, walletOf } from './helpers.ts';
 
 /** Tournaments (docs/17). */
 
@@ -53,7 +53,7 @@ afterAll(async () => h?.close());
 
 let un = 0;
 async function user(name: string) {
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email: `${name.toLowerCase()}-${++un}-${Date.now()}@tn.dev`, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email: `${name.toLowerCase()}-${++un}-${Date.now()}@tn.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string };
 }
 const odds = (sel: string) => price(statsOf(sel), 'direct').oddsCenti;
@@ -189,8 +189,12 @@ describe('tournament lifecycle', () => {
       const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Real freeroll', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 0, added_minor: 1_000, bets_allowed: 3 }))).body;
       const [a, b] = [await user('Ana'), await user('Bo')];
       await h.db.query(`update users set kyc_status = 'verified' where id = any($1)`, [[a.id, b.id]]);
+      await realMoneyReady(h, a.id, b.id);
       for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
       const r1 = await openRound();
+      // A real-money tournament bets only on a table the PreFlop team approved, even a play-money one.
+      expect((await bet(t.id, a.token, r1.id, 'paired-board:no', 1_000)).body.type).toBe('table_not_approved');
+      expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: true })).status).toBe(200);
       await bet(t.id, a.token, r1.id, 'paired-board:no', 1_000);
       await bet(t.id, b.token, r1.id, 'paired-board:yes', 1_000);
       await finishRound(r1.n);
@@ -226,6 +230,7 @@ describe('tournament lifecycle', () => {
     const funded = async (name: string) => {
       const p = await user(name);
       await h.api('POST', '/v1/me/kyc', p.token, {});
+      await realMoneyReady(h, p.id);
       expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' })).status).toBe(201);
       return p;
     };
@@ -261,6 +266,7 @@ describe('tournament lifecycle', () => {
     try {
       const p = await user('Limits');
       await h.api('POST', '/v1/me/kyc', p.token, {});
+      await realMoneyReady(h, p.id);
       await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
       expect((await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 })).status).toBe(200);
       const mk = async (name: string) => (await h.api('POST', '/v1/admin/tournaments', admin, running({ name, mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body.id as string;
@@ -292,12 +298,15 @@ describe('tournament lifecycle', () => {
     try {
       const p = await user('Racer');
       await h.api('POST', '/v1/me/kyc', p.token, {});
+      await realMoneyReady(h, p.id);
       await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
       await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 });
       const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Race', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body;
       const r = await openRound();
       // The simulated tables play free chips; make this flop a real-money one for the race.
       await h.db.query(`update rounds set mode = 'real-fiat', currency = 'EUR' where id = $1`, [r.id]);
+      // ...and a real-money bet needs a PreFlop-approved table (the admin route approves real-mode tables only).
+      await h.db.query(`update poker_tables set real_money_approved_at = now(), real_money_approved_by = 'test' where id = 'sim-1'`);
       const sel = 'paired-board:no';
       const [reg, b] = await Promise.all([
         h.api('POST', `/v1/tournaments/${t.id}/register`, p.token),
@@ -308,7 +317,10 @@ describe('tournament lifecycle', () => {
       expect((reg.status === 200 ? b : reg).body.type).toBe('limit_reached');
       await h.api('POST', `/v1/admin/rounds/${r.id}/void`, admin, { reason: 'race test' });
       await h.api('POST', `/v1/admin/tournaments/${t.id}/cancel`, admin, { reason: 'race test' });
-    } finally { await modes(false); }
+    } finally {
+      await modes(false);
+      await h.db.query(`update poker_tables set real_money_approved_at = null, real_money_approved_by = null where id = 'sim-1'`);
+    }
   });
 
   it('refuses real money while it is off, closed-loop modes from the team, and bad settings', async () => {
@@ -319,5 +331,36 @@ describe('tournament lifecycle', () => {
     expect((await h.api('POST', '/v1/admin/tournaments', admin, running({ min_stake: 20_000 }))).body.type).toBe('invalid_stake');
     const player = await user('Nope');
     expect((await h.api('POST', '/v1/admin/tournaments', player.token, running())).status).toBe(403);
+  });
+});
+
+describe('real-money tournament bets on a play table', () => {
+  it('make the round a PreFlop decision: the club can neither settle its review nor void it after the deal', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    await modes(true);
+    try {
+      const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Real review', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 0, added_minor: 1_000, bets_allowed: 3 }))).body;
+      const [a, b] = [await user('Rev'), await user('Iew')];
+      await h.db.query(`update users set kyc_status = 'verified' where id = any($1)`, [[a.id, b.id]]);
+      await realMoneyReady(h, a.id, b.id);
+      for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
+      expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: true })).status).toBe(200);
+      const r = await openRound();
+      const placed = await bet(t.id, a.token, r.id, 'paired-board:no', 1_000);
+      expect(placed.status, JSON.stringify(placed.body)).toBe(201);
+      await h.db.query(`update rounds set state = 'REVIEW', review_started_at = clock_timestamp(), review_reasons = '["test"]' where id = $1`, [r.id]);
+
+      const fm = await h.sim.call('floor_manager', 'POST', `/v1/provider/rounds/${r.id}/review`, { action: 'settle', cards: ['Ah', 'Kd', '2s'] });
+      expect([fm.status, fm.body.type]).toEqual([403, 'platform_review_required']);
+      const v = await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${r.n}/void`, { reason: 'misdeal' });
+      expect([v.status, v.body.type]).toEqual([403, 'platform_review_required']);
+
+      const ok = await h.api('POST', `/v1/admin/rounds/${r.id}/review`, admin, { action: 'void', reason: 'team decision' });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect((await h.db.query('select status from tournament_bets where round_id = $1', [r.id])).rows.map((x) => x.status)).toEqual(['void']);
+    } finally {
+      await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: false });
+      await modes(false);
+    }
   });
 });

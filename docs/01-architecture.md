@@ -139,4 +139,4 @@ A wrong result found after settlement goes through a **correction workflow**: co
 - 99.9% availability while tables are live. Each round fails safe: on any doubt it goes to PAUSED or VOID and refunds.
 - Bet placement p99 under 100 ms. Settlement of a round under 2 s after `RESULT_VERIFIED`.
 - Security: OWASP ASVS L2, mTLS or HMAC for clubs and partners, secrets in KMS, least-privilege staff roles, every back-office action audited.
-- Responsible gaming: deposit, loss and session limits, reality checks, self-exclusion, and a minimum age check at onboarding.
+- Responsible gaming: deposit, loss and session limits, reality checks, self-exclusion, and a minimum age check at onboarding. Implemented as described in `docs/14` (*Accounts and security*), with territories, email verification and two-factor authentication for staff.

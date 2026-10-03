@@ -12,7 +12,7 @@ import { ClubsPage } from './pages/app/Clubs.tsx';
 import { LobbyPage } from './pages/app/Lobby.tsx';
 import { ProfilePage } from './pages/app/Profile.tsx';
 import { TablePage } from './pages/app/Table.tsx';
-import { LoginPage, RegisterPage } from './pages/Auth.tsx';
+import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './pages/Auth.tsx';
 import { EmbedTablePage } from './pages/Embed.tsx';
 import { ForClubsPage, ForOrganizersPage, ForPartnersPage } from './pages/site/Business.tsx';
 import { LandingPage } from './pages/site/Landing.tsx';
@@ -45,6 +45,9 @@ export function App() {
         </Route>
         <Route path="login" element={<LoginPage />} />
         <Route path="register" element={<RegisterPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="reset-password" element={<ResetPasswordPage />} />
+        <Route path="verify-email" element={<VerifyEmailPage />} />
         <Route path="app" element={<RequireAuth><AppLayout /></RequireAuth>}>
           <Route index element={<LobbyPage />} />
           <Route path="clubs" element={<ClubsPage />} />
@@ -61,6 +64,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage inApp />} />
         </Route>
         <Route path="embed/table/:id" element={<EmbedTablePage />} />
+        <Route path="embed" element={<EmbedTablePage />} />
       </Routes>
     </>
   );

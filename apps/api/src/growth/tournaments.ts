@@ -1,10 +1,11 @@
 import { type Flop, MODES, type PlayMode, price, settle } from '@preflop/odds-engine';
-import { statsOf } from '../bets/service.ts';
+import { statsOf, tableNotApproved } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
@@ -14,7 +15,7 @@ import { CLOSED_LOOP_MODES, REAL_MODES, assertBoardModeAllowed, modeEnabled } fr
  * Tournaments (docs/17). A buy-in buys a stack of tournament points and a fixed number of bets on
  * live flops. Points never touch the ledger: only buy-ins, the added prize, the fee, prizes and
  * refunds are money, each a balanced post with a unique (kind, ref). Lock order everywhere:
- * round → tournament (shared) → entry for bets, round → entry for settlement, and
+ * round → table (shared) → tournament (shared) → entry for bets, round → table → entry for settlement, and
  * tournament → entry / wallet for registration, completion and cancelling.
  */
 
@@ -163,6 +164,7 @@ export async function register(c: Tx, id: string, userId: string, ev: EventBatch
   const u = (await c.query<{ status: string; kyc_status: string }>('select status, kyc_status from users where id = $1', [userId])).rows[0];
   if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'this account cannot play');
   if (REAL_MODES.has(t.mode) && u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required for real money');
+  if (REAL_MODES.has(t.mode)) await assertRealMoneyAccount(c, userId); // a real-money entry: age, verified email, territory
   if ((await c.query('select 1 from tournament_entries where tournament_id = $1 and user_id = $2', [id, userId])).rowCount) throw conflict('already_registered', 'you are already registered');
   const count = Number((await c.query<{ n: string }>('select count(*) as n from tournament_entries where tournament_id = $1', [id])).rows[0]!.n);
   if (t.max_entries != null && count >= t.max_entries) throw conflict('tournament_full', 'the tournament is full');
@@ -221,13 +223,17 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
     const r = (await c.query<{ state: string; table_id: string }>('select state, table_id from rounds where id = $1 for update', [i.roundId])).rows[0];
     if (!r) throw notFound('round');
     if (r.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
-    const table = (await c.query<TableRow>('select * from poker_tables where id = $1', [r.table_id])).rows[0]!;
+    // Shared lock on the table (round → table, as settlement): a pause or an approval revoke waits for us.
+    const table = (await c.query<TableRow>('select * from poker_tables where id = $1 for share', [r.table_id])).rows[0]!;
     const ready = await tableReadiness(c, table);
     if (!ready.ok) throw conflict('table_not_ready', ready.problems.join('; '));
     // Shared lock: completion and cancelling (exclusive) wait for bets in flight, and vice versa.
     const t = (await c.query<TournamentRow>('select * from tournaments where id = $1 for share', [id])).rows[0];
     if (!t) throw notFound('tournament');
     if (phaseOf(t, now) !== 'running') throw conflict('tournament_not_running', 'bets are accepted only while the tournament runs');
+    // Real money (the table's or the tournament's) is bet only on tables the PreFlop team approved
+    // (docs/14): a real-money tournament can't route around the gate through a play-money table.
+    if ((REAL_MODES.has(table.mode as PlayMode) || REAL_MODES.has(t.mode)) && !table.real_money_approved_at) throw tableNotApproved();
     // Eligibility is rechecked on every bet, not only at registration: the mode may have been switched
     // off, or the account suspended, self-excluded or (real money) its identity check rejected since.
     if (!(await modeEnabled(c, t.mode))) throw forbidden('mode_disabled', `${t.mode} is switched off`);

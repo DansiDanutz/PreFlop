@@ -98,6 +98,30 @@ export async function verifySignedRequest(db: Db, r: { method: string; url: stri
   return principal;
 }
 
+/**
+ * Consumed nonces are kept only while a request carrying them could still pass the timestamp
+ * check. 10 minutes is twenty times the ±30 s window, so pruning can never re-open a replay.
+ */
+export const NONCE_RETENTION_MS = 10 * 60_000;
+
+/**
+ * Deletes nonces older than the retention, in batches (short statements, no long lock on the
+ * table), up to maxBatches per call. Run by the worker loop. Returns the number deleted.
+ */
+export async function pruneNonces(db: Db, o: { retentionMs?: number; batch?: number; maxBatches?: number } = {}): Promise<number> {
+  const retention = Math.max(o.retentionMs ?? NONCE_RETENTION_MS, 2 * MAX_SKEW_MS);
+  const batch = o.batch ?? 5000;
+  let total = 0;
+  for (let i = 0; i < (o.maxBatches ?? 20); i++) {
+    const r = await db.query(
+      `delete from request_nonces where ctid = any(array(
+         select ctid from request_nonces where seen_at < now() - ($1 || ' milliseconds')::interval limit $2))`, [String(retention), batch]);
+    total += r.rowCount ?? 0;
+    if ((r.rowCount ?? 0) < batch) break;
+  }
+  return total;
+}
+
 /** The `:t` in the path must equal the credential's table (docs/13 §7). */
 export function assertTableScope(p: Principal, tableId: string): void {
   if (p.tableId !== tableId) throw forbidden('forbidden_table', 'credential is scoped to another table');

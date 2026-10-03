@@ -1,6 +1,7 @@
 import { type KeyObject, generateKeyPairSync } from 'node:crypto';
 import { hashPassword } from './auth/players.ts';
 import type { Tx } from './lib/db.ts';
+import { defaultRoundLossMinor } from './lib/limits.ts';
 import { CERT_FLAGS } from './rounds/readiness.ts';
 
 export interface Keypair { privateKey: KeyObject; publicPem: string; privatePem: string }
@@ -34,14 +35,17 @@ export interface SimTableKeys {
  * credentials held by three different people. Simulated tables are the only ones allowed to run
  * while physical-table play is disabled.
  */
-export async function seedSimTable(c: Tx, o: { clubId: string; tableId: string; name: string; mode?: string; currency?: string; maxRoundLossMinor?: number }): Promise<SimTableKeys> {
+export async function seedSimTable(c: Tx, o: { clubId: string; tableId: string; name: string; mode?: string; currency?: string; maxRoundLossMinor?: number; realMoneyApprovedBy?: string }): Promise<SimTableKeys> {
   const device = keypair(), shuffler = keypair();
   const deviceId = `box-${o.tableId}`;
+  const currency = o.currency ?? 'PLAY';
+  // A real-money table is approved only when the caller names who approves it (tests, demos).
   await c.query(
-    `insert into poker_tables (id, club_id, name, mode, currency, kind, certification, max_round_loss_minor)
-     values ($1, $2, $3, $4, $5, 'simulated', $6, $7)
+    `insert into poker_tables (id, club_id, name, mode, currency, kind, certification, max_round_loss_minor, real_money_approved_at, real_money_approved_by)
+     values ($1, $2, $3, $4, $5, 'simulated', $6, $7, case when $8::text is null then null else now() end, $8)
      on conflict (id) do update set certification = excluded.certification, status = 'active', pause_reason = null`,
-    [o.tableId, o.clubId, o.name, o.mode ?? 'play', o.currency ?? 'PLAY', JSON.stringify(fullCertification('system:seed')), o.maxRoundLossMinor ?? 5_000_000]);
+    [o.tableId, o.clubId, o.name, o.mode ?? 'play', currency, JSON.stringify(fullCertification('system:seed')), o.maxRoundLossMinor ?? defaultRoundLossMinor(currency),
+      o.realMoneyApprovedBy ?? null]);
   await c.query(
     `insert into devices (id, table_id, public_key_pem, shuffler_public_key_pem) values ($1, $2, $3, $4)
      on conflict (id) do update set public_key_pem = excluded.public_key_pem, shuffler_public_key_pem = excluded.shuffler_public_key_pem, revoked = false`,

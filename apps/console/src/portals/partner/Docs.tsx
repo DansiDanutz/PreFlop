@@ -33,10 +33,10 @@ export async function preflopToken(): Promise<string> {
   },
   {
     id: 'session', title: '2. Create a player session (for the widget)',
-    text: 'Players are identified by your own player_ref. A session token lets the widget iframe act for that player; pass it as ?token= in the embed URL. Never send your access token to a browser.',
+    text: 'Players are identified by your own player_ref. A session token lets the widget iframe act for that player; pass it in the URL fragment (#token=…), which browsers never send to a server, so it stays out of access logs. Never send your access token to a browser.',
     curl: `curl -s -X POST ${base}/v1/partner/players/player-123/session \\
   -H "authorization: Bearer $PREFLOP_TOKEN"
-# → {"token":"…","user_id":"…"}   use as <iframe src=".../embed/table/<tableId>?token=…">`,
+# → {"token":"…","user_id":"…"}   use as <iframe src=".../embed/table/<tableId>?accent=…#token=…">`,
     typescript: `export async function playerSession(token: string, playerRef: string) {
   const res = await fetch(\`\${BASE}/v1/partner/players/\${encodeURIComponent(playerRef)}/session\`, {
     method: 'POST',

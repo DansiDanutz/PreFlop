@@ -1,21 +1,24 @@
-import { type Channel, payoutMinor } from '@preflop/odds-engine';
+import { type Channel } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
-import { bearer, createSession, endSession, hashPassword, verifyPassword } from '../auth/players.ts';
+import { bearer, createSession, endSession, hashPassword, tokenHash, verifyPassword } from '../auth/players.ts';
 import { placeRoomBet } from '../bets/rooms.ts';
-import { placeBet, resetPlay } from '../bets/service.ts';
+import { placeBet, potentialPayoutMinor, resetPlay } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
-import { ApiError, badRequest, conflict } from '../lib/errors.ts';
+import { Country, DateOfBirth, MIN_AGE, assertMayBet, assertSessionTime, isAdult, loadTerritories } from '../lib/accounts.ts';
+import { sendVerification } from '../lib/emailTokens.ts';
+import { ApiError, badRequest, conflict, unauthorized } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
-import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
+import { LOGIN_LOCKOUT, LoginRefusal, guardedLogin } from '../lib/loginLockout.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
 import { bindReferral } from '../growth/agents.ts';
 import { redeemOwnerClaim } from '../lib/ownerClaims.ts';
+import { checkOtp, staffMfaRequired } from './security.ts';
 
 const Register = z.object({
   // Partner players get placeholder addresses under .partner.preflop; nobody can register one.
@@ -23,10 +26,17 @@ const Register = z.object({
     .refine((s) => !/\.partner\.preflop$/.test(s), 'this address is reserved'),
   password: z.string().min(8).max(200),
   display_name: z.string().min(1).max(60),
-  country: z.string().length(2).optional(),
+  // Age gate (18+, checked here on the server) and the self-declared country of residence.
+  date_of_birth: DateOfBirth,
+  country: Country,
   ref: z.string().trim().max(20).optional(),
 });
-const Login = z.object({ email: z.string().email().transform((s) => s.toLowerCase()), password: z.string() });
+const Login = z.object({
+  email: z.string().email().transform((s) => s.toLowerCase()),
+  password: z.string(),
+  // One-time code, required when the account has two-factor authentication on.
+  otp: z.string().trim().max(10).optional(),
+});
 const Bet = z.object({
   round_id: z.string(),
   selection_id: z.string(),
@@ -66,16 +76,21 @@ async function assertRgAllows(ctx: AppContext, userId: string, roundId: string, 
 export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/auth/register', { preHandler: perIp(ctx.limits.register) }, async (req, reply) => {
     const b = Register.parse(req.body);
+    if (!isAdult(b.date_of_birth)) throw new ApiError(403, 'underage', `PreFlop is for players aged ${MIN_AGE} or over`);
+    // The country is self-declared until a KYC or geolocation provider confirms it (lib/accounts.ts).
+    if ((await loadTerritories(ctx.db)).blocked.includes(b.country)) throw new ApiError(403, 'territory_blocked', 'PreFlop is not available in your country');
     const id = newId('u');
     const hash = await hashPassword(b.password);
     const token = await tx(ctx.db, async (c) => {
       const exists = await c.query('select 1 from users where email = $1', [b.email]);
       if (exists.rowCount) throw conflict('email_taken', 'an account with this email exists');
-      await c.query('insert into users (id, email, password_hash, display_name, country) values ($1, $2, $3, $4, $5)', [id, b.email, hash, b.display_name, b.country ?? null]);
+      await c.query('insert into users (id, email, password_hash, display_name, country, date_of_birth) values ($1, $2, $3, $4, $5, $6)',
+        [id, b.email, hash, b.display_name, b.country, b.date_of_birth]);
       // Every account starts with free play money (no cash value, no fees).
       await post(c, 'play.grant', id, [{ from: acct('PreFlop', 'play-issuance', 'play', 'PLAY'), to: acct(id, 'wallet', 'play', 'PLAY'), amountMinor: ctx.config.playStartMinor }]);
       await audit(c, { type: 'user.registered', userId: id });
       await bindReferral(c, id, b.ref);
+      await sendVerification(c, ctx.config, id, b.email);
       return createSession(c, id);
     });
     return reply.code(201).send({ token, user: { id, email: b.email, display_name: b.display_name } });
@@ -85,13 +100,28 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = Login.parse(req.body);
     // Per-email lockout in Postgres (all instances): 5 failures in 15 min → 429 login_locked.
     const u = await guardedLogin(ctx.db, b.email, req.ip, LOGIN_LOCKOUT, async (c) => {
-      const row = (await c.query<{ id: string; password_hash: string; status: string }>('select id, password_hash, status from users where email = $1 and partner_id is null', [b.email])).rows[0];
-      return row && (await verifyPassword(b.password, row.password_hash)) ? row : null;
+      const row = (await c.query<{ id: string; password_hash: string; status: string; mfa: boolean }>(
+        `select u.id, u.password_hash, u.status, exists (select 1 from user_mfa m where m.user_id = u.id and m.enabled_at is not null) as mfa
+           from users u where u.email = $1 and u.partner_id is null`, [b.email])).rows[0];
+      if (!row || !(await verifyPassword(b.password, row.password_hash))) return null;
+      if (!row.mfa) return row;
+      // Two-factor: no session without a valid code. A missing code is not a failure (nothing is
+      // recorded or cleared); a wrong or replayed one counts toward the lockout like a wrong password.
+      if (!b.otp) return new LoginRefusal(new ApiError(401, 'mfa_required', 'enter the 6-digit code from your authenticator app'), false);
+      if (!(await checkOtp(c, row.id, b.otp))) return new LoginRefusal(new ApiError(401, 'invalid_otp', 'that code is not valid'), true);
+      return row;
     });
-    // A self-exclusion lifts itself only once its period has ended.
-    await ctx.db.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
-    if (u.status === 'closed' || u.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${u.status}`);
-    return { token: await createSession(ctx.db, u.id) };
+    return tx(ctx.db, async (c) => {
+      // Issue the session under the account row lock, and only if the password is still the one just
+      // checked: a reset or change (same lock) that lands in between makes this sign-in fail instead of
+      // leaving a session its sessions purge never saw.
+      const now = (await c.query<{ password_hash: string; status: string }>('select password_hash, status from users where id = $1 for update', [u.id])).rows[0];
+      if (!now || now.password_hash !== u.password_hash) throw unauthorized('invalid_credentials', 'wrong email or password');
+      // A self-exclusion lifts itself only once its period has ended.
+      await c.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
+      if (now.status === 'closed' || now.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${now.status}`);
+      return { token: await createSession(c, u.id) };
+    });
   });
 
   app.post('/v1/auth/logout', async (req) => {
@@ -110,18 +140,43 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/me', async (req) => {
     const u = await ctx.user(req);
     const agent = (await ctx.db.query<{ status: string; code: string }>('select status, code from agents where user_id = $1', [u.id])).rows[0] ?? null;
-    return { ...u, memberships: await memberships(ctx, u.id), wallets: await wallets(ctx, u.id), agent };
+    const mfaEnrollmentRequired = !!u.platform_role && !u.mfa_enabled && (await staffMfaRequired(ctx.db));
+    return { ...u, mfa_enrollment_required: mfaEnrollmentRequired, memberships: await memberships(ctx, u.id), wallets: await wallets(ctx, u.id), agent };
   });
 
-  // Display name only; email and password changes need their own verified flows.
+  /**
+   * The display name, at any time. The date of birth and the country can be added once, by
+   * accounts created before they were asked at registration; changing them afterwards goes
+   * through support (KYC). Email and password changes have their own verified flows.
+   */
   app.patch('/v1/me', async (req) => {
     const u = await ctx.user(req);
-    const b = z.object({ display_name: z.string().trim().min(1).max(60) }).parse(req.body);
-    await tx(ctx.db, async (c) => {
-      await c.query('update users set display_name = $2 where id = $1', [u.id, b.display_name]);
-      await audit(c, { type: 'user.renamed', userId: u.id });
+    const b = z.object({
+      display_name: z.string().trim().min(1).max(60).optional(),
+      date_of_birth: DateOfBirth.optional(),
+      country: Country.optional(),
+    }).refine((x) => Object.keys(x).length > 0, 'nothing to change').parse(req.body);
+    return tx(ctx.db, async (c) => {
+      const cur = (await c.query<{ display_name: string; dob: string | null; country: string | null }>(
+        `select display_name, to_char(date_of_birth, 'YYYY-MM-DD') as dob, country from users where id = $1 for update`, [u.id])).rows[0]!;
+      if (b.date_of_birth !== undefined && cur.dob !== null && cur.dob !== b.date_of_birth) throw conflict('already_set', 'your date of birth is already recorded; contact support to correct it');
+      if (b.country !== undefined && cur.country !== null && cur.country !== b.country) throw conflict('already_set', 'your country is already recorded; contact support to change it');
+      if (b.display_name !== undefined) {
+        await c.query('update users set display_name = $2 where id = $1', [u.id, b.display_name]);
+        await audit(c, { type: 'user.renamed', userId: u.id });
+      }
+      if (b.date_of_birth !== undefined && cur.dob === null) {
+        await c.query('update users set date_of_birth = $2 where id = $1', [u.id, b.date_of_birth]);
+        await audit(c, { type: 'user.dob_declared', userId: u.id, adult: isAdult(b.date_of_birth) });
+      }
+      if (b.country !== undefined && cur.country === null) {
+        await c.query('update users set country = $2 where id = $1', [u.id, b.country]);
+        await audit(c, { type: 'user.country_declared', userId: u.id, country: b.country });
+      }
+      const r = (await c.query<{ display_name: string; date_of_birth: string | null; country: string | null }>(
+        `select display_name, to_char(date_of_birth, 'YYYY-MM-DD') as date_of_birth, country from users where id = $1`, [u.id])).rows[0]!;
+      return { id: u.id, ...r };
     });
-    return { id: u.id, display_name: b.display_name };
   });
 
   app.get('/v1/me/wallets', async (req) => ({ wallets: await wallets(ctx, (await ctx.user(req)).id) }));
@@ -137,6 +192,9 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
     const b = Bet.parse(req.body);
+    // Every mode: no betting from a blocked country or under 18, and none once the session limit is reached.
+    await assertMayBet(ctx.db, u);
+    await assertSessionTime(ctx.db, tokenHash(bearer(req.headers.authorization) ?? ''), u.id);
     const ev = new EventBatch();
     if (b.room_id) {
       const rb = await placeRoomBet(ctx.db, {
@@ -163,11 +221,12 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     const limit = Math.min(200, Math.max(1, Number(q.limit ?? 50)));
     const rows = (await ctx.db.query(
       `select b.id as bet_id, b.round_id, b.room_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
-              r.hand_no, r.table_id, r.flop, t.name as table_name
+              b.at_risk_minor, b.house_kind, r.hand_no, r.table_id, r.flop, t.name as table_name
          from bets b join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.user_id = $1 and ($2::text is null or b.round_id = $2) and ($3::text is null or b.status = $3)
         order by b.placed_at desc limit $4`, [u.id, q.round_id ?? null, q.status ?? null, limit])).rows;
-    return { bets: rows.map((b) => ({ ...b, potential_payout_minor: payoutMinor(b.stake_minor, b.odds_centi) })) };
+    // Same amount settlement pays (the at-risk stake; a pool share is unknown until settlement: 0).
+    return { bets: rows.map(({ at_risk_minor, ...b }) => ({ ...b, potential_payout_minor: potentialPayoutMinor({ ...b, at_risk_minor }) })) };
   });
 
   app.get('/v1/me/ledger', async (req) => {

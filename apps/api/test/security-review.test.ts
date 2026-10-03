@@ -19,7 +19,7 @@ afterAll(async () => h?.close());
 let n = 0;
 async function user(name: string) {
   const email = `${name}-${++n}-${Date.now()}@sr.dev`;
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
 async function staff(name: string, role: 'ops' | 'support' | 'risk') {
@@ -71,10 +71,10 @@ describe('authorization review', () => {
     const client = (await h.api('POST', `/v1/org/${id}/api-clients`, owner.token, { name: 'c' })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
     const auth = { authorization: `Bearer ${tok}` };
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1_000_000 }, auth)).body.type).toBe('insufficient_treasury');
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1_000_000 }, { ...auth, 'idempotency-key': 'dep-key-0001' })).body.type).toBe('insufficient_treasury');
     expect((await h.api('POST', `/v1/org/${id}/chips/purchases`, owner.token, { chips: 500, pay_with: 'EUR' })).status).toBe(201);
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 500 }, auth)).status).toBe(201);
-    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1 }, auth)).body.type).toBe('insufficient_treasury');
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 500 }, { ...auth, 'idempotency-key': 'dep-key-0002' })).status).toBe(201);
+    expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1 }, { ...auth, 'idempotency-key': 'dep-key-0003' })).body.type).toBe('insufficient_treasury');
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
   });
 
@@ -87,14 +87,14 @@ describe('authorization review', () => {
   });
 
   it('partner placeholder addresses cannot be registered', async () => {
-    const r = await h.api('POST', '/v1/auth/register', undefined, { email: 'p_abc@ptn1.partner.preflop', password: 'correct horse', display_name: 'X' });
+    const r = await h.api('POST', '/v1/auth/register', undefined, { email: 'p_abc@ptn1.partner.preflop', password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'X' });
     expect(r.status).toBe(400);
   });
 
   it('the sandbox KYC and payment rails refuse to run in production', async () => {
     const prod = await harness('secreview_prod', { nodeEnv: 'production' });
     try {
-      const r = await prod.api('POST', '/v1/auth/register', undefined, { email: 'p@prod.dev', password: 'correct horse', display_name: 'P' });
+      const r = await prod.api('POST', '/v1/auth/register', undefined, { email: 'p@prod.dev', password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'P' });
       expect((await prod.api('POST', '/v1/me/kyc', r.body.token, {})).body.type).toBe('provider_not_configured');
       expect((await prod.api('POST', '/v1/me/deposits', r.body.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 1000, method: 'card' })).body.type).toBe('provider_not_configured');
       expect((await prod.api('POST', '/v1/me/chips/purchases', r.body.token, { chips: 100, pay_with: 'EUR' })).body.type).toBe('provider_not_configured');

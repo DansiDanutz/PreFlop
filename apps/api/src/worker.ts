@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
+import { pruneNonces } from './auth/envelope.ts';
 import { type Db, tx } from './lib/db.ts';
+import { type MailTransport, deliverMail } from './lib/mailer.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -9,7 +11,8 @@ import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRo
  * Durable post-commit work (docs/13 §4):
  * - outbox jobs: resolve_round (idempotent) and void_round (rejected evidence → refund);
  * - the sweeper: result deadline for LOCKED/DEALT, review SLA for REVIEW, immediate void of
- *   EVIDENCE_REJECTED, re-enqueue of DEALT rounds, and reopening betting on healthy tables.
+ *   EVIDENCE_REJECTED, re-enqueue of DEALT rounds, and reopening betting on healthy tables;
+ * - webhook delivery (claimed rows, safe with several workers) and nonce pruning.
  */
 
 export async function runOutboxOnce(db: Db, t: Timing, limit = 50): Promise<number> {
@@ -81,10 +84,13 @@ export async function beat(db: Db, workerId: string): Promise<void> {
 export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
 
 /** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
-export function startWorker(db: Db, t: Timing, everyMs = 1000): () => Promise<void> {
+export interface WorkerMail { transport: MailTransport | null; from: string }
+
+export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail): () => Promise<void> {
   let stopped = false;
   let current: Promise<void> | null = null;
   const workerId = newWorkerId();
+  let prunedAt = 0;
   const tick = async () => {
     try {
       // A tick that hangs stops the beats, so readiness reports the stuck worker.
@@ -92,6 +98,12 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000): () => Promise<vo
       await runOutboxOnce(db, t);
       await sweepOnce(db, t);
       await deliverDue(db);
+      if (mail) await deliverMail(db, mail.transport, mail.from);
+      // Housekeeping once a minute: consumed request nonces past the replay window.
+      if (Date.now() - prunedAt >= 60_000) {
+        prunedAt = Date.now();
+        await pruneNonces(db);
+      }
     } catch (e) {
       console.error('worker error', e);
     }

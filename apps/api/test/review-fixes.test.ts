@@ -3,7 +3,7 @@ import { tx } from '../src/lib/db.ts';
 import { guardedLookup, isPrivateAddress, postWebhook } from '../src/lib/safeUrl.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
 
 /** Regressions for the Greptile review of b2c9c1e (one test per finding). */
 let h: Harness;
@@ -19,7 +19,7 @@ afterAll(async () => h?.close());
 let n = 0;
 async function user(name: string) {
   const email = `${name}-${++n}-${Date.now()}@t.dev`;
-  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: name });
+  const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: name });
   return { token: r.body.token as string, id: r.body.user.id as string, email };
 }
 async function org(kind: 'organizer' | 'partner' | 'club', owner: { token: string; email: string }) {
@@ -72,6 +72,7 @@ describe('Greptile review of b2c9c1e', () => {
     await h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': true, 'real-crypto': true } });
     const p = await user('dep');
     await h.api('POST', '/v1/me/kyc', p.token, {});
+    await realMoneyReady(h, p.id);
     await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 8_000 });
     const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 6_000, method: 'card' };
     const both = await Promise.all([h.api('POST', '/v1/me/deposits', p.token, dep), h.api('POST', '/v1/me/deposits', p.token, dep)]);
@@ -88,11 +89,13 @@ describe('Greptile review of b2c9c1e', () => {
   it('5. the daily loss limit compares stablecoin stakes in EUR cents', async () => {
     const keys = await tx(h.db, (c) => seedSimTable(c, { clubId: 'club-sim', tableId: 'sim-usdt', name: 'USDT table', mode: 'real-crypto', currency: 'USDT' }));
     const t = new SimTable(h.send, keysToFile(keys));
+    expect((await h.api('PUT', '/v1/admin/tables/sim-usdt/real-money', admin, { approved: true })).status).toBe(200);
     await t.heartbeat();
     await h.work();
     const hand = (await t.openHand())!;
     const p = await user('usdt');
     await h.api('POST', '/v1/me/kyc', p.token, {});
+    await realMoneyReady(h, p.id);
     await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 50_000_000, method: 'crypto' });
     await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 10_000 }); // €100
     const odds = (await h.api('GET', '/v1/book')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
