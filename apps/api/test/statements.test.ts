@@ -1,7 +1,7 @@
 import { DEFAULT_COST_MODEL, turnoverCostRate } from '@preflop/odds-engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
-import { orgStatements, platformStatements } from '../src/lib/statements.ts';
+import { orgStatements, platformStatements, pruneBetChanges } from '../src/lib/statements.ts';
 import { seedAdmin, upsertClub } from '../src/seed.ts';
 import { type Harness, harness } from './helpers.ts';
 
@@ -163,7 +163,12 @@ describe('Statements cache: a bet committing during a computation', () => {
         `insert into bets (id, idempotency_key, user_id, round_id, selection_id, stake_minor, odds_centi, mode, currency, status, payout_minor, placed_at, settled_at)
          values ('stmt-race', 'stmt-race', 'u-q2', $1, 'colour:mixed', 30000, 200, 'real-fiat', 'EUR', 'lost', 0, $2, $2)`, [`${c.id}-r`, at]);
       const [during] = await orgStatements(h.db, c, '2023-08'); // computed and cached without it
+      const xid = (await conn.query<{ x: string }>('select pg_current_xact_id()::text as x')).rows[0]!.x;
       await conn.query('commit');
+      // a long-running transaction: its row carries its START time, already older than the prune window
+      await h.db.query(`update bets_changes set at = now() - interval '1 hour' where xid = $1::xid8`, [xid]);
+      await pruneBetChanges(h.db); // just finished: marked, never deleted at once
+      expect((await h.db.query('select finished_at from bets_changes where xid = $1::xid8', [xid])).rows[0]?.finished_at).toBeTruthy();
       const [after] = await orgStatements(h.db, c, '2023-08');
       expect(after).not.toEqual(during);
       expect(line(after!, /club policy/).base_minor).toBe(40_000);

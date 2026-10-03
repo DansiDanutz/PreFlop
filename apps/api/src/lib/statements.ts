@@ -74,7 +74,7 @@ export async function periodShares(db: Db, periodIn?: string): Promise<PeriodSha
   // The joint statement is platform-wide by design (one cap per pool across clubs and partners,
   // losses carried from every earlier month), so it is computed once per period and shared by
   // every organization's statement. A cached result is reused only while no committed change to
-  // bets is invisible to the snapshot it was computed in (bets_changes, migration 018): exact for
+  // bets is invisible to the snapshot it was computed in (bets_changes, migration 019): exact for
   // bets, including one committing during the computation. SHARES_TTL_MS bounds everything else
   // (a table moved to another club).
   let perDb = sharesCache.get(db);
@@ -119,9 +119,16 @@ async function computeInSnapshot(db: Db, period: string): Promise<{ snapshot: st
   }
 }
 
-/** Deletes change records no cached result can still need (every cache entry expires within the TTL). */
+/**
+ * Prunes the change log. A row is marked finished once its transaction is no longer running (its id
+ * is below the current snapshot's xmin), and deleted only 10 minutes after that. A cached result
+ * that does not see a change was computed before that transaction finished, so it has expired
+ * (SHARES_TTL_MS) long before the row goes, however long the transaction itself ran.
+ */
 export async function pruneBetChanges(db: Db): Promise<number> {
-  return (await db.query(`delete from bets_changes where at < now() - interval '10 minutes'`)).rowCount ?? 0;
+  await db.query(`update bets_changes set finished_at = now()
+                   where finished_at is null and xid < pg_snapshot_xmin(pg_current_snapshot())`);
+  return (await db.query(`delete from bets_changes where finished_at < now() - interval '10 minutes'`)).rowCount ?? 0;
 }
 
 async function computePeriodShares(db: Db | Tx, period: string): Promise<PeriodShares> {
