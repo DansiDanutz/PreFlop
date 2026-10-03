@@ -19,6 +19,7 @@ Clubs supply tables and live video. Betting companies integrate through an API a
 | `packages/db` | PostgreSQL 16 schema and migrations, including an append-only balanced ledger and a hash-chained audit log |
 | `apps/api` | Fastify API, WebSocket stream, worker (outbox, deadline sweeper, webhooks) and simulated tables. It implements `docs/13`. PostgreSQL integration tests plus a 10,000-round soak test |
 | `apps/web` | Public website and player app: an installable PWA (manifest, app-shell service worker that never caches API calls). Mobile-first, following Codex's concepts (`docs/15`), with the partner widget at `/embed` |
+| `apps/mobile` | The iOS and Android apps: a Capacitor shell that ships the player app (`apps/web`) inside a native app. CI builds an installable Android APK on every change (`apps/mobile/README.md`) |
 | `apps/console` | Dashboards for the PreFlop team, poker clubs, partners (betting companies) and organizers |
 | `apps/table` | Club tablet for the dealer, floor and floor manager. Each person has an Ed25519 key in WebCrypto, and every request is signed |
 | `packages/ui`, `packages/client` | Design tokens and components, and the typed API client (the contract) |

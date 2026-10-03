@@ -21,7 +21,7 @@ function focusInvalid(form: HTMLFormElement) {
 
 function AuthFrame({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer: ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh max-w-[440px] flex-col px-5 pb-10">
+    <div className="mx-auto flex min-h-dvh max-w-[440px] flex-col px-5 pb-10 pt-[env(safe-area-inset-top)]">
       <header className="flex h-16 items-center justify-between">
         <Link to="/" aria-label="PreFlop home"><Wordmark /></Link>
         <Link to="/" className="text-sm text-muted hover:text-ink">Back to site</Link>

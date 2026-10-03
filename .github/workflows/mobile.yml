@@ -1,0 +1,74 @@
+name: Mobile apps
+
+# Builds the native apps (apps/mobile, a Capacitor shell around apps/web):
+# - Android: an installable debug APK on every push to main and every pull request that touches the
+#   apps, uploaded as the "preflop-android-debug" artifact (Actions run → Artifacts).
+# - iOS: compiled for the simulator (unsigned) when run by hand; installing on an iPhone or publishing
+#   needs an Apple Developer account (apps/mobile/README.md).
+# The API the apps talk to comes from the repository variable MOBILE_API_URL (default: staging).
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/web/**', 'apps/mobile/**', 'packages/**', 'pnpm-lock.yaml', '.github/workflows/mobile.yml']
+  pull_request:
+    paths: ['apps/web/**', 'apps/mobile/**', 'packages/**', 'pnpm-lock.yaml', '.github/workflows/mobile.yml']
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: Also compile the iOS app (macOS runner)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  VITE_API_URL: ${{ vars.MOBILE_API_URL || 'https://preflop-staging-api.fly.dev' }}
+  VITE_WEB_URL: ${{ vars.MOBILE_WEB_URL || 'https://preflop-staging-web.vercel.app' }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web app and copy it into the native project
+        run: pnpm --filter @preflop/mobile sync
+      - name: Build the debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preflop-android-debug
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  ios:
+    if: github.event_name == 'workflow_dispatch' && inputs.ios
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web app and copy it into the native project
+        run: pnpm --filter @preflop/mobile sync
+      - name: Compile for the iOS simulator (unsigned)
+        working-directory: apps/mobile/ios/App
+        run: xcodebuild -project App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

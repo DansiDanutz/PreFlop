@@ -1,9 +1,11 @@
-import { Suspense, useEffect } from 'react';
-import { Route, Routes, useLocation } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
+import { Suspense, useEffect, useRef } from 'react';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { AppLayout } from './components/AppShell.tsx';
 import { SiteLayout } from './components/site/SiteLayout.tsx';
 import { RequireAuth, useSessionGuard } from './lib/auth.tsx';
 import { lazyNamed } from './lib/lazy.ts';
+import { NATIVE_START, initNativeApp, isNativeApp, isRootPath } from './lib/native.ts';
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './pages/Auth.tsx';
 import { LandingPage } from './pages/site/Landing.tsx';
 import { NotFoundPage } from './pages/site/NotFound.tsx';
@@ -47,6 +49,30 @@ function ScrollToTop() {
   return null;
 }
 
+/**
+ * The iOS/Android app (apps/mobile): opens on the player app rather than the marketing home page,
+ * and wires the Back button, status bar and splash screen. Renders nothing; no-op on the web.
+ */
+function NativeBridge() {
+  const nav = useNavigate();
+  const { pathname } = useLocation();
+  const qc = useQueryClient();
+  const path = useRef(pathname);
+  path.current = pathname;
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    void initNativeApp({
+      back: () => void nav(-1),
+      atRoot: () => isRootPath(path.current),
+      resume: () => void qc.invalidateQueries(),
+    });
+  }, [nav, qc]);
+  useEffect(() => {
+    if (isNativeApp() && pathname === '/') void nav(NATIVE_START, { replace: true });
+  }, [pathname, nav]);
+  return null;
+}
+
 /** Fallback while a route chunk loads (the layouts keep their chrome with an inner boundary). */
 export function PageLoading() {
   return <div role="status" aria-label="Loading" className="grid min-h-[40vh] place-items-center"><span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-line-strong border-t-accent" /></div>;
@@ -57,6 +83,7 @@ export function App() {
   return (
     <>
       <ScrollToTop />
+      <NativeBridge />
       <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route element={<SiteLayout />}>

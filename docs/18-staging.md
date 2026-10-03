@@ -51,6 +51,7 @@ Staging runs the real product against **simulated tables**:
    3. If Vercel asks for access to the repository, approve the Vercel GitHub app for it.
 
 ## Deploying
+- **Mobile apps.** The iOS and Android apps (`apps/mobile`) talk to the staging API from the origins `capacitor://localhost` and `https://localhost`, which `CORS_ORIGINS` allows. CI builds an installable Android APK (`.github/workflows/mobile.yml`).
 - **Automatic.** Every push to `main` runs CI. When CI passes, **Deploy staging** (`.github/workflows/deploy-staging.yml`) deploys the API, then the simulator, then smoke-checks `/v1/health/ready`. Vercel builds the three sites from the same push, and builds a preview for every pull request. Previews talk to the staging API from their unique deployment URL (`<project>-<hash>-irises-projects-ce549f63.vercel.app`, listed under the project's Deployments); the API's `CORS_ORIGINS` allows that pattern, but not the branch aliases (`…-git-<branch>-…`).
 - **By hand.** Use Actions → Deploy staging → Run workflow, or from the repo root:
   ```sh
