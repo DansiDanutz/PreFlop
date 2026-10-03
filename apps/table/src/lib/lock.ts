@@ -103,16 +103,29 @@ export function setSigningGate(allowed: () => boolean) { gate = allowed; }
 export const signingAllowed = () => gate();
 
 /** localStorage-backed wrong-PIN counter (survives reloads; a reload also locks the tablet). */
+/** In-page copies of each stored record: what counts when the browser refuses to save it. */
+const mirrors = new Map<string, Lockout | null>();
+const stronger = (a: Lockout | null, b: Lockout | null): Lockout | null =>
+  !a ? b : !b ? a : (b.failures > a.failures || (b.failures === a.failures && b.until > a.until) ? b : a);
+
+/**
+ * The attempt record in localStorage, mirrored in memory. If storage can't be written (private
+ * mode, quota), the in-memory copy keeps counting, so the backoff can never be reset by a failed
+ * save; a successful PIN clears both.
+ */
 export function localLockoutStore(key = 'pf.table.lockout'): LockoutStore {
   return {
     get() {
+      let saved: Lockout | null = null;
       try {
         const v = JSON.parse(localStorage.getItem(key) ?? 'null') as Lockout | null;
-        return v && Number.isFinite(v.failures) && Number.isFinite(v.until) ? v : null;
-      } catch { return null; }
+        saved = v && Number.isFinite(v.failures) && Number.isFinite(v.until) ? v : null;
+      } catch { /* unreadable: the mirror decides */ }
+      return stronger(saved, mirrors.get(key) ?? null);
     },
     set(v) {
-      try { if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key); } catch { /* private mode */ }
+      mirrors.set(key, v);
+      try { if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key); } catch { /* private mode: the mirror keeps it */ }
     },
   };
 }

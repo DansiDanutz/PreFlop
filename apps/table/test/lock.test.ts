@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiProblem, TableApi } from '../src/lib/api.ts';
 import { generateCredentialKey } from '../src/lib/envelope.ts';
 import type { Identity } from '../src/lib/keystore.ts';
-import { FREE_TRIES, type Lockout, type LockoutStore, TabletLock, backoffMs, setSigningGate, signingAllowed } from '../src/lib/lock.ts';
+import { FREE_TRIES, type Lockout, type LockoutStore, TabletLock, backoffMs, localLockoutStore, setSigningGate, signingAllowed } from '../src/lib/lock.ts';
 import { type PinRecord, hashPin, pinProblem, verifyPin } from '../src/lib/pin.ts';
 import { isRetryable } from '../src/lib/problems.ts';
 
@@ -112,6 +112,22 @@ describe('tablet lock', () => {
     expect(reloaded.waitMs(200)).toBe(29_900);
     expect(await reloaded.unlock('402817', rec, 30_100)).toEqual({ ok: true });
     expect(store.v).toBeNull();
+  });
+
+  it('keeps counting when the browser refuses to save the attempts (no reset to zero)', async () => {
+    rec ??= await hashPin('402817', FAST);
+    // Storage that reads nothing and throws on every write (private mode, quota).
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => { throw new Error('QuotaExceeded'); }, removeItem: () => {} });
+    try {
+      const l = lockAt(0, { locked: true, store: localLockoutStore('pf.test.nosave') });
+      for (let i = 1; i < FREE_TRIES; i++) expect((await l.unlock('000000', rec, i)).ok).toBe(false);
+      expect(await l.unlock('000000', rec, 100)).toMatchObject({ ok: false, reason: 'wrong', waitMs: 30_000 });
+      expect(await l.unlock('000000', rec, 101)).toMatchObject({ ok: false, reason: 'wait' });
+      // A second lock on the same key (e.g. the change-PIN form) sees the same count.
+      expect(lockAt(0, { locked: true, store: localLockoutStore('pf.test.nosave') }).failures).toBe(FREE_TRIES);
+      expect(await l.unlock('402817', rec, 30_100)).toEqual({ ok: true });
+      expect(l.failures).toBe(0);
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('a PIN change on an unlocked tablet counts against the same attempts and backoff', async () => {
