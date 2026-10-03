@@ -8,7 +8,7 @@ import { AgentsPage } from '../src/pages/site/Agents.tsx';
 import { ForClubsPage, ForOrganizersPage, ForPartnersPage } from '../src/pages/site/Business.tsx';
 import { FairnessPage } from '../src/pages/site/Fairness.tsx';
 import { LandingPage } from '../src/pages/site/Landing.tsx';
-import { ResponsiblePage } from '../src/pages/site/Legal.tsx';
+import { PrivacyPage, ResponsiblePage } from '../src/pages/site/Legal.tsx';
 import { NewsPage } from '../src/pages/site/News.tsx';
 import { OddsPage } from '../src/pages/site/Odds.tsx';
 import { PlayersPage } from '../src/pages/site/Players.tsx';
@@ -66,5 +66,16 @@ describe('public website', () => {
     const t = text(render('/agents', AgentsPage));
     expect(t).toMatch(/applies only to licensed real-money markets in the future/);
     expect(t).toMatch(/no guaranteed income/);
+  });
+});
+
+describe('privacy notice draft', () => {
+  it('matches what registration collects today and stays marked as a draft', () => {
+    const html = render('/privacy', PrivacyPage).replace(/&#x27;|&rsquo;|’/g, "'");
+    expect(html).toContain('Draft for review by counsel');
+    for (const s of ['date of birth', 'country of residence', 'Email verification', 'session starts and expires', 'Two-factor authentication', 'PreFlop team accounts', 'IP address'])
+      expect(html).toContain(s);
+    expect(html).not.toMatch(/optional country/i);
+    expect(html).toContain('to be confirmed');
   });
 });
