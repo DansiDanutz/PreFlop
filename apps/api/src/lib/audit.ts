@@ -20,9 +20,22 @@ export async function audit(c: Tx, event: Record<string, unknown>): Promise<void
   await c.query('update audit_head set seq = $1, hash = $2 where id = 1', [ins.seq, ins.hash]);
 }
 
-/** Re-verifies the whole chain from genesis. Returns the first broken seq, or null. */
+/**
+ * Re-verifies the whole chain from genesis. Returns the first broken seq, or null.
+ *
+ * The events and the head are read in ONE statement, so they come from one snapshot (in any
+ * isolation level): an append committing during verification is either wholly visible (event and
+ * head) or not at all, and never shows up as a "truncated" or "forked" chain.
+ */
 export async function verifyAuditChain(db: Db | Tx): Promise<{ ok: boolean; brokenAt: number | null; count: number }> {
-  const rows = (await db.query<{ seq: number; prev_hash: string; hash: string; event: string }>('select seq, prev_hash, hash, event from audit_log order by seq')).rows;
+  const all = (await db.query<{ seq: number | null; prev_hash: string; hash: string; event: string; head_seq: number | null; head_hash: string | null }>(
+    `select l.seq, l.prev_hash, l.hash, l.event, h.seq as head_seq, h.hash as head_hash
+       from (select 1) one
+       left join audit_head h on h.id = 1
+       left join audit_log l on true
+      order by l.seq`)).rows;
+  const head = all[0] && all[0].head_hash !== null ? { seq: all[0].head_seq, hash: all[0].head_hash } : undefined;
+  const rows = all.filter((r) => r.seq !== null) as { seq: number; prev_hash: string; hash: string; event: string }[];
   let prev = 'genesis';
   let last = 0;
   for (const r of rows) {
@@ -31,7 +44,6 @@ export async function verifyAuditChain(db: Db | Tx): Promise<{ ok: boolean; brok
     last = r.seq;
   }
   // A truncated tail would leave a valid prefix: the chain must end exactly at the stored head.
-  const head = (await db.query<{ seq: number; hash: string }>('select seq, hash from audit_head where id = 1')).rows[0];
   if (!head || head.hash !== prev || Number(head.seq) !== Number(last)) return { ok: false, brokenAt: last + 1, count: rows.length };
   return { ok: true, brokenAt: null, count: rows.length };
 }

@@ -8,6 +8,7 @@ import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { mailStats } from '../lib/mailer.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
@@ -74,6 +75,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       `select count(*) filter (where status in ('pending','sending'))::int as pending, count(*) filter (where status = 'failed')::int as failed,
               extract(epoch from (now() - min(created_at) filter (where status in ('pending','sending'))))::float8 as oldest_pending_age_s
          from webhook_deliveries where status in ('pending','sending','failed')`);
+    const mail = await one<{ pending: number; failed: number; retrying: number; oldest_pending_age_s: number | null }>(
+      `select count(*) filter (where status = 'pending')::int as pending, count(*) filter (where status = 'failed')::int as failed,
+              count(*) filter (where status = 'pending' and attempts > 0)::int as retrying,
+              extract(epoch from (now() - min(created_at) filter (where status = 'pending')))::float8 as oldest_pending_age_s
+         from email_outbox where status in ('pending','failed')`);
     const alerts = await one<{ open: number; critical: number }>(
       `select count(*)::int as open, count(*) filter (where severity = 'critical')::int as critical from alerts where resolved_at is null`);
     const states = (await ctx.db.query<{ state: string; n: number }>('select state, count(*)::int as n from rounds group by state order by state')).rows;
@@ -84,6 +90,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       at: new Date().toISOString(),
       outbox: { pending: outbox.pending, oldest_pending_age_s: outbox.oldest_age_s === null ? null : Math.round(outbox.oldest_age_s * 10) / 10 },
       webhook_deliveries: { pending: webhooks.pending, failed: webhooks.failed, oldest_pending_age_s: webhooks.oldest_pending_age_s === null ? null : Math.round(webhooks.oldest_pending_age_s * 10) / 10 },
+      email_outbox: {
+        pending: mail.pending, retrying: mail.retrying, failed: mail.failed,
+        oldest_pending_age_s: mail.oldest_pending_age_s === null ? null : Math.round(mail.oldest_pending_age_s * 10) / 10,
+      },
       alerts: { open: alerts.open, open_critical: alerts.critical },
       rounds_by_state: Object.fromEntries(states.map((r) => [r.state, r.n])),
       sweeper_voids_last_hour: sweeper.n,
@@ -94,6 +104,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         uptime_s: Math.round((Date.now() - ctx.stats.startedAt.getTime()) / 1000),
         db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
         ws_clients: ctx.stats.wsClients,
+        mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp },
       },
     };
   });
@@ -243,7 +254,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!cur) throw notFound('user');
       // Support and risk manage players, not the team: no changes to staff accounts or to themselves.
       if (u.platform_role !== 'admin' && (id === u.id || cur.platform_role !== null)) throw forbidden('forbidden_target', 'only an admin can change a PreFlop team account');
-      if (cur.status === 'self_excluded' && b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
+      // Whatever the current status (self_excluded, or suspended in between), an account under a
+      // self-exclusion that has not ended cannot be made active; migration 016 enforces it in SQL too.
+      if (b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
         throw conflict('self_excluded', 'a self-exclusion cannot be lifted before it ends');
       const r = (await c.query(
         `update users set status = coalesce($2, status), kyc_status = coalesce($3, kyc_status), platform_role = case when $5 then $4 else platform_role end
@@ -370,10 +383,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0];
         if (open) await voidRound(c, await lockRound(c, open.id), 'table paused by PreFlop', `user:${u.id}`, ev, ['OPEN']);
       }
+      // The PreFlop team lifts any hold (monitor, evidence, platform, floor); the audit keeps which one.
+      const prev = (await c.query<{ pause_kind: string | null }>('select pause_kind from poker_tables where id = $1 for update', [id])).rows[0];
+      if (!prev) throw notFound('table');
       const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, pause_kind = case when $2 = 'paused' then 'platform' end,
                                monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
       if (!r.rowCount) throw notFound('table');
-      await audit(c, { type: `table.${b.status === 'paused' ? 'paused' : 'resumed'}`, tableId: id, reason: b.reason ?? null, by: u.id });
+      await audit(c, { type: `table.${b.status === 'paused' ? 'paused' : 'resumed'}`, tableId: id, reason: b.reason ?? null, previousPauseKind: prev.pause_kind, by: u.id });
       if (b.status === 'active') await ensureOpenRound(c, id, ev);
     });
     publish(ev);

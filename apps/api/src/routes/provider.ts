@@ -1,4 +1,4 @@
-import type { LinkSample } from '@preflop/odds-engine';
+import { type LinkSample, MAX_TIMESTAMP_MS, captureShapeProblems } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
@@ -21,6 +21,24 @@ const Heartbeat = z.object({
 });
 
 type H = { t: string; n?: string; id?: string };
+
+/** A signed flop capture as sent by the Table Box (packages/odds-engine FlopCapture), strictly typed. */
+const CaptureBody = z.object({
+  capture: z.object({
+    deviceId: z.string().min(1).max(200),
+    tableId: z.string().min(1).max(200),
+    roundId: z.string().min(1).max(200),
+    handNo: z.number().int().safe().min(1),
+    cards: z.tuple([z.string().min(1).max(3), z.string().min(1).max(3), z.string().min(1).max(3)]),
+    source: z.enum(['vision', 'rfid']),
+    imageSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    capturedAt: z.number().int().min(0).max(MAX_TIMESTAMP_MS),
+    seq: z.number().int().safe().min(1),
+    prevHash: z.string().min(1).max(200),
+  }).strict(),
+  signature: z.string().min(1).max(500),
+  image_base64: z.string().max(20_000_000).optional(),
+}).strict();
 
 export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
   const auth = async (req: FastifyRequest): Promise<Principal> => verifySignedRequest(ctx.db, {
@@ -135,8 +153,12 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/provider/tables/:t/hands/:n/capture', write(async (c, p, req, ev) => {
     const d = requireDevice(p);
     const { t, handNo } = hand(req);
-    const res = await receiveCapture(c, t, handNo, d.id, req.body as Parameters<typeof receiveCapture>[4], ctx.timing, ev);
-    return res;
+    // The full signed-capture schema is checked here, before replay, chain or admission: a record
+    // with a missing or mistyped field (e.g. no capturedAt) is refused as evidence (422), recorded
+    // as a failed attempt, and never advances the device chain.
+    const parsed = CaptureBody.safeParse(req.body);
+    const shape = parsed.success ? captureShapeProblems(parsed.data) : parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`);
+    return receiveCapture(c, t, handNo, d.id, (parsed.success ? parsed.data : req.body ?? {}) as Parameters<typeof receiveCapture>[4], ctx.timing, ev, shape);
   }));
 
   app.put('/v1/provider/tables/:t/hands/:n/capture/image', write(async (c, p, req) => {
@@ -163,9 +185,12 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const reason = String((req.body as { reason?: string })?.reason ?? 'floor decision').slice(0, 200);
     const r = await lockRound(c, hand(req).rid);
     // Once cards are on the felt, voiding a real-money round would let the club cancel results it
-    // has seen; from then on only the PreFlop team decides (POST /v1/admin/rounds/:id/review).
-    const from: RoundState[] | undefined = (await carriesRealMoney(c, r)) ? ['OPEN', 'LOCKED'] : undefined;
-    if (from && !from.includes(r.state)) {
+    // has seen; from then on only the PreFlop team decides (POST /v1/admin/rounds/:id/review or
+    // /void). "On the felt" starts at deal-start, which is recorded while the round is still LOCKED:
+    // the round row is locked here, so a concurrent deal-start is either seen or comes after.
+    const real = await carriesRealMoney(c, r);
+    const from: RoundState[] | undefined = real ? ['OPEN', 'LOCKED'] : undefined;
+    if (from && (!from.includes(r.state) || r.deal_start_at !== null)) {
       throw new ApiError(403, 'platform_review_required', 'after the deal, a real-money round is voided by the PreFlop team');
     }
     const ok = await voidRound(c, r, reason, s.id, ev, from);
@@ -211,16 +236,31 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     // refunded now, in this transaction; a hand already in progress finishes or meets its deadline.
     const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [t])).rows[0];
     if (open) await voidRound(c, await lockRound(c, open.id), 'table paused', p.id, ev, ['OPEN']);
-    await c.query(`update poker_tables set status = 'paused', pause_kind = 'floor', pause_reason = $2 where id = $1`, [t, String((req.body as { reason?: string })?.reason ?? 'paused by floor')]);
-    await audit(c, { type: 'table.paused', tableId: t, by: p.id });
+    // A table already held by the outcome monitor, the evidence checks or the PreFlop team keeps that
+    // hold (kind and reason): a floor pause on top must never turn it into one the floor may lift.
+    const kept = (await c.query<{ pause_kind: string | null }>(
+      `update poker_tables set status = 'paused', pause_kind = 'floor', pause_reason = $2
+        where id = $1 and (status <> 'paused' or pause_kind is null or pause_kind = 'floor') returning pause_kind`,
+      [t, String((req.body as { reason?: string })?.reason ?? 'paused by floor')])).rowCount === 0;
+    await audit(c, { type: 'table.paused', tableId: t, by: p.id, ...(kept ? { keptExistingHold: true } : {}) });
     return { status: 200, body: { status: 'paused' } };
   }));
 
+  /**
+   * The club lifts only its own pause (pause_kind 'floor'). Holds for integrity — the outcome
+   * monitor, failed captures ('evidence') or the PreFlop team ('platform') — are lifted by the PreFlop
+   * team after review (PUT /v1/admin/tables/:id/status): 403 platform_resume_required.
+   */
   app.post('/v1/provider/tables/:t/resume', write(async (c, p, req, ev) => {
     requireStaff(p, 'floor_manager');
     const { t } = req.params as H;
+    const cur = (await c.query<{ status: string; pause_kind: string | null }>('select status, pause_kind from poker_tables where id = $1 for update', [t])).rows[0];
+    if (!cur) throw notFound('table');
+    if (cur.status === 'paused' && cur.pause_kind !== null && cur.pause_kind !== 'floor') {
+      throw new ApiError(403, 'platform_resume_required', `this table is held (${cur.pause_kind}); the PreFlop team resumes it after review`);
+    }
     await c.query(`update poker_tables set status = 'active', pause_reason = null, pause_kind = null where id = $1`, [t]);
-    await audit(c, { type: 'table.resumed', tableId: t, by: p.id });
+    await audit(c, { type: 'table.resumed', tableId: t, by: p.id, previousPauseKind: cur.pause_kind });
     await ensureOpenRound(c, t, ev);
     return { status: 200, body: { status: 'active' } };
   }));

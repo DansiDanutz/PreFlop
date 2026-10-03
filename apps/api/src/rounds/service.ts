@@ -258,9 +258,11 @@ const ms = (d: Date | null) => (d ? d.getTime() : undefined);
 
 /**
  * Capture route (docs/13 §4). Returns a result instead of throwing so evidence rows written on
- * a refusal (capture_attempts, alerts) still commit.
+ * a refusal (capture_attempts, alerts) still commit. `malformed` lists the schema problems found at
+ * HTTP ingress: such a record is rejected like an inauthentic one (attempt, alert, 3-strike pause)
+ * and never replayed, admitted or added to the chain.
  */
-export async function receiveCapture(c: Tx, tableId: string, handNo: number, deviceId: string, body: SignedCapture & { image_base64?: string }, t: Timing, ev: EventBatch): Promise<CaptureResult> {
+export async function receiveCapture(c: Tx, tableId: string, handNo: number, deviceId: string, body: SignedCapture & { image_base64?: string }, t: Timing, ev: EventBatch, malformed: readonly string[] = []): Promise<CaptureResult> {
   const rid = roundId(tableId, handNo);
   const r = await lockRound(c, rid);
   const d = (await c.query<DeviceRow>('select * from devices where id = $1 for update', [deviceId])).rows[0];
@@ -273,7 +275,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
   };
 
   // 1. Idempotent replay, in any round state, before any other check.
-  if (cap && Number.isSafeInteger(cap.seq)) {
+  if (!malformed.length && cap && Number.isSafeInteger(cap.seq)) {
     const prev = (await c.query<{ signature: string; admitted: boolean; round_id: string }>('select signature, admitted, round_id from captures where device_id = $1 and seq = $2', [deviceId, cap.seq])).rows[0];
     if (prev) {
       // A replay is acknowledged only for the hand it was stored for; the same record sent to another hand is a conflict.
@@ -293,7 +295,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
   // 3. Authenticity, once, against the checkpoint before this capture.
   let publicKey;
   try { publicKey = createPublicKey(d.public_key_pem); } catch { publicKey = undefined; }
-  const auth = cap && publicKey
+  const auth = malformed.length ? { authentic: false, problems: [...malformed] } : cap && publicKey
     ? verifyCaptureAuthenticity(body, {
       device: { deviceId: d.id, tableId: d.table_id, publicKey, revoked: d.revoked },
       expectedTableId: tableId, expectedRoundId: rid, expectedHandNo: handNo, lastSeq: d.last_seq, lastHash: d.last_hash,

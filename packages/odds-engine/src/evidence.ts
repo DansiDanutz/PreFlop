@@ -113,11 +113,45 @@ const sameCards = (a: readonly string[], b: readonly string[]): boolean => {
   }
 };
 
+/** Largest timestamp a JavaScript Date can hold (ms): beyond it a "time" is meaningless. */
+export const MAX_TIMESTAMP_MS = 8.64e15;
+const CAPTURE_KEYS = ['deviceId', 'tableId', 'roundId', 'handNo', 'cards', 'source', 'imageSha256', 'capturedAt', 'seq', 'prevHash'] as const;
+const isTimestamp = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= MAX_TIMESTAMP_MS;
+const isText = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+
+/**
+ * Structural check of a signed capture as it arrives (any JSON). Every field must be present with
+ * its type — a missing, null, string, fractional or out-of-range number never reaches a
+ * comparison where it could fail open (`undefined < x` is false). Unknown fields are refused too:
+ * the canonical form signs every key, so nothing unchecked can ride along. Empty = well-formed.
+ */
+export function captureShapeProblems(s: unknown): string[] {
+  if (!s || typeof s !== 'object') return ['signed capture must be an object'];
+  const { capture: c, signature } = s as { capture?: unknown; signature?: unknown };
+  const problems: string[] = [];
+  if (!isText(signature, 500)) problems.push('signature must be a base64 string');
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return [...problems, 'capture must be an object'];
+  const o = c as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (!(CAPTURE_KEYS as readonly string[]).includes(k)) problems.push(`unknown capture field ${k}`);
+  for (const k of ['deviceId', 'tableId', 'roundId'] as const) if (!isText(o[k])) problems.push(`${k} must be a non-empty string`);
+  if (!isText(o.prevHash)) problems.push('prevHash must be a non-empty string');
+  if (!(typeof o.handNo === 'number' && Number.isSafeInteger(o.handNo) && o.handNo >= 1)) problems.push('handNo must be a positive integer');
+  if (!(typeof o.seq === 'number' && Number.isSafeInteger(o.seq) && o.seq >= 1)) problems.push('seq must be a positive integer');
+  if (!isTimestamp(o.capturedAt)) problems.push('capturedAt must be an integer timestamp in ms (0 … 8.64e15)');
+  if (!(Array.isArray(o.cards) && o.cards.length === 3 && o.cards.every((x) => isText(x, 3)))) problems.push('cards must be three card strings');
+  if (o.source !== 'vision' && o.source !== 'rfid') problems.push('source must be vision or rfid');
+  if (!(typeof o.imageSha256 === 'string' && /^[0-9a-f]{64}$/.test(o.imageSha256))) problems.push('imageSha256 must be 64 lowercase hex characters');
+  return problems;
+}
+
 /**
  * Stage 1 — on receipt. Is this record really from the registered Table Box, for this
  * round, and the next link in its chain? Run ONCE, against the checkpoint before the capture.
+ * A structurally invalid record is never authentic (fail closed).
  */
 export function verifyCaptureAuthenticity(s: SignedCapture, ctx: AuthenticityContext): { authentic: boolean; problems: string[] } {
+  const shape = captureShapeProblems(s);
+  if (shape.length) return { authentic: false, problems: shape };
   const c = s.capture;
   const problems: string[] = [];
   const d = ctx.device;
@@ -144,10 +178,15 @@ export function verifyCaptureAuthenticity(s: SignedCapture, ctx: AuthenticityCon
 export function captureAdmissionProblems(c: FlopCapture, t: TimingContext): { problems: string[]; cards?: [Card, Card, Card] } {
   const problems: string[] = [];
   const skew = t.maxSkewMs ?? 2000;
-  if (t.dealStartAt === undefined) problems.push('deal-start not recorded');
+  const delay = t.maxCaptureDelayMs ?? 180_000;
+  // Fail closed: every comparison below is false for NaN/undefined, which would admit the capture.
+  if (!isTimestamp(c.capturedAt)) problems.push('capturedAt missing or not a valid timestamp');
+  else if (!isTimestamp(t.lockedAt) || (t.dealStartAt !== undefined && !isTimestamp(t.dealStartAt))
+    || !Number.isSafeInteger(skew) || skew < 0 || !Number.isSafeInteger(delay) || delay < 0) problems.push('server timing missing or invalid');
+  else if (t.dealStartAt === undefined) problems.push('deal-start not recorded');
   else {
     if (c.capturedAt + skew < t.dealStartAt || c.capturedAt + skew < t.lockedAt) problems.push('captured before the round locked / deal started');
-    if (c.capturedAt > t.dealStartAt + (t.maxCaptureDelayMs ?? 180_000) + skew) problems.push('captured too long after deal-start');
+    if (c.capturedAt > t.dealStartAt + delay + skew) problems.push('captured too long after deal-start');
   }
   let cards: Card[] | undefined;
   try {

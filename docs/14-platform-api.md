@@ -40,7 +40,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `POST /v1/me/play/reset` | Resets play money at any time |
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
-| `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one waits 24 h. Self-exclusion ends the sessions |
+| `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one (or a removal) waits 24 h in `pending`. Editing a field again supersedes its queued change (asking for 200, then reducing to 50, leaves 50 and cancels the 200; re-stating the current value cancels a queued raise); queued changes of other fields are kept, and a new raise restarts the shared `pending_effective_at`. Self-exclusion ends the sessions and is never shortened: excluding again keeps the later end |
 | `POST /v1/me/kyc` | KYC through the sandbox provider. The sandbox KYC, deposit and withdrawal rails return `503 provider_not_configured` when `NODE_ENV=production` |
 | `POST /v1/me/org-claims` | Redeem a single-use owner link (`claim_used`, `claim_expired`) |
 | `POST /v1/me/deposits` · `withdrawals` (+ `Idempotency-Key`) · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent, summed per currency in exact minor units over 24 h, the new deposit included; stablecoins convert once, rounding up). Deposits also need the account checks in *Accounts and security*; withdrawals never do. See *Idempotent money* |
@@ -58,7 +58,8 @@ These calls use the signed envelope, and every write needs an `Idempotency-Key`.
 7. `capture` and `capture/image` (device)
 
 Other provider routes:
-- `void` and `pause`/`resume` (floor manager). A pause records `pause_kind: floor`;
+- `void` and `pause`/`resume` (floor manager). A pause records `pause_kind: floor`; a pause on a table already held for `monitor`, `evidence` or `platform` keeps that hold. `resume` lifts only a `floor` pause: other holds answer `403 platform_resume_required` and are lifted by the PreFlop team (`PUT /v1/admin/tables/:id/status`). On a round carrying real money, `void` is refused (`403 platform_review_required`) once deal-start is recorded, even while the round is still LOCKED;
+- `capture` validates the full signed record at ingress (every field, its type and range, no unknown field). A malformed record, e.g. one without a numeric `capturedAt`, is `422 evidence_rejected`, logged in `capture_attempts`, counts toward the 3 failed attempts and never advances the device chain;
 - `rounds/:id/review` and `rounds/:id/evidence` (floor manager);
 - `heartbeat`, `state`, `devices/:id/checkpoint`. `state` returns `table.pause_kind` and, on each of `rounds[]`, `review_deadline`.
 
@@ -92,7 +93,7 @@ Other provider routes:
 
 **Partner:**
 - `api-clients` (the secret is shown once) and `api-clients/:id/revoke`. Revoking a client also ends every session of the partner's players;
-- `webhooks`, `webhooks/:id/test` and DELETE;
+- `webhooks`, `webhooks/:id/test`, DELETE (disable) and `webhooks/:id/enable`. Disabling cancels the webhook's queued and retrying deliveries (status `cancelled`); a delivery a sender has already claimed may finish (and is cancelled if it fails). Re-enabling sends only events from then on; `test` on a disabled webhook is `409 webhook_disabled`. Both are audited;
 - `bets`;
 - `widget` (GET, PUT): settings plus an iframe snippet.
 
@@ -112,6 +113,7 @@ Other provider routes:
 - Deduplicate by `event_id`.
 - Delivery rows are written **in the same transaction** as the settlement or void that produced the event, so an event cannot be lost between the commit and the fan-out, whichever process (API or worker) settled the round. `round.voided` goes to every subscribed partner; `bet.settled` and `bet.voided` only to the partner whose player placed the bet.
 - A sender **claims** rows before sending (`for update skip locked`, status `sending`), so several workers never send one delivery twice. A claim older than 5 minutes is taken over, and the late sender's result is then ignored.
+- Only deliveries of **active** webhooks are claimed. Disabling a webhook cancels its queued deliveries, including retries; a delivery already claimed may finish, a failed one is cancelled instead of retried, and an abandoned claim is cancelled instead of taken over.
 
 ## PreFlop team (`/v1/admin/...`)
 **Monitoring:**
@@ -124,13 +126,13 @@ Other provider routes:
 - `risk`: worst-case exposure per open round, plus the CUSUM outcome monitor.
 
 **Administration:**
-- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early. Only admins change roles, and support and risk cannot change a team account or their own (`forbidden_target`);
+- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early, by any path: `status: active` is `409 self_excluded` while `self_excluded_until` is in the future, whatever the current status (e.g. via `suspended`), and the database refuses it too (migration 016 trigger). Only admins change roles, and support and risk cannot change a team account or their own (`forbidden_target`);
 - `orgs` (GET, POST, `:id/status`, `:id/owner-claim`);
 - `applications` and `applications/:id/decision`. An approved application creates the organization:
   - if the applicant applied while signed in, their account becomes the owner;
   - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
 - **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
-- `tables` and `tables/:id/status` (a pause records `pause_kind: platform`);
+- `tables` and `tables/:id/status` (a pause records `pause_kind: platform`). `status: active` lifts any hold, including `monitor` and `evidence` ones the club cannot lift; the audit event records `previousPauseKind`;
 - `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a table for real money. Until approved, real-money bets there get `403 table_not_approved`, and so do bets of a real-money tournament on any table, including play-money tables. Audited as `table.real_money_approved` / `table.real_money_revoked`;
 - `settings` (`modes_enabled`, `physical_play_enabled`, `territories`, `require_staff_mfa`). `territories` must be `{"blocked": [...], "real_money_allowed": [...]}` and `require_staff_mfa` a boolean (`422 invalid_value`).
 
@@ -200,7 +202,7 @@ Amounts of different currencies are never added together. Totals come as arrays 
 `?limit=` on list routes (`/v1/admin/rounds`, `users`, `ledger`, `audit`; `/v1/org/:id/rounds`, `/v1/org/:id/bets`; `/v1/me/bets`) is a whole number ≥ 1; larger values are served as the route's maximum. Anything else (`abc`, `1.5`, `0`, empty) is `400 bad_request`.
 
 ## Table pauses
-`poker_tables.pause_kind` (migration 014) says, for code, why a table is paused: `monitor` (outcome-monitor alarm), `evidence` (Table Box inspection after failed captures), `floor` (club tablet) or `platform` (PreFlop team); `null` while active. `pause_reason` stays the human text. Only `pause_kind = monitor` makes the resolver void a dealt round, whatever the reason text says.
+`poker_tables.pause_kind` (migration 014) says, for code, why a table is paused: `monitor` (outcome-monitor alarm), `evidence` (Table Box inspection after failed captures), `floor` (club tablet) or `platform` (PreFlop team); `null` while active. `pause_reason` stays the human text. Only `pause_kind = monitor` makes the resolver void a dealt round, whatever the reason text says. The club tablet resumes only `floor` pauses (`403 platform_resume_required` otherwise); `monitor`, `evidence` and `platform` holds are lifted by PreFlop `admin`, `ops` or `risk` with `PUT /v1/admin/tables/:id/status {status: active}` after review.
 
 ## Accounts and security
 Real money is off today. These rules are in place so it can be switched on.
@@ -213,7 +215,7 @@ Real money is off today. These rules are in place so it can be switched on.
 
 **Session limit and reality checks.** A play session starts at sign-in (`sessions.play_started_at`). With a `session_minutes` limit, bets (`POST /v1/bets`, tournament bets) are refused with `403 session_limit` once that many minutes have passed. Betting resumes in a new session: the player signs out and in again, and the new session starts at once (no enforced pause; the limit makes the player stop and decide). `GET /v1/me/session` drives the clock in the player app and a reality check every `reality_check_minutes` (the limit, or 60): time played, net result this session, *Continue* or *Take a break* (sign out).
 
-**Email.** Verification (48 h) and reset (1 h) links are random tokens; only their SHA-256 is stored (`email_tokens`), each works once, and only while the account keeps the address it was sent to. A new link replaces the earlier unused one. Messages go to `email_outbox` in the same transaction and the worker sends them. No email provider is integrated: outside production the log transport prints each message (with its link) to stdout; in production messages stay queued and the API warns at start. To plug a provider, implement `MailTransport` and return it from `mailTransportFor()` in `apps/api/src/lib/mailer.ts` (an HTTP mail API needs only `fetch`); `MAIL_FROM`, `SMTP_URL` and `WEB_URL` (the link base) are read into `config.mail`. A sent message keeps its row but loses its body.
+**Email.** Verification (48 h) and reset (1 h) links are random tokens; only their SHA-256 is stored (`email_tokens`), each works once, and only while the account keeps the address it was sent to. A new link replaces the earlier unused one. Links point at `WEB_URL`. Messages go to `email_outbox` in the same transaction and the worker sends them. With `SMTP_URL` (`smtp://` or `smtps://`, credentials in the URL) they go out over SMTP (nodemailer) from `MAIL_FROM`; in production `SMTP_URL` then requires an explicit `MAIL_FROM` of your own domain and a public `https` `WEB_URL`. Without `SMTP_URL`, outside production the log transport prints each message (with its link) to stdout; in production messages stay queued and the API warns at start. Each message is tried at most once per worker pass; a failure records `last_error` and schedules the next attempt with exponential backoff (`next_attempt_at`: 1 min, 2, 4, … capped at 6 h). After 8 attempts the message is `failed` (logged; counted in `GET /v1/admin/metrics`). A sent message keeps its row but loses its body.
 
 **Passwords.** Player passwords are 8–200 characters. PreFlop team accounts (`platform_role` set) need a strong one on change and reset (12+ characters, 3 character classes, no common words; `422 weak_password`). A reset signs out every session and also verifies the email; a change signs out every other session.
 
@@ -246,6 +248,7 @@ Real money is off today. These rules are in place so it can be switched on.
 |---|---|
 | `outbox.pending` · `outbox.oldest_pending_age_s` | Outbox lag: jobs not done yet, and the age of the oldest |
 | `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog (including deliveries being sent), and deliveries that gave up after 24 h |
+| `email_outbox.pending` · `retrying` · `failed` · `oldest_pending_age_s` | Email backlog, messages waiting for a retry, and messages that gave up after 8 attempts. `instance.mail` counts this process's sends, failed attempts and give-ups |
 | `alerts.open` · `alerts.open_critical` | Unresolved alerts |
 | `rounds_by_state` | Count of rounds per state (`OPEN`, `LOCKED`, …, `SETTLED`, `VOID`) |
 | `sweeper_voids_last_hour` | Rounds the deadline sweeper voided in the last hour |
