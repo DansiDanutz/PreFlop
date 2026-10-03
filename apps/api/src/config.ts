@@ -34,8 +34,8 @@ export interface MailConfig {
   /** Base URL of the player web app; links in emails point here (WEB_URL). */
   webUrl: string;
   /**
-   * SMTP_URL, when set. No SMTP transport ships in this build (no mail dependency): a provider is
-   * plugged in lib/mailer.ts. Without one, production keeps messages queued in email_outbox.
+   * SMTP_URL (smtp:// or smtps://, credentials in the URL), when set: lib/mailer.ts sends through
+   * it with nodemailer. Without it, production keeps messages queued in email_outbox.
    */
   smtpUrl: string | null;
 }
@@ -114,7 +114,7 @@ const Env = z.object({
   RATE_LIMIT_BETS_PER_MIN: z.coerce.number().int().positive().default(120),
   WEB_URL: z.string().url().default('http://localhost:5173'),
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
-  SMTP_URL: z.string().url().optional(),
+  SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
 });
 type Env = z.infer<typeof Env>;
 
@@ -181,6 +181,18 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
   if (e.ADMIN_PASSWORD !== undefined) {
     const why = passwordWeakness(e.ADMIN_PASSWORD);
     if (why) problems.push(`ADMIN_PASSWORD ${why}`);
+  }
+  if (e.SMTP_URL) {
+    // Real mail goes out: the sender and the links in it must be the deployment's own.
+    if (!raw.MAIL_FROM) problems.push('MAIL_FROM must be set when SMTP_URL is set (e.g. "PreFlop <no-reply@your-domain>")');
+    else if (/@preflop\.local>?$/i.test(e.MAIL_FROM.trim())) problems.push('MAIL_FROM must be an address of your own domain, not the development default');
+    if (!raw.WEB_URL) problems.push('WEB_URL must be set when SMTP_URL is set: links in emails point at the public player web app');
+    else {
+      try {
+        const w = new URL(e.WEB_URL);
+        if (w.protocol !== 'https:' || isPrivateDbHost(w.hostname)) problems.push(`WEB_URL ${e.WEB_URL} must be the public https address of the player web app`);
+      } catch { /* malformed URLs are reported by the schema */ }
+    }
   }
   if (!e.RATE_LIMIT_ENABLED) problems.push('RATE_LIMIT_ENABLED=false is for tests and the soak only');
   if (e.WEBHOOK_ALLOW_PRIVATE) problems.push('WEBHOOK_ALLOW_PRIVATE=true is for local tests only; it lets webhooks reach private addresses (SSRF)');

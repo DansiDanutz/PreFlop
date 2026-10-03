@@ -106,38 +106,67 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const l = (await ctx.db.query('select deposit_day_minor, loss_day_minor, session_minutes, pending, pending_effective_at from rg_limits where user_id = $1', [u.id])).rows[0];
     return l ?? { deposit_day_minor: null, loss_day_minor: null, session_minutes: null };
   });
-  /** Lowering a limit applies at once; raising or removing it waits 24 h (cooling-off). */
+  /**
+   * Lowering a limit (or setting one where there was none) applies at once; raising or removing it
+   * waits 24 h (cooling-off). An explicit edit of a field supersedes that field's queued change:
+   * reducing to 50 after asking for 200 cancels the 200, and re-stating the current value cancels a
+   * queued raise. Queued changes of fields not in the request are kept. Queued changes share one
+   * deadline, and a new raise restarts it: a raise can only wait longer, never less.
+   */
   app.put('/v1/me/limits', async (req) => {
     const u = await ctx.user(req);
     const want = Limits.parse(req.body);
     return tx(ctx.db, async (c) => {
       await c.query('insert into rg_limits (user_id) values ($1) on conflict do nothing', [u.id]);
       await applyDueLimits(c, u.id);
-      const cur = (await c.query<Record<string, number | null>>('select deposit_day_minor, loss_day_minor, session_minutes from rg_limits where user_id = $1 for update', [u.id])).rows[0]!;
+      const cur = (await c.query<Record<string, number | null> & { pending: Record<string, number | null> | null }>(
+        'select deposit_day_minor, loss_day_minor, session_minutes, pending from rg_limits where user_id = $1 for update', [u.id])).rows[0]!;
       const now: Record<string, number | null> = {};
       const later: Record<string, number | null> = {};
+      const pending: Record<string, number | null> = { ...(cur.pending ?? {}) };
+      const superseded: string[] = [];
       for (const k of ['deposit_day_minor', 'loss_day_minor', 'session_minutes'] as const) {
         if (!(k in want)) continue;
         const v = want[k] ?? null;
         const old = cur[k] ?? null;
+        if (k in pending) {
+          delete pending[k];
+          superseded.push(k);
+        }
         if (old === null ? v !== null : v !== null && v <= old) now[k] = v;
         else if (v !== old) later[k] = v;
       }
       const sets = Object.keys(now).map((k, i) => `${k} = $${i + 2}`);
       if (sets.length) await c.query(`update rg_limits set ${sets.join(', ')}, updated_at = now() where user_id = $1`, [u.id, ...Object.values(now)]);
-      if (Object.keys(later).length) await c.query(`update rg_limits set pending = $2, pending_effective_at = now() + interval '24 hours' where user_id = $1`, [u.id, JSON.stringify(later)]);
-      await audit(c, { type: 'rg.limits', userId: u.id, now, later });
+      const raised = Object.keys(later).length > 0;
+      if (superseded.length || raised) {
+        const next = { ...pending, ...later };
+        await c.query(
+          `update rg_limits set pending = $2::jsonb,
+                  pending_effective_at = case when $2::jsonb is null then null when $3 then now() + interval '24 hours' else pending_effective_at end
+            where user_id = $1`, [u.id, Object.keys(next).length ? JSON.stringify(next) : null, raised]);
+      }
+      await audit(c, { type: 'rg.limits', userId: u.id, now, later, superseded });
       return (await c.query('select deposit_day_minor, loss_day_minor, session_minutes, pending, pending_effective_at from rg_limits where user_id = $1', [u.id])).rows[0];
     });
   });
+  /**
+   * Self-exclusion for `days` days. It is never shortened: excluding again while one is in force
+   * keeps the later end (greatest of the two). A suspended or closed account keeps that status, so
+   * the sign-in lift (routes/player.ts) can never turn it into an active one. Migration 016 refuses
+   * status 'active' while self_excluded_until is in the future, whatever path tries it.
+   */
   app.post('/v1/me/self-exclusion', async (req) => {
     const u = await ctx.user(req);
     const { days } = z.object({ days: z.number().int().min(1).max(3650) }).parse(req.body);
     return tx(ctx.db, async (c) => {
+      const prev = (await c.query<{ until: Date | null }>('select self_excluded_until as until from users where id = $1 for update', [u.id])).rows[0]!.until;
       const until = (await c.query<{ until: Date }>(
-        `update users set status = 'self_excluded', self_excluded_until = now() + ($2 || ' days')::interval where id = $1 returning self_excluded_until as until`, [u.id, String(days)])).rows[0]!.until;
+        `update users set status = case when status in ('suspended', 'closed') then status else 'self_excluded' end,
+                self_excluded_until = greatest(self_excluded_until, now() + ($2 || ' days')::interval)
+          where id = $1 returning self_excluded_until as until`, [u.id, String(days)])).rows[0]!.until;
       await c.query('delete from sessions where user_id = $1', [u.id]);
-      await audit(c, { type: 'rg.self_exclusion', userId: u.id, days });
+      await audit(c, { type: 'rg.self_exclusion', userId: u.id, days, until: until.toISOString(), previousUntil: prev ? prev.toISOString() : null });
       return { until: until.toISOString() };
     });
   });

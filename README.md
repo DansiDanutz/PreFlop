@@ -38,7 +38,15 @@ pnpm --filter @preflop/console dev    # :5174  dashboards
 pnpm --filter @preflop/table dev      # :5175  club tablet
 ```
 
-You can also run the whole stack with `docker compose up --build`. That starts the API, the simulator, the web app on :8080, the console on :8081 and the tablet on :8082.
+You can also run the whole stack with Docker Compose. The API image runs with `NODE_ENV=production`, so it refuses a demo database password: generate one first, in `.env` (never committed; see `.env.example`). Compose shares it between the database, the API and the simulator, and refuses to start without it.
+
+```bash
+cp .env.example .env
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env
+docker compose up --build
+```
+
+That starts the API, the simulator, the web app on :8080, the console on :8081 and the tablet on :8082. Postgres sets the password when the `pgdata` volume is first created; to change it later, change it in Postgres too (or `docker compose down -v` to start over).
 
 To check the code:
 
@@ -67,8 +75,8 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `PLAY_START` | `10000` | Starting play-money balance |
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
 | `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
-| `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails |
-| `SMTP_URL` | unset | Reserved for a mail provider. No transport ships yet: in production, emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
+| `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails. **Required** (an address of your own domain) when `SMTP_URL` is set |
+| `SMTP_URL` | unset | `smtp://` or `smtps://user:pass@host:port`: account emails go out over SMTP (nodemailer), retried with backoff. With it, production also requires `MAIL_FROM` and a public `https` `WEB_URL`. Unset: in production emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
 
 Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
 
