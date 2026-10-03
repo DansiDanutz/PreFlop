@@ -64,6 +64,7 @@ export function App() {
         <Route path="book" element={<A.Book />} />
         <Route path="payments" element={<A.Payments />} />
         <Route path="settings" element={<A.Settings />} />
+        <Route path="news" element={<A.News />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
         <Route path="tournaments" element={<Tournaments />} />
         <Route path="tournaments/:id" element={<TournamentDetailPage />} />

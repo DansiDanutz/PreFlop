@@ -272,6 +272,18 @@ export interface AdminAgents {
   agents: (Agent & { display_name: string; email: string; players: number; parent_name: string | null })[];
   statements: AgentStatement[];
 }
+// --- news (migration 015)
+/** A published post as the public site lists it (no body). */
+export interface NewsCard { id: string; slug: string; title: string; summary: string; tags: string[]; published_at: string }
+/** GET /v1/news/:slug. `body` is the small Markdown subset rendered by @preflop/ui/markdown. */
+export interface NewsPost extends NewsCard { body: string; updated_at: string }
+/** Every post, drafts included, for the PreFlop team. */
+export interface AdminNewsPost {
+  id: string; slug: string; title: string; summary: string; body: string; tags: string[]; status: 'draft' | 'published';
+  published_at: string | null; author_id: string | null; created_at: string; updated_at: string;
+}
+/** Create (title required) or update (every field optional). A slug is made from the title when none is given. */
+export interface NewsInput { title: string; summary?: string; body?: string; tags?: string[]; slug?: string }
 export interface Badge { id: string; kind: 'champion' | 'podium' | 'top10'; label: string; leaderboard_id: string | null; awarded_at: string }
 
 const isProblem = (d: unknown): d is Problem => !!d && typeof d === 'object' && typeof (d as Problem).type === 'string';
@@ -338,6 +350,10 @@ export function createClient(o: ClientOptions) {
     rooms: () => get<{ rooms: Room[] }>('/v1/rooms'),
     room: (id: string) => get<RoomDetail>(`/v1/rooms/${encodeURIComponent(id)}`),
     apply: (a: { kind: OrgKind; name: string; email: string; details?: Record<string, unknown> }) => post<{ id: string }>('/v1/applications', a),
+    /** Published news, newest first. 400 bad_request for a limit outside 1–50 or a malformed tag. */
+    newsList: (f: { limit?: number; tag?: string } = {}) => get<{ posts: NewsCard[] }>(`/v1/news${q(f)}`, S.newsListSchema),
+    /** One published post; 404 not_found for drafts and unknown slugs. */
+    newsPost: (slug: string) => get<NewsPost>(`/v1/news/${encodeURIComponent(slug)}`, S.newsPostSchema),
 
     // ---------- auth
     /** 403 underage (under 18), 403 territory_blocked; country is ISO 3166-1 alpha-2, date_of_birth YYYY-MM-DD. Sends a verification email. */
@@ -474,6 +490,15 @@ export function createClient(o: ClientOptions) {
     adminFundLeaderboard: (lb: string, amount_minor: number) => post<Leaderboard>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
     adminSettleLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/settle`),
     adminCancelLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/cancel`),
+    // news (admin, ops; every change is audited)
+    adminNews: () => get<{ posts: AdminNewsPost[] }>('/v1/admin/news', S.adminNewsListSchema),
+    /** 409 slug_taken when an explicit slug is in use. */
+    adminCreateNews: (b: NewsInput) => post<AdminNewsPost>('/v1/admin/news', b, undefined, S.adminNewsSchema),
+    adminUpdateNews: (id: string, b: Partial<NewsInput>) => req<AdminNewsPost>('PUT', `/v1/admin/news/${encodeURIComponent(id)}`, b, {}, S.adminNewsSchema),
+    /** A first publication is dated now; publishing again after an unpublish keeps the original date. */
+    adminPublishNews: (id: string) => post<AdminNewsPost>(`/v1/admin/news/${encodeURIComponent(id)}/publish`, {}, undefined, S.adminNewsSchema),
+    adminUnpublishNews: (id: string) => post<AdminNewsPost>(`/v1/admin/news/${encodeURIComponent(id)}/unpublish`, {}, undefined, S.adminNewsSchema),
+    adminDeleteNews: (id: string) => del<{ ok: true }>(`/v1/admin/news/${encodeURIComponent(id)}`),
     adminPromotions: () => get<{ promotions: Promotion[] }>('/v1/admin/promotions'),
     adminCreatePromotion: (b: PromotionInput) => post<Promotion>('/v1/admin/promotions', b),
     adminDecidePromotion: (id: string, decision: 'approve' | 'reject', note?: string) => post<{ id: string; status: string }>(`/v1/admin/promotions/${encodeURIComponent(id)}/decision`, { decision, ...(note ? { note } : {}) }),

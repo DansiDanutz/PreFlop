@@ -13,6 +13,7 @@ import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { growthRoutes } from './routes/growth.ts';
+import { newsRoutes } from './routes/news.ts';
 import { tournamentRoutes } from './routes/tournaments.ts';
 import { orgRoutes } from './routes/org.ts';
 import { partnerRoutes } from './routes/partner.ts';
@@ -174,6 +175,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   await growthRoutes(app, ctx);
   await agentRoutes(app, ctx);
   await tournamentRoutes(app, ctx);
+  await newsRoutes(app, ctx);
   await orgRoutes(app, ctx);
   await partnerRoutes(app, ctx);
   await adminRoutes(app, ctx);

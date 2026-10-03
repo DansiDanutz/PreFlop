@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, BadgeEuro, BookOpen, Building2, Coins, CreditCard, Diamond, FileText, Gauge, Gem, KeyRound, LayoutDashboard,
-  Landmark, ListChecks, Trophy, Swords, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
+  Landmark, ListChecks, Newspaper, Trophy, Swords, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
   type LucideIcon,
 } from 'lucide-react';
 import type { PortalKind } from '../lib/portals.ts';
@@ -34,6 +34,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
       { to: 'agents', label: 'Agents', icon: Network },
     ] },
     { label: 'Platform', items: [
+      { to: 'news', label: 'News', icon: Newspaper },
       { to: 'audit', label: 'Audit', icon: ShieldCheck },
       { to: 'settings', label: 'Settings', icon: Settings },
     ] },

@@ -14,11 +14,15 @@ import { ProfilePage } from './pages/app/Profile.tsx';
 import { TablePage } from './pages/app/Table.tsx';
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './pages/Auth.tsx';
 import { EmbedTablePage } from './pages/Embed.tsx';
+import { AgentsPage } from './pages/site/Agents.tsx';
 import { ForClubsPage, ForOrganizersPage, ForPartnersPage } from './pages/site/Business.tsx';
+import { FairnessPage } from './pages/site/Fairness.tsx';
 import { LandingPage } from './pages/site/Landing.tsx';
+import { NewsArticlePage, NewsPage } from './pages/site/News.tsx';
 import { PrivacyPage, ResponsiblePage, TermsPage } from './pages/site/Legal.tsx';
 import { NotFoundPage } from './pages/site/NotFound.tsx';
 import { OddsPage } from './pages/site/Odds.tsx';
+import { PlayersPage } from './pages/site/Players.tsx';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -38,6 +42,11 @@ export function App() {
           <Route path="clubs" element={<ForClubsPage />} />
           <Route path="partners" element={<ForPartnersPage />} />
           <Route path="organizers" element={<ForOrganizersPage />} />
+          <Route path="players" element={<PlayersPage />} />
+          <Route path="agents" element={<AgentsPage />} />
+          <Route path="fairness" element={<FairnessPage />} />
+          <Route path="news" element={<NewsPage />} />
+          <Route path="news/:slug" element={<NewsArticlePage />} />
           <Route path="responsible-gaming" element={<ResponsiblePage />} />
           <Route path="terms" element={<TermsPage />} />
           <Route path="privacy" element={<PrivacyPage />} />

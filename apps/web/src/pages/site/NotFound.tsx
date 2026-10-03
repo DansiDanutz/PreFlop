@@ -1,7 +1,9 @@
 import { CardBack } from '@preflop/ui';
 import { Link } from 'react-router';
+import { usePageMeta } from '../../lib/site.ts';
 
 export function NotFoundPage({ inApp = false }: { inApp?: boolean }) {
+  usePageMeta('Page not found', 'This page is not in the deck. It may have moved, or the link is wrong.');
   return (
     <div className="mx-auto flex max-w-[560px] flex-col items-center px-5 py-20 text-center">
       <div className="felt felt-vignette flex h-40 w-full max-w-[360px] items-center justify-center gap-3 rounded-[18px]" aria-hidden>

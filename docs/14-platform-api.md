@@ -290,3 +290,16 @@ The ledger kinds are:
 - `tournament.buyin`, `tournament.refund` (ref: the buy-in);
 - `tournament.added`, `tournament.added_return`, `tournament.fee` (ref: the tournament);
 - `tournament.payout` (ref `<tournament>:<user>`).
+
+## News (migration 015)
+Posts about the app and the platform, shown on the website at `/news` and written in the console (admin → Platform → News).
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/news?limit=1–50&tag=` | Published posts, newest first, without bodies. A bad `limit` or `tag` is `400` |
+| `GET /v1/news/:slug` | One published post with its body; drafts and unknown slugs are `404` |
+| `GET /v1/admin/news` | Every post, drafts included (`admin`, `ops`) |
+| `POST /v1/admin/news` · `PUT /v1/admin/news/:id` | Create (title 3–120, summary ≤ 300, body ≤ 20,000, ≤ 8 tags) or update. The slug is made from the title (`-2`, `-3`… when taken); an explicit slug in use is `409 slug_taken` |
+| `POST /v1/admin/news/:id/publish` · `/unpublish` · `DELETE /v1/admin/news/:id` | A first publication is dated now; republishing keeps the date |
+
+Every change is audited (`news.created`, `news.updated`, `news.published`, `news.unpublished`, `news.deleted`). The body is a small Markdown subset (paragraphs, `##`/`###`, lists, bold, italic, code, https links) rendered by `@preflop/ui/markdown` into React elements, never into raw HTML.

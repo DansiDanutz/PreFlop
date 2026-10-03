@@ -6,6 +6,7 @@
   "description": "PreFlop design system: tokens (from the Codex mobile concepts) and shared React components",
   "exports": {
     ".": "./src/index.tsx",
+    "./markdown": "./src/markdown.tsx",
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": { "typecheck": "tsc --noEmit" },
