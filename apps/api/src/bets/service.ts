@@ -132,6 +132,17 @@ export function assertReplayMatches(
   if (!same) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different bet');
 }
 
+/**
+ * The price check (docs/13 §7). Without accept_price_change the request must carry the current
+ * price exactly. With it, the player has accepted a price change, but only to the price they were
+ * shown: odds_centi must be the new price from the price_changed problem (or the current price is
+ * better for the player). A price that moved again since, against the player, is a new
+ * price_changed with the new odds, never a silent acceptance of a price nobody saw.
+ */
+export function priceAcceptable(currentOddsCenti: number, i: { oddsCenti: number; acceptPriceChange?: boolean | undefined }): boolean {
+  return i.acceptPriceChange === true ? currentOddsCenti >= i.oddsCenti : currentOddsCenti === i.oddsCenti;
+}
+
 /** A partner's player bets only while the partner organization is active (docs/14, Partner API). */
 export const partnerSuspended = () => new ApiError(403, 'partner_suspended', 'the operator of this account is suspended');
 /** Real money is taken only at a table the PreFlop team approved for it (docs/14, PreFlop team). */
@@ -212,7 +223,7 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
     // 5. price
     const p = price(stats, i.channel ?? 'direct');
     if (!p.offered) throw unprocessable('not_offered', p.reason ?? 'selection not offered');
-    if (p.oddsCenti !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
+    if (!priceAcceptable(p.oddsCenti, i)) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
     const odds = p.oddsCenti;
     const payout = payoutMinor(i.stakeMinor, odds);
     if (payout > table.max_round_loss_minor) throw unprocessable('limit_exceeded', 'payout above the table maximum');

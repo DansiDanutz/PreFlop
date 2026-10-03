@@ -79,7 +79,11 @@ describe('round lifecycle on the simulated table (docs/13 §4, §8)', () => {
     const res = await h.api('POST', '/v1/bets', p.token, { round_id: r.id, selection_id: 'rank-pattern:pair', stake_minor: 10, odds_centi: 999 }, { 'idempotency-key': 'stale-odds-1' });
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('price_changed');
-    const ok = await h.api('POST', '/v1/bets', p.token, { round_id: r.id, selection_id: 'rank-pattern:pair', stake_minor: 10, odds_centi: 999, accept_price_change: true }, { 'idempotency-key': 'stale-odds-2' });
+    // Accepting binds to the price shown: the stale 999 is refused again, the new price is placed.
+    const stale = await h.api('POST', '/v1/bets', p.token, { round_id: r.id, selection_id: 'rank-pattern:pair', stake_minor: 10, odds_centi: 999, accept_price_change: true }, { 'idempotency-key': 'stale-odds-2' });
+    expect(stale.status).toBe(409);
+    expect(stale.body.odds_centi).toBe(res.body.odds_centi);
+    const ok = await h.api('POST', '/v1/bets', p.token, { round_id: r.id, selection_id: 'rank-pattern:pair', stake_minor: 10, odds_centi: res.body.odds_centi, accept_price_change: true }, { 'idempotency-key': 'stale-odds-2' });
     expect(ok.status).toBe(201);
     expect(ok.body.odds_centi).toBe(res.body.odds_centi);
   });
