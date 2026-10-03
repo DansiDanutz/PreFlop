@@ -7,6 +7,7 @@ import { statsOf } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
+import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertRealMoneyAccount } from '../lib/accounts.ts';
@@ -169,44 +170,61 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const u = await ctx.user(req);
     return { payments: (await ctx.db.query('select id, kind, method, mode, currency, amount_minor, status, created_at, address from payments where user_id = $1 order by created_at desc limit 100', [u.id])).rows };
   });
+  /**
+   * Money in and out needs an Idempotency-Key (8–200 characters, as POST /v1/bets). The payment id
+   * and its ledger postings are derived from (player, key) and the response is stored with them:
+   * a retry returns the original payment and never moves money twice; the same key with a
+   * different request gets 422 idempotency_mismatch.
+   */
   app.post('/v1/me/deposits', async (req, reply) => {
     sandboxOnly();
     const u = await ctx.user(req);
+    const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
     // Deposits only: a withdrawal returns the player's own money and is never held back by these.
     await assertRealMoneyAccount(ctx.db, u.id); // age, verified email, territory
-    const out = await tx(ctx.db, async (c) => {
+    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
       // Serialise this user's deposits: the daily total and the new payment are read and written
       // under the user row lock, so concurrent deposits cannot both pass the limit.
       await c.query('select id from users where id = $1 for update', [u.id]);
       await applyDueLimits(c, u.id);
       const l = (await c.query<{ deposit_day_minor: number | null }>('select deposit_day_minor from rg_limits where user_id = $1', [u.id])).rows[0];
       if (l?.deposit_day_minor != null) {
-        // Limits are in EUR cents; stablecoins (6 decimals) count 1:1 with EUR, so 10,000 micro-units = 1 cent.
-        const today = Number((await c.query<{ n: number }>(
-          `select coalesce(sum(case when currency = 'EUR' then amount_minor else amount_minor / 10000 end), 0)::bigint as n
-             from payments where user_id = $1 and kind = 'deposit' and status = 'completed' and created_at > now() - interval '24 hours'`, [u.id])).rows[0]!.n);
-        const cents = toEurCents(b.currency, b.amount_minor);
-        if (today + cents > l.deposit_day_minor) throw new ApiError(403, 'limit_reached', 'your daily deposit limit would be exceeded');
+        // Limits are in EUR cents. Deposits are summed per currency in exact minor units, the new one
+        // included, and converted once (stablecoins round up): splitting a deposit into sub-cent
+        // pieces never makes it count for less.
+        const rows = (await c.query<{ currency: string; n: number }>(
+          `select currency, coalesce(sum(amount_minor), 0)::bigint as n from payments
+            where user_id = $1 and kind = 'deposit' and status = 'completed' and created_at > now() - interval '24 hours' group by currency`, [u.id])).rows;
+        const totals = new Map(rows.map((x) => [x.currency, Number(x.n)]));
+        totals.set(b.currency, (totals.get(b.currency) ?? 0) + b.amount_minor);
+        const cents = [...totals].reduce((a, [cur, n]) => a + toEurCents(cur, n), 0);
+        if (cents > l.deposit_day_minor) throw new ApiError(403, 'limit_reached', 'your daily deposit limit would be exceeded');
       }
-      return deposit(c, u.id, b.mode, b.currency, b.amount_minor, b.method);
+      return { status: 201, body: await deposit(c, u.id, b.mode, b.currency, b.amount_minor, b.method, ref) };
     });
-    return reply.code(201).send(out);
+    return reply.code(res.status).send(res.body);
   });
   app.post('/v1/me/withdrawals', async (req, reply) => {
     sandboxOnly();
     const u = await ctx.user(req);
+    const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
     await realGate(u.id, b.mode);
-    return reply.code(201).send(await tx(ctx.db, (c) => withdraw(c, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination)));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) =>
+      ({ status: 201, body: await withdraw(c, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination, ref) }));
+    return reply.code(res.status).send(res.body);
   });
   app.post('/v1/me/chips/purchases', async (req, reply) => {
     sandboxOnly();
     const u = await ctx.user(req);
+    const key = requireIdempotencyKey(req);
     const b = z.object({ chips: z.number().int(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     assertPositive(b.chips, 'chips');
     if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
-    return reply.code(201).send(await tx(ctx.db, (c) => buyChips(c, { userId: u.id }, b.chips, b.pay_with)));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) =>
+      ({ status: 201, body: await buyChips(c, { userId: u.id }, b.chips, b.pay_with, ref) }));
+    return reply.code(res.status).send(res.body);
   });
 }

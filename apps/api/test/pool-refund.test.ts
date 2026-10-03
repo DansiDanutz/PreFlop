@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, idemKey } from './helpers.ts';
 
 let h: Harness;
 beforeAll(async () => { h = await harness('poolrefund'); });
@@ -14,8 +14,8 @@ describe('pool with no winning backer (deterministic)', () => {
     const mk = async (n: string) => { const e = `${n}-${Date.now()}@t.dev`; const r = await h.api('POST', '/v1/auth/register', undefined, { email: e, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: n }); return { token: r.body.token as string, email: e }; };
     const owner = await mk('o'), a = await mk('a'), b = await mk('b');
     const orgId = await ownedOrg(h, admin, { kind: 'organizer', name: 'Refund Club' }, owner);
-    await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5000, pay_with: 'EUR' });
-    for (const p of [a, b]) await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1000 });
+    await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5000, pay_with: 'EUR' }, idemKey());
+    for (const p of [a, b]) await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1000 }, idemKey());
     const room = (await h.api('POST', `/v1/org/${orgId}/rooms`, owner.token, { name: 'R', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' })).body;
     await h.sim.heartbeat(); await h.work();
     const n = (await h.sim.openHand())!;

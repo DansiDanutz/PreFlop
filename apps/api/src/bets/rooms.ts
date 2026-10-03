@@ -10,7 +10,7 @@ import { newId } from '../lib/ids.ts';
 import { type Transfer, acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { poolAccount } from '../rounds/service.ts';
-import { type BetView, assertEligibleInTx, potentialPayoutMinor, statsOf, withKeyLock } from './service.ts';
+import { type BetView, assertEligibleInTx, assertReplayMatches, potentialPayoutMinor, statsOf, withKeyLock } from './service.ts';
 
 /**
  * Rooms: books run by an organizer or club in virtual chips or diamonds (docs/08, docs/10).
@@ -48,6 +48,20 @@ export interface RoomRow {
 
 export const ROOM_CURRENCY: Record<RoomRow['mode'], string> = { 'virtual-chips': 'CHIP', diamonds: 'DIAMOND' };
 
+/**
+ * Diamond settlement has no provider-share leg (provider clubs are paid in EUR out of PreFlop's
+ * diamond revenue, docs/08), so a share set on a diamond room would be promised and never paid.
+ */
+export const DIAMOND_PROVIDER_SHARE_PROBLEM = 'diamond rooms take no provider share (provider clubs are paid by PreFlop in EUR): set provider_share_bps to 0';
+
+/**
+ * Room rules the API refuses with their own problem type (422), before the generic invalid_rules:
+ * provider_share_unsupported for a provider share on a diamond room.
+ */
+export function assertRoomRulesSupported(mode: PlayMode, r: RoomRules): void {
+  if (mode === 'diamonds' && (r.provider_share_bps ?? 0) > 0) throw unprocessable('provider_share_unsupported', DIAMOND_PROVIDER_SHARE_PROBLEM);
+}
+
 /** Validates room rules against PreFlop's global rules; returns problems (empty = ok). */
 export function validateRoomRules(mode: PlayMode, house: 'organizer' | 'pool', r: RoomRules): { ok: boolean; problems: string[]; organizer_ev?: number; fee_rate_bound?: number } {
   const problems: string[] = [];
@@ -59,7 +73,9 @@ export function validateRoomRules(mode: PlayMode, house: 'organizer' | 'pool', r
   }
   if (mode === 'diamonds') {
     problems.push(...validateDiamondRules({ rakeBps: r.rake_bps ?? 0, minStake: r.min_stake_minor, rakeShares: [{ role: 'organizer', party: 'organizer', bps: 10000 }] }));
-  } else if (house === 'pool') {
+  }
+  // A pool house lives on its rake, in every mode: a diamond pool may not run at zero rake either.
+  if (house === 'pool') {
     const rk = r.rake_bps ?? 0;
     if (rk < GLOBAL_RULES.poolRakeBpsMin || rk > GLOBAL_RULES.poolRakeBpsMax) problems.push(`pool rake must be ${GLOBAL_RULES.poolRakeBpsMin}–${GLOBAL_RULES.poolRakeBpsMax} bps`);
   }
@@ -80,6 +96,7 @@ export function validateRoomRules(mode: PlayMode, house: 'organizer' | 'pool', r
   }
   if (r.provider_share_bps !== undefined && (!Number.isInteger(r.provider_share_bps) || r.provider_share_bps < 0 || r.provider_share_bps > 10000))
     problems.push('provider share must be 0–10000 bps');
+  if (mode === 'diamonds' && (r.provider_share_bps ?? 0) > 0) problems.push(DIAMOND_PROVIDER_SHARE_PROBLEM);
   return { ok: problems.length === 0, problems, ...(organizer_ev !== undefined ? { organizer_ev } : {}), ...(fee_rate_bound !== undefined ? { fee_rate_bound } : {}) };
 }
 
@@ -128,7 +145,10 @@ export interface RoomBetInput {
 
 export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, modeEnabled: (m: PlayMode) => Promise<boolean>): Promise<BetView> {
   const prior = (await db.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
-  if (prior) return { bet_id: prior.id, round_id: prior.round_id, selection_id: prior.selection_id, stake_minor: prior.stake_minor, odds_centi: prior.odds_centi, potential_payout_minor: potentialPayoutMinor(prior), mode: prior.mode, currency: prior.currency, status: prior.status };
+  if (prior) {
+    assertReplayMatches(prior, i);
+    return betView(prior);
+  }
 
   const room = (await db.query<RoomRow>('select * from rooms where id = $1', [i.roomId])).rows[0];
   if (!room) throw notFound('room');
@@ -189,7 +209,7 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
     const fees = acct('PreFlop', 'platform-fees', mode, cur);
     const pool = poolAccount(room.id, mode, cur);
 
-    const row = await tx(db, async (c) => {
+    const out = await tx(db, async (c) => {
       const st = (await c.query<{ state: string }>('select state from rounds where id = $1 for share', [r.id])).rows[0]!;
       if (st.state !== 'OPEN') throw conflict('round_locked', 'betting on this flop has closed');
       await assertEligibleInTx(c, i.userId, r.table_id);
@@ -206,7 +226,7 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'accepted', $10, $11, $12, $13, $14, 'contest-user')
          on conflict (user_id, idempotency_key) do nothing returning *`,
         [betId, i.idempotencyKey, i.userId, r.id, i.selectionId, i.stakeMinor, odds, mode, cur, room.house, room.org_id, room.id, atRisk, feeFromStake + feeFromCollateral]);
-      if (ins.rowCount !== 1) return (await c.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
+      if (ins.rowCount !== 1) return { replay: true, row: (await c.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0] };
       const transfers: Transfer[] = [
         { from: wallet, to: room.house === 'organizer' ? collateral : pool, amountMinor: atRisk },
         { from: wallet, to: fees, amountMinor: feeFromStake },
@@ -216,9 +236,20 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
       await post(c, 'bet.stake', betId, transfers);
       await c.query('insert into room_members (room_id, user_id) values ($1, $2) on conflict do nothing', [room.id, i.userId]);
       await audit(c, { type: 'bet.accepted', betId, roundId: r.id, roomId: room.id, userId: i.userId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, atRiskMinor: atRisk, oddsCenti: odds });
-      return ins.rows[0];
+      return { replay: false, row: ins.rows[0] };
     });
+    if (out.replay) {
+      // A concurrent request with the same key won the insert: replay it (only for the same bet).
+      assertReplayMatches(out.row, i);
+      return betView(out.row);
+    }
+    const row = out.row;
     ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId: row.id, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: room.id } });
-    return { bet_id: row.id, round_id: row.round_id, selection_id: row.selection_id, stake_minor: row.stake_minor, odds_centi: row.odds_centi, potential_payout_minor: potentialPayoutMinor(row), mode: row.mode, currency: row.currency, status: row.status };
+    return betView(row);
   });
 }
+
+const betView = (row: Record<string, any>): BetView => ({
+  bet_id: row.id, round_id: row.round_id, selection_id: row.selection_id, stake_minor: row.stake_minor, odds_centi: row.odds_centi,
+  potential_payout_minor: potentialPayoutMinor(row as never), mode: row.mode, currency: row.currency, status: row.status,
+});

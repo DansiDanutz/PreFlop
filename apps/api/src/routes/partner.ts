@@ -12,6 +12,7 @@ import { ApiError, badRequest, conflict, notFound, unauthorized, unprocessable }
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
+import { limitParam } from '../lib/query.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
@@ -156,7 +157,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.get(`${P}/bets`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'] });
-    const limit = Math.min(1000, Number((req.query as { limit?: string }).limit ?? 200));
+    const limit = limitParam(req.query, 1000, 200);
     return { bets: (await ctx.db.query(
       `select b.id as bet_id, b.round_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
               r.hand_no, r.table_id, r.flop, t.name as table_name, u.external_ref as player_ref
@@ -253,9 +254,12 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/partner/bets', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
     const key = req.headers['idempotency-key'];
-    if (typeof key !== 'string' || key.length < 8) throw badRequest('Idempotency-Key header required');
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
     const b = z.object({ player_ref: z.string(), round_id: z.string(), selection_id: z.string(), stake_minor: z.number().int().positive(), odds_centi: z.number().int(), accept_price_change: z.boolean().optional() }).parse(req.body);
     const userId = await partnerPlayer(ctx.db, p.orgId, b.player_ref);
+    // Same per-player bet limiter as POST /v1/bets, keyed on the player (not the partner): a
+    // partner's server cannot bet faster for one player than that player could themselves.
+    ctx.limits.bets.consume(`user:${userId}`);
     const ev = new EventBatch();
     const out = await placeBet(ctx.db, {
       userId, idempotencyKey: `${p.orgId}:${key}`, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi,

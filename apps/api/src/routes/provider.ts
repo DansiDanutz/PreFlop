@@ -12,7 +12,7 @@ import { idempotent, type StoredResponse } from '../lib/idempotency.ts';
 import { tableReadiness } from '../rounds/readiness.ts';
 import {
   carriesRealMoney, cut, dealStart, ensureOpenRound, flopEntry, getTable, lockRound, receiveCapture, receiveImage, resolveReview,
-  type RoundState, roundId, shuffleCommand, shuffleComplete, startHand, voidRound,
+  type RoundState, roundId, shuffleCommand, shuffleComplete, startHand, voidRound, withReviewDeadline,
 } from '../rounds/service.ts';
 
 const Heartbeat = z.object({
@@ -68,8 +68,8 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const table = (await ctx.db.query('select * from poker_tables where id = $1', [t])).rows[0];
     if (!table) throw notFound('table');
     const rounds = (await ctx.db.query(
-      `select id, hand_no, state, procedure_step as step, cut_depth, locked_at, deal_start_at, flop, review_reasons
-         from rounds where table_id = $1 order by hand_no desc limit 3`, [t])).rows;
+      `select id, hand_no, state, procedure_step as step, cut_depth, locked_at, deal_start_at, flop, review_reasons, review_started_at
+         from rounds where table_id = $1 order by hand_no desc limit 3`, [t])).rows.map((r) => withReviewDeadline(r, ctx.config.reviewSlaMs) as Record<string, any>);
     // Entries per round. Independence (docs/12 §6): another person's cards are only visible once the
     // caller has submitted their own entry for that round, or the round is decided / under review.
     const all = (await ctx.db.query<{ round_id: string; source: string; person_id: string; cards: string[] }>(
@@ -84,7 +84,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
       r.my_entry = all.find((e) => e.round_id === r.id && e.person_id === me)?.cards ?? null;
       if (!open) r.flop = null;
     }
-    return { table: { id: table.id, name: table.name, status: table.status, pause_reason: table.pause_reason, kind: table.kind }, readiness: await tableReadiness(ctx.db, table), rounds, entries: rounds[0]?.entries ?? [] };
+    return { table: { id: table.id, name: table.name, status: table.status, pause_reason: table.pause_reason, pause_kind: table.pause_kind, kind: table.kind }, readiness: await tableReadiness(ctx.db, table), rounds, entries: rounds[0]?.entries ?? [] };
   });
 
   /** Who this credential is (role, person, table), so a tablet can confirm its enrollment. */
@@ -211,7 +211,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     // refunded now, in this transaction; a hand already in progress finishes or meets its deadline.
     const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [t])).rows[0];
     if (open) await voidRound(c, await lockRound(c, open.id), 'table paused', p.id, ev, ['OPEN']);
-    await c.query(`update poker_tables set status = 'paused', pause_reason = $2 where id = $1`, [t, String((req.body as { reason?: string })?.reason ?? 'paused by floor')]);
+    await c.query(`update poker_tables set status = 'paused', pause_kind = 'floor', pause_reason = $2 where id = $1`, [t, String((req.body as { reason?: string })?.reason ?? 'paused by floor')]);
     await audit(c, { type: 'table.paused', tableId: t, by: p.id });
     return { status: 200, body: { status: 'paused' } };
   }));
@@ -219,7 +219,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/provider/tables/:t/resume', write(async (c, p, req, ev) => {
     requireStaff(p, 'floor_manager');
     const { t } = req.params as H;
-    await c.query(`update poker_tables set status = 'active', pause_reason = null where id = $1`, [t]);
+    await c.query(`update poker_tables set status = 'active', pause_reason = null, pause_kind = null where id = $1`, [t]);
     await audit(c, { type: 'table.resumed', tableId: t, by: p.id });
     await ensureOpenRound(c, t, ev);
     return { status: 200, body: { status: 'active' } };

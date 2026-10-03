@@ -5,7 +5,7 @@ import { verifyAuditChain } from '../src/lib/audit.ts';
 import { tx } from '../src/lib/db.ts';
 import { balance } from '../src/lib/ledger.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, bet, harness, ledgerSums, ownedOrg, walletOf } from './helpers.ts';
+import { type Harness, bet, harness, ledgerSums, ownedOrg, walletOf, idemKey } from './helpers.ts';
 
 /** Leaderboards, prize pools and promotions (docs/16). */
 let h: Harness;
@@ -106,7 +106,7 @@ describe('leaderboards and prize pools', () => {
   it('organizations run boards on their own tables or rooms only, funded from their treasury', async () => {
     const owner = await user('club-owner');
     const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Night Owls' }, owner);
-    await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 5_000, pay_with: 'USDT' });
+    await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 5_000, pay_with: 'USDT' }, idemKey());
     const base = { name: 'Diamond week', mode: 'diamonds', currency: 'DIAMOND', metric: 'roi', prize_split_bps: [10_000], ...window() };
     expect((await h.api('POST', `/v1/org/${org}/leaderboards`, owner.token, { ...base, scope: 'global' })).body.type).toBe('scope_not_allowed');
     expect((await h.api('POST', `/v1/org/${org}/leaderboards`, owner.token, { ...base, scope: 'org', scope_ref: 'someone-else' })).body.type).toBe('scope_not_allowed');
@@ -184,7 +184,7 @@ describe('promotions', () => {
   it('club promotions wait for review; an organizer drop pays from its treasury within budget, to its own players only', async () => {
     const owner = await user('drop-owner');
     const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Drop Club' }, owner);
-    await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 1_000, pay_with: 'USDT' });
+    await h.api('POST', `/v1/org/${org}/diamonds/purchases`, owner.token, { diamonds: 1_000, pay_with: 'USDT' }, idemKey());
     expect((await h.api('POST', `/v1/org/${org}/promotions`, owner.token, { kind: 'free-chips', title: 'Not allowed', amount_minor: 10, ...window() })).body.type).toBe('kind_not_allowed');
     expect((await h.api('POST', `/v1/org/${org}/promotions`, owner.token, { kind: 'org-drop', title: 'Too big', mode: 'diamonds', currency: 'DIAMOND', amount_minor: 100, budget_minor: 50_000, ...window() })).body.type).toBe('insufficient_treasury');
     const drop = await h.api('POST', `/v1/org/${org}/promotions`, owner.token, { kind: 'org-drop', title: 'Diamond drop', mode: 'diamonds', currency: 'DIAMOND', amount_minor: 100, budget_minor: 150, ...window() });

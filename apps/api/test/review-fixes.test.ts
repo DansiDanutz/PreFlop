@@ -3,7 +3,7 @@ import { tx } from '../src/lib/db.ts';
 import { guardedLookup, isPrivateAddress, postWebhook } from '../src/lib/safeUrl.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady, idemKey } from './helpers.ts';
 
 /** Regressions for the Greptile review of b2c9c1e (one test per finding). */
 let h: Harness;
@@ -75,7 +75,7 @@ describe('Greptile review of b2c9c1e', () => {
     await realMoneyReady(h, p.id);
     await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 8_000 });
     const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 6_000, method: 'card' };
-    const both = await Promise.all([h.api('POST', '/v1/me/deposits', p.token, dep), h.api('POST', '/v1/me/deposits', p.token, dep)]);
+    const both = await Promise.all([h.api('POST', '/v1/me/deposits', p.token, dep, idemKey()), h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())]);
     expect(both.map((r) => r.status).sort()).toEqual([201, 403]);
     // raise to 20,000: pending for 24 h, then applied
     expect((await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 20_000 })).body.deposit_day_minor).toBe(8_000);
@@ -83,7 +83,7 @@ describe('Greptile review of b2c9c1e', () => {
     const l = (await h.api('GET', '/v1/me/limits', p.token)).body;
     expect(l.deposit_day_minor).toBe(20_000);
     expect(l.pending).toBeNull();
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).status).toBe(201);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).status).toBe(201);
   });
 
   it('5. the daily loss limit compares stablecoin stakes in EUR cents', async () => {
@@ -96,7 +96,7 @@ describe('Greptile review of b2c9c1e', () => {
     const p = await user('usdt');
     await h.api('POST', '/v1/me/kyc', p.token, {});
     await realMoneyReady(h, p.id);
-    await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 50_000_000, method: 'crypto' });
+    await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 50_000_000, method: 'crypto' }, idemKey());
     await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 10_000 }); // €100
     const odds = (await h.api('GET', '/v1/book')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
     const ok = await h.api('POST', '/v1/bets', p.token, { round_id: `sim-usdt:h${hand}`, selection_id: 'colour:mixed', stake_minor: 1_000_000, odds_centi: odds }, { 'idempotency-key': 'usdt-bet-0001' });
