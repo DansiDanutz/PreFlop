@@ -130,6 +130,20 @@ describe('tablet lock', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
+  it('a correct PIN in another tab clears the count for this tab too', async () => {
+    rec ??= await hashPin('402817', FAST);
+    const mem = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); }, removeItem: (k: string) => { mem.delete(k); } });
+    try {
+      const tabA = lockAt(0, { locked: true, store: localLockoutStore('pf.test.tabs') });
+      const tabB = lockAt(0, { locked: true, store: localLockoutStore('pf.test.tabs') });
+      for (let i = 1; i < FREE_TRIES; i++) expect((await tabA.unlock('000000', rec, i)).ok).toBe(false);
+      expect(await tabB.unlock('402817', rec, 10)).toEqual({ ok: true });
+      // Tab A's next wrong PIN is the first again, not the fifth: no wait.
+      expect(await tabA.unlock('000000', rec, 11)).toMatchObject({ ok: false, reason: 'wrong', failures: 1, waitMs: 0 });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('a PIN change on an unlocked tablet counts against the same attempts and backoff', async () => {
     rec ??= await hashPin('402817', FAST);
     const store = memoryStore();

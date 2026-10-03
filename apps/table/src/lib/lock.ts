@@ -103,15 +103,15 @@ export function setSigningGate(allowed: () => boolean) { gate = allowed; }
 export const signingAllowed = () => gate();
 
 /** localStorage-backed wrong-PIN counter (survives reloads; a reload also locks the tablet). */
-/** In-page copies of each stored record: what counts when the browser refuses to save it. */
-const mirrors = new Map<string, Lockout | null>();
+/** In-page copies of records the browser refused to save, by key (absent while saving works). */
+const unsaved = new Map<string, Lockout | null>();
 const stronger = (a: Lockout | null, b: Lockout | null): Lockout | null =>
   !a ? b : !b ? a : (b.failures > a.failures || (b.failures === a.failures && b.until > a.until) ? b : a);
 
 /**
- * The attempt record in localStorage, mirrored in memory. If storage can't be written (private
- * mode, quota), the in-memory copy keeps counting, so the backoff can never be reset by a failed
- * save; a successful PIN clears both.
+ * The attempt record in localStorage. Storage is the shared truth (another tab's correct PIN clears
+ * it for every tab); only while a write fails (private mode, quota) does an in-page copy keep
+ * counting, so a failed save can never reset the backoff.
  */
 export function localLockoutStore(key = 'pf.table.lockout'): LockoutStore {
   return {
@@ -120,12 +120,14 @@ export function localLockoutStore(key = 'pf.table.lockout'): LockoutStore {
       try {
         const v = JSON.parse(localStorage.getItem(key) ?? 'null') as Lockout | null;
         saved = v && Number.isFinite(v.failures) && Number.isFinite(v.until) ? v : null;
-      } catch { /* unreadable: the mirror decides */ }
-      return stronger(saved, mirrors.get(key) ?? null);
+      } catch { /* unreadable: only an unsaved copy can count */ }
+      return unsaved.has(key) ? stronger(saved, unsaved.get(key) ?? null) : saved;
     },
     set(v) {
-      mirrors.set(key, v);
-      try { if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key); } catch { /* private mode: the mirror keeps it */ }
+      try {
+        if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key);
+        unsaved.delete(key);
+      } catch { unsaved.set(key, v); }
     },
   };
 }
