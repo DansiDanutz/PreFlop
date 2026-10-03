@@ -11,6 +11,12 @@ export interface Round {
   deal_start_at: string | null;
   flop: string[] | null;
   review_reasons: string[] | null;
+  /**
+   * When an unresolved REVIEW is voided automatically (ISO-8601; null when not in REVIEW). Older
+   * servers omit it; lib/review.ts then falls back to `review_started_at` + 30 min when present.
+   */
+  review_deadline?: string | null;
+  review_started_at?: string | null;
   /** Per-round entries. Another person's cards are null until this person has entered (server-enforced). */
   entries: Entry[];
   has_dealer_entry: boolean;

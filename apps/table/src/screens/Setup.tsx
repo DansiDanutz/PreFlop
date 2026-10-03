@@ -2,6 +2,7 @@ import { Wordmark } from '@preflop/ui';
 import { KeyRound, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { BigButton, Choice } from '../components/controls.tsx';
+import { RevokeReminder } from '../components/RevokeReminder.tsx';
 import { DEFAULT_API_URL } from '../lib/api.ts';
 import { generateCredentialKey, publicKeyFingerprint, publicKeyPem } from '../lib/envelope.ts';
 import { type Identity, ROLE_LABEL, type Role, saveIdentity } from '../lib/keystore.ts';
@@ -52,6 +53,7 @@ export function Setup({ onDone }: { onDone: (id: Identity) => void }) {
   return (
     <div className="grid min-h-full place-items-center p-6">
       <div className="grid w-full max-w-5xl gap-10 md:grid-cols-[1fr_1.3fr]">
+        <div className="md:col-span-2"><RevokeReminder /></div>
         <div className="flex flex-col justify-center gap-6">
           <Wordmark size="lg" />
           <h1 className="font-serif text-5xl leading-[1.05]">Set up this table tablet</h1>
