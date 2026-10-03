@@ -109,10 +109,14 @@ export function VerifyEmailBanner() {
   return (
     <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-warn/40 bg-warn/10 px-5 py-2.5 text-[13px] lg:px-10">
       <MailWarning className="h-4 w-4 shrink-0 text-warn" aria-hidden />
-      <span className="min-w-0 flex-1">Confirm your email: we sent a link to <strong>{u.email}</strong>. Real-money play needs a confirmed address.</span>
-      {resend.isSuccess ? <span className="text-accent">Sent. Check your inbox.</span>
-        : resend.isError ? <span className="text-warn">{errorText(resend.error)}</span>
-          : <button type="button" disabled={resend.isPending} onClick={() => resend.mutate()} className="font-semibold text-accent hover:underline">Send the link again</button>}
+      {/* A long address wraps anywhere instead of running under the action; on phones the action
+          takes its own line, lined up with the text. */}
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Confirm your email: we sent a link to <strong>{u.email}</strong>. Real-money play needs a confirmed address.</span>
+      <span className="basis-full pl-7 sm:basis-auto sm:pl-0">
+        {resend.isSuccess ? <span className="text-accent">Sent. Check your inbox.</span>
+          : resend.isError ? <span className="text-warn">{errorText(resend.error)}</span>
+            : <button type="button" disabled={resend.isPending} onClick={() => resend.mutate()} className="min-h-[44px] font-semibold text-accent hover:underline sm:min-h-0">Send the link again</button>}
+      </span>
     </div>
   );
 }

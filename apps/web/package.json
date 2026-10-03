@@ -12,6 +12,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capacitor/status-bar": "8.0.4",
     "@fontsource/inter": "^5.3.0",
     "@preflop/client": "workspace:*",
     "@preflop/odds-engine": "workspace:*",

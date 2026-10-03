@@ -69,6 +69,12 @@ describe('validated config', () => {
     }
   });
 
+  it('production accepts the native apps\' origins (capacitor://localhost on iOS, https://localhost on Android)', () => {
+    const env = { ...PROD, CORS_ORIGINS: `capacitor://localhost,https://localhost,${PROD.CORS_ORIGINS}` };
+    expect(problemsOf(env)).toEqual([]);
+    expect(corsOrigin(loadConfig(env).corsOrigins)).toEqual(['capacitor://localhost', 'https://localhost', 'https://preflop.example.com', 'https://console.preflop.example.com']);
+  });
+
   it('a safe production environment starts', () => {
     expect(problemsOf(PROD)).toEqual([]);
     expect(loadConfig(PROD).nodeEnv).toBe('production');
