@@ -10,7 +10,7 @@ import { newId } from '../lib/ids.ts';
 import { type Transfer, acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { poolAccount } from '../rounds/service.ts';
-import { type BetView, assertEligibleInTx, assertReplayMatches, potentialPayoutMinor, statsOf, withKeyLock } from './service.ts';
+import { type BetView, assertEligibleInTx, assertReplayMatches, potentialPayoutMinor, priceAcceptable, statsOf, withKeyLock } from './service.ts';
 
 /**
  * Rooms: books run by an organizer or club in virtual chips or diamonds (docs/08, docs/10).
@@ -169,7 +169,7 @@ export async function placeRoomBet(db: Db, i: RoomBetInput, ev: EventBatch, mode
   try { stats = statsOf(i.selectionId); } catch { throw unprocessable('unknown_selection', `no selection ${i.selectionId}`); }
   const odds = roomOdds(room, stats.wins);
   if (odds === null) throw unprocessable('not_offered', 'selection not offered in this room');
-  if (room.house === 'organizer' && odds !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: odds });
+  if (room.house === 'organizer' && !priceAcceptable(odds, i)) throw conflict('price_changed', 'the price changed', { odds_centi: odds });
 
   const u = (await db.query<{ status: string }>('select status from users where id = $1', [i.userId])).rows[0];
   if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot bet');

@@ -1,14 +1,16 @@
-import { Badge, Card, EmptyState, cx, formatMoney, formatOdds } from '@preflop/ui';
-import { useQuery } from '@tanstack/react-query';
+import { Badge, Button, Card, EmptyState, cx, formatMoney, formatOdds } from '@preflop/ui';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { MiniFlop } from '../../components/MiniFlop.tsx';
 import { PageHeader } from '../../components/AppShell.tsx';
-import { ErrorState, Skeleton, Tabs } from '../../components/ui.tsx';
+import { ErrorState, Select, Skeleton, Tabs } from '../../components/ui.tsx';
+import { ALL_WALLETS, activityQuery, nextCursor, walletFilters } from '../../lib/activity.ts';
 import { api } from '../../lib/api.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
-import { qk, useBook } from '../../lib/queries.ts';
+import { qk, useBook, useWallets } from '../../lib/queries.ts';
+import { balanceLabel } from '../../lib/rooms.ts';
 import { groupByRound, summarizeRound } from '../../lib/rounds.ts';
 import { type StatsResponse, statsBlocks } from '../../lib/stats.ts';
 
@@ -72,14 +74,30 @@ function StatsStrip({ stats, loading }: { stats: StatsResponse | undefined; load
 
 function BetsList({ filter }: { filter: 'all' | 'won' | 'lost' }) {
   const book = useBook();
-  const bets = useQuery({ queryKey: qk.bets, queryFn: () => api.myBets({ limit: 100 }), refetchInterval: 10_000 });
+  const wallets = useWallets();
+  const [walletId, setWalletId] = useState(ALL_WALLETS.id);
+  const walletOptions = walletFilters(wallets.data?.wallets);
+  const wallet = walletOptions.find((w) => w.id === walletId) ?? ALL_WALLETS;
+  // Pages of 50, newest first: "Load more" fetches the page before the last bet shown.
+  const bets = useInfiniteQuery({
+    queryKey: [...qk.bets, 'activity', filter, wallet.id],
+    queryFn: ({ pageParam }) => api.myBets(activityQuery(filter, wallet, pageParam)),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => nextCursor(last),
+    refetchInterval: 10_000,
+  });
+  const walletPicker = walletOptions.length > 2 && (
+    <Select label="Wallet" className="mb-4 max-w-[280px]" value={wallet.id} onChange={(e) => setWalletId(e.target.value)}>
+      {walletOptions.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+    </Select>
+  );
   if (bets.isLoading) return <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-28" />)}</div>;
   if (bets.isError) return <ErrorState title="Could not load your predictions" onRetry={() => void bets.refetch()} />;
-  const all = bets.data?.bets ?? [];
-  const groups = groupByRound(filter === 'all' ? all : all.filter((b) => b.status === filter));
+  const all = bets.data?.pages.flatMap((p) => p.bets) ?? [];
+  const groups = groupByRound(all);
   if (!groups.length) {
-    return all.length ? (
-      <EmptyState title={filter === 'won' ? 'No correct predictions yet' : 'Nothing here yet'}>Your next flop could change that.</EmptyState>
+    return filter !== 'all' || wallet.id !== ALL_WALLETS.id ? (
+      <>{walletPicker}<EmptyState title={filter === 'won' ? 'No correct predictions yet' : 'Nothing here yet'}>Your next flop could change that.</EmptyState></>
     ) : (
       <div className="flex flex-col items-center rounded-[12px] border border-dashed border-line-strong px-6 py-14 text-center">
         <span aria-hidden className="text-[34px] text-accent/70">♣</span>
@@ -91,16 +109,20 @@ function BetsList({ filter }: { filter: 'all' | 'won' | 'lost' }) {
   }
   const name = (id: string) => resolveOption(book.index, id)?.name ?? id;
   return (
+    <>
+    {walletPicker}
     <ul className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 [&>li]:min-w-0">
       {groups.map((g) => {
+        // One card per round AND wallet: free chips and diamonds on one round are never added up.
         const s = summarizeRound(g.bets)!;
         return (
-          <li key={g.roundId}>
+          <li key={`${g.roundId}|${g.walletKey}`}>
             <Card className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate font-semibold">{s.tableName}</div>
                   <div className="text-xs text-muted">{roundLabel(s.handNo)} · {when(g.bets[0]!.placed_at)}{s.flop ? ` · ${resultLine(s.flop)}` : ''}</div>
+                  <div className="mt-0.5 text-xs text-ink/80">{balanceLabel(s.currency)}{s.roomId ? ' · room' : ''}</div>
                 </div>
                 <MiniFlop cards={s.flop} />
               </div>
@@ -130,6 +152,14 @@ function BetsList({ filter }: { filter: 'all' | 'won' | 'lost' }) {
         );
       })}
     </ul>
+    {bets.hasNextPage && (
+      <div className="mt-5 flex justify-center">
+        <Button variant="secondary" disabled={bets.isFetchingNextPage} onClick={() => void bets.fetchNextPage()}>
+          {bets.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </Button>
+      </div>
+    )}
+    </>
   );
 }
 

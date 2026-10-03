@@ -96,7 +96,13 @@ export interface Round {
 
 export interface PlaceBet { round_id: string; selection_id: string; stake_minor: number; odds_centi: number; accept_price_change?: boolean; room_id?: string }
 export interface BetView { bet_id: string; round_id: string; selection_id: string; stake_minor: number; odds_centi: number; potential_payout_minor: number; mode: PlayMode; currency: string; status: string }
-export interface MyBet extends BetView { payout_minor: number | null; placed_at: string; settled_at: string | null; hand_no: number; table_id: string; table_name: string; flop: string[] | null; room_id?: string | null }
+export interface MyBet extends BetView {
+  payout_minor: number | null; placed_at: string; settled_at: string | null; hand_no: number; table_id: string; table_name: string; flop: string[] | null; room_id?: string | null;
+  /** The Idempotency-Key the bet was placed with: how a client finds out whether its uncertain request landed. */
+  idempotency_key?: string | null;
+}
+/** GET /v1/me/bets filters. `before` is a bet_id (the previous page's next_before); room_id "none" means bets outside rooms. */
+export interface MyBetsFilter { limit?: number; round_id?: string; status?: string; before?: string; mode?: PlayMode; currency?: string; room_id?: string }
 /** A money amount of one (mode, currency): amounts of different currencies are never added together. */
 export interface CurrencyAmount { currency: string; mode: PlayMode; amount_minor: number }
 /** Top-level fields: play money only (as before). by_currency: one row per (mode, currency) bet in. */
@@ -394,7 +400,8 @@ export function createClient(o: ClientOptions) {
     wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets', S.walletsSchema),
     resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset', {}, undefined, S.balanceSchema),
     placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }, S.betViewSchema),
-    myBets: (f: { limit?: number; round_id?: string; status?: string } = {}) => get<{ bets: MyBet[] }>(`/v1/me/bets${q(f)}`, S.myBetsSchema),
+    /** Newest first; next_before (null on the last page) is the `before` of the next page. */
+    myBets: (f: MyBetsFilter = {}) => get<{ bets: MyBet[]; next_before?: string | null }>(`/v1/me/bets${q({ ...f })}`, S.myBetsSchema),
     myLedger: () => get<{ entries: LedgerLine[] }>('/v1/me/ledger'),
     myStats: () => get<MyStats>('/v1/me/stats', S.myStatsSchema),
     favorites: () => get<{ selection_ids: string[] }>('/v1/me/favorites'),
@@ -565,22 +572,30 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
   let ws: WebSocket | null = null;
   let closed = false;
   let retry = 500;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let topics = [...o.topics];
   const open = () => {
-    ws = new WebSocket(o.url);
-    ws.onopen = () => {
+    timer = null;
+    // A reconnect scheduled before close() (logout, token change, unmount) never opens a socket.
+    if (closed) return;
+    const sock = new WebSocket(o.url);
+    ws = sock;
+    sock.onopen = () => {
+      if (closed || ws !== sock) { sock.close(); return; }
       retry = 500;
       o.onStatus?.('open');
-      if (o.token) ws?.send(JSON.stringify({ type: 'auth', token: o.token }));
-      ws?.send(JSON.stringify({ subscribe: topics }));
+      if (o.token) sock.send(JSON.stringify({ type: 'auth', token: o.token }));
+      sock.send(JSON.stringify({ subscribe: topics }));
     };
-    ws.onmessage = (m) => {
+    sock.onmessage = (m) => {
+      if (closed || ws !== sock) return;
       const e = parseStreamFrame(m.data);
       if (e) o.onEvent(e);
     };
-    ws.onclose = () => {
+    sock.onclose = () => {
+      if (closed || ws !== sock) return;
       o.onStatus?.('closed');
-      if (!closed) setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
+      timer = setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
     };
   };
   open();
@@ -590,9 +605,13 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
       topics = [...next];
       if (ws?.readyState === 1) ws.send(JSON.stringify({ subscribe: topics, unsubscribe: un }));
     },
+    /** Disposes the stream for good: cancels a pending reconnect and closes the socket. */
     close() {
       closed = true;
-      ws?.close();
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      const s = ws;
+      ws = null;
+      s?.close();
     },
   };
 }

@@ -87,22 +87,44 @@ export function TermsPage() {
 
 export function PrivacyPage() {
   return (
-    <LegalPage eyebrow="Legal" title="Privacy notice" updated="2 October 2026" meta={['Privacy notice', 'How PreFlop collects and uses personal data (draft for review by counsel).']}>
+    <LegalPage eyebrow="Legal" title="Privacy notice" updated="3 October 2026" meta={['Privacy notice', 'How PreFlop collects and uses personal data (draft for review by counsel).']}>
+      <p>This draft describes the personal data the PreFlop service collects today and why. Items marked <em>to be confirmed</em> are open for counsel and will be completed before this notice is final.</p>
+      <h2>Who is responsible</h2>
+      <p>The data controller, its registered address and the contact for data-protection requests are <em>to be confirmed</em>. Until then, privacy questions can be sent through support in the app.</p>
       <h2>What we collect</h2>
       <ul>
-        <li>Account details: display name, email, an optional country and a hashed password.</li>
-        <li>Activity: predictions, balances and ledger entries needed to run the game and audit it.</li>
-        <li>Identity documents only if you choose real-money play where it is available.</li>
-        <li>Technical data such as device type and IP address for security and fraud prevention.</li>
+        <li><strong>Account details (required to register):</strong> your email address, a display name, your date of birth, your country of residence and your password, which we store only as a salted hash.</li>
+        <li><strong>Email verification and password resets:</strong> the address each link was sent to, when it was sent and whether it was used. We keep a hash of each link, never the link itself.</li>
+        <li><strong>Sign-in and sessions:</strong> when each session starts and expires and how long you have played in it (for session limits and reality checks), and failed sign-in attempts with the email address and IP address they came from (to stop password guessing).</li>
+        <li><strong>Two-factor authentication:</strong> if you turn it on, the secret your authenticator app uses. It is required for PreFlop team accounts.</li>
+        <li><strong>Play activity:</strong> your predictions, balances, ledger entries, rooms and tournaments you joined, favorites, and leaderboard results.</li>
+        <li><strong>Responsible-play settings:</strong> your limits, self-exclusion and when they change.</li>
+        <li><strong>Identity documents:</strong> only if you choose real-money play where it is available. Real money is switched off today.</li>
+        <li><strong>Technical data:</strong> your IP address and basic request details, used for security, rate limiting and fraud prevention.</li>
       </ul>
+      <h2>Why we use it</h2>
+      <ul>
+        <li><strong>To run your account and the game:</strong> sign-in, balances, settling predictions and showing your history.</li>
+        <li><strong>Age and territory checks:</strong> your date of birth keeps PreFlop 18+ only, and your country decides whether you may register and which play modes are open to you.</li>
+        <li><strong>Security:</strong> email verification, two-factor authentication, sign-in protection and an audit trail of account and money events.</li>
+        <li><strong>Responsible play:</strong> session limits, reality checks, limits and self-exclusion.</li>
+        <li><strong>Legal obligations:</strong> including anti-money-laundering and identity checks wherever real money applies.</li>
+      </ul>
+      <p>The legal basis for each purpose (for example contract, legal obligation or legitimate interest) is <em>to be confirmed</em>. We do not sell personal data.</p>
+      <h2>Who can see it</h2>
+      <ul>
+        <li>Your display name and results appear on leaderboards and tournament standings you take part in. Your email, date of birth and country are never shown to other players.</li>
+        <li>If you play in an organizer’s or club’s room, that organizer sees the transfers and bets made in its room.</li>
+        <li>Service providers that host the service and send our emails process data on our behalf. Their names and locations are <em>to be confirmed</em>.</li>
+      </ul>
+      <h2>How long we keep it</h2>
+      <p>Retention periods are <em>to be confirmed</em>: account data while your account is open and for <em>[period to be confirmed]</em> after it closes; play, ledger and audit records for <em>[period to be confirmed]</em>, as legal and audit obligations require; failed sign-in attempts and expired links for <em>[period to be confirmed]</em>.</p>
       <h2>What we never stream</h2>
       <p>Table cameras show the dealer, the shuffler, the cards and the flop. Players at the table are never shown on the stream.</p>
-      <h2>How we use it</h2>
-      <p>To provide the service, keep it secure, meet legal obligations (including anti-money-laundering rules where real money applies) and support responsible play. We do not sell personal data.</p>
       <h2>Storage on your device</h2>
-      <p>The app keeps your session token and preferences such as favorite bets and clubs in your browser’s local storage. Partner widgets keep their token only for the browser session.</p>
+      <p>The app keeps your session token and preferences such as favorite bets and clubs in your browser’s local storage. A prediction you have confirmed but whose result has not yet reached the app is kept in session storage until it is confirmed, so it is never placed twice. Partner widgets keep their token only for the browser session.</p>
       <h2>Your rights</h2>
-      <p>Depending on where you live, you can ask to access, correct, export or delete your data, or object to processing. Some records must be kept for legal and audit reasons.</p>
+      <p>Depending on where you live, you can ask to access, correct, export or delete your data, or object to processing, and you can complain to your data-protection authority. Some records must be kept for legal and audit reasons. How to send a request is <em>to be confirmed</em>; until then, use support in the app.</p>
     </LegalPage>
   );
 }

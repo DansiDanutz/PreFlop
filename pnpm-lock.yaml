@@ -184,6 +184,9 @@ importers:
       '@preflop/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@preflop/odds-engine':
+        specifier: workspace:*
+        version: link:../../packages/odds-engine
       '@preflop/ui':
         specifier: workspace:*
         version: link:../../packages/ui

@@ -5,7 +5,7 @@ import { Sheet } from '../ui.tsx';
  * "Confirm this stake?": shown before a stake above 25% of the balance (or an all-in) is placed,
  * with the stake and what it returns if it wins.
  */
-export function StakeConfirmSheet({ open, onClose, onConfirm, stake, potential, share, allIn, selection, busy = false }: {
+export function StakeConfirmSheet({ open, onClose, onConfirm, stake, potential, share, allIn, selection, busy = false, breakdown = [] }: {
   open: boolean; onClose: () => void; onConfirm: () => void;
   /** Formatted stake, e.g. "2,500 free chips" or "800 points". */
   stake: string;
@@ -16,6 +16,8 @@ export function StakeConfirmSheet({ open, onClose, onConfirm, stake, potential, 
   allIn: boolean;
   selection: string;
   busy?: boolean;
+  /** Fees and the amount at risk when they differ from the stake (rooms), formatted. */
+  breakdown?: readonly { label: string; value: string }[];
 }) {
   return (
     <Sheet open={open} onClose={onClose} labelledBy="stake-confirm-title">
@@ -27,6 +29,9 @@ export function StakeConfirmSheet({ open, onClose, onConfirm, stake, potential, 
       <dl className="mt-5 divide-y divide-line rounded-[12px] border border-line-strong/60 bg-surface-2">
         <div className="flex items-center justify-between gap-4 px-4 py-3"><dt className="text-sm text-muted">Prediction</dt><dd className="text-right font-semibold">{selection}</dd></div>
         <div className="flex items-center justify-between gap-4 px-4 py-3"><dt className="text-sm text-muted">Stake</dt><dd className="text-right font-semibold" data-testid="confirm-stake">{stake}</dd></div>
+        {breakdown.map((b) => (
+          <div key={b.label} className="flex items-center justify-between gap-4 px-4 py-3"><dt className="text-sm text-muted">{b.label}</dt><dd className="text-right">{b.value}</dd></div>
+        ))}
         <div className="flex items-center justify-between gap-4 px-4 py-3"><dt className="text-sm text-muted">Returns if correct</dt><dd className="text-right font-semibold text-accent" data-testid="confirm-potential">{potential}</dd></div>
       </dl>
       <div className="mt-5 grid grid-cols-2 gap-3">

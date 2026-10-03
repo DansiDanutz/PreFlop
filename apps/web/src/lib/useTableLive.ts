@@ -5,7 +5,7 @@ import { api } from './api.ts';
 import { useToken } from './auth.tsx';
 import { applyRoundEvent } from './live.ts';
 import { qk, useTableDetail } from './queries.ts';
-import { type RoundSummary, isFinal, summarizeRound } from './rounds.ts';
+import { type RoundSummary, isFinal, summarizeRounds } from './rounds.ts';
 import { useStream } from './stream.ts';
 
 /**
@@ -50,9 +50,11 @@ export function useTableLive(tableId: string) {
         const ours = placedRef.current.filter((p) => p.roundId === roundId);
         if (!ours.length || ours.some((p) => !byId.has(p.betId))) continue;
         if (mine.some((b) => !isFinal(b.status))) continue;
-        const s = summarizeRound(mine);
-        if (s && !shown.current.has(roundId)) {
-          shown.current.add(roundId);
+        // One summary per wallet: 100 free chips and 20 diamonds on one round are never added up.
+        for (const s of summarizeRounds(mine)) {
+          const k = `${roundId}|${s.walletKey}`;
+          if (shown.current.has(k)) continue;
+          shown.current.add(k);
           setCompleted((c) => [...c, s]);
           void qc.invalidateQueries({ queryKey: ['me'] });
         }

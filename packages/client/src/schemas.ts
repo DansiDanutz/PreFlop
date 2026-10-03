@@ -37,9 +37,10 @@ export const betViewSchema = z.object({
 export const myBetSchema = betViewSchema.extend({
   payout_minor: nullable(nonNegMinor), placed_at: isoTime, settled_at: nullable(isoTime),
   hand_no: z.number().int(), table_id: z.string(), table_name: z.string(), flop: nullable(z.array(z.string())),
+  idempotency_key: nullable(z.string()).optional(),
 }).passthrough();
 
-export const myBetsSchema = z.object({ bets: z.array(myBetSchema) }).passthrough();
+export const myBetsSchema = z.object({ bets: z.array(myBetSchema), next_before: nullable(z.string()).optional() }).passthrough();
 
 const statsFields = {
   bets: z.number().int().nonnegative(), won: z.number().int().nonnegative(), lost: z.number().int().nonnegative(),
