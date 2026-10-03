@@ -6,7 +6,7 @@ const MESSAGES: Record<string, string> = {
   forbidden_role: 'Your role is not allowed to do this.',
   forbidden_table: 'This tablet credential belongs to a different table.',
   replayed_request: 'Request was refused as a replay. Try again.',
-  stale_request: 'Tablet clock is wrong (more than 30 s off). Check the tablet date and time.',
+  stale_request: 'Signed requests are refused as out of date, even after re-syncing with the PreFlop clock. Check the tablet date, time and time zone, then retry.',
   table_not_ready: 'Table is not ready (paused, stream down or certification missing).',
   credential_revoked: 'This tablet credential has been revoked. Ask the club admin.',
   unknown_credential: 'Credential not found. Check the id the club admin gave you.',
@@ -14,12 +14,16 @@ const MESSAGES: Record<string, string> = {
   unsigned_request: 'Request was not signed.',
   invalid_flop: 'Choose exactly three different cards.',
   review_expired: 'The review deadline passed. The hand was voided and refunded.',
+  platform_review_required: 'Real money rides on this hand, so the PreFlop team decides it. Contact PreFlop support.',
+  platform_resume_required: 'This table is on an integrity hold (outcome monitor, failed captures or a PreFlop decision). Only the PreFlop team can lift it.',
   idempotency_mismatch: 'A retry did not match the original request. Start the action again.',
   retry_later: 'Server busy. Retry.',
   not_found: 'Not found.',
   bad_request: 'The request was refused.',
   tablet_locked: 'The tablet is locked. Unlock it with your PIN, then retry.',
   network: 'No answer from PreFlop. Check the connection, then retry.',
+  uncertain_response: 'PreFlop answered, but the answer could not be read, so it is not certain the action was recorded. Retry (it is safe: the action will not run twice).',
+  aborted: 'Cancelled.',
   timeout: 'PreFlop did not answer in time. Retry (it is safe: the action will not run twice).',
 };
 
@@ -30,4 +34,4 @@ export function problemMessage(type: string, title?: string): string {
 }
 
 /** Problems a retry with the same Idempotency-Key may fix (no answer, or server busy). */
-export const isRetryable = (type: string) => type === 'tablet_locked' || type === 'network' || type === 'timeout' || type === 'retry_later' || type === 'internal';
+export const isRetryable = (type: string) => type === 'tablet_locked' || type === 'network' || type === 'timeout' || type === 'uncertain_response' || type === 'retry_later' || type === 'internal';

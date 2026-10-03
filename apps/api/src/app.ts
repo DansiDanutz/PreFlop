@@ -13,6 +13,7 @@ import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { growthRoutes } from './routes/growth.ts';
+import { newsRoutes } from './routes/news.ts';
 import { tournamentRoutes } from './routes/tournaments.ts';
 import { orgRoutes } from './routes/org.ts';
 import { partnerRoutes } from './routes/partner.ts';
@@ -20,7 +21,7 @@ import { playerRoutes } from './routes/player.ts';
 import { providerRoutes } from './routes/provider.ts';
 import { publicRoutes } from './routes/public.ts';
 import { mfaEnrolmentAllowed, securityRoutes, staffMfaRequired } from './routes/security.ts';
-import { streamRoutes } from './routes/stream.ts';
+import { STREAM_MAX_PAYLOAD, streamRoutes } from './routes/stream.ts';
 import type { Timing } from './rounds/service.ts';
 
 declare module 'fastify' {
@@ -119,7 +120,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   });
 
   await app.register(cors, { origin: corsOrigin(config.corsOrigins), credentials: true });
-  await app.register(websocket);
+  await app.register(websocket, { options: { maxPayload: STREAM_MAX_PAYLOAD } });
 
   app.setErrorHandler((err: unknown, req: FastifyRequest, reply: FastifyReply) => {
     if (err instanceof ApiError) {
@@ -174,6 +175,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   await growthRoutes(app, ctx);
   await agentRoutes(app, ctx);
   await tournamentRoutes(app, ctx);
+  await newsRoutes(app, ctx);
   await orgRoutes(app, ctx);
   await partnerRoutes(app, ctx);
   await adminRoutes(app, ctx);

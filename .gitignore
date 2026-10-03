@@ -6,3 +6,4 @@ coverage/
 .data/
 *.tmp.ts
 .claude/worktrees/
+.env

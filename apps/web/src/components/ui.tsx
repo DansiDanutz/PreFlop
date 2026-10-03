@@ -2,6 +2,7 @@ import { Button, Card, cx } from '@preflop/ui';
 import { ArrowLeft, CircleAlert, Search, X } from 'lucide-react';
 import { type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useEffect, useId, useRef } from 'react';
 import { useNavigate } from 'react-router';
+import { createPortal } from 'react-dom';
 
 /** Small app-level building blocks shared by the player app and the website. */
 
@@ -112,21 +113,77 @@ export function TextArea({ label, className, ...p }: TextareaHTMLAttributes<HTML
   );
 }
 
-export function Select({ label, className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { label: string }) {
+export function Select({ label, className, children, error, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; error?: string | null | undefined }) {
   const id = useId();
   return (
     <div className={className}>
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-ink">{label}</label>
-      <select id={id} className={inputCls} {...p}>{children}</select>
+      <select id={id} className={inputCls} aria-invalid={!!error} aria-describedby={error ? `${id}-h` : undefined} {...p}>{children}</select>
+      {error && <div id={`${id}-h`} className="mt-1.5 text-xs text-danger">{error}</div>}
     </div>
   );
 }
 
 // ------------------------------------------------------------------ sheet / dialog
 
-/** Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
+/**
+ * Focus trap step: where Tab (or Shift+Tab) should go from `current` among a dialog's focusable
+ * elements, or null to let the browser move on. Wraps at both ends; from the dialog itself (or
+ * anything outside the list) Tab goes to the first control and Shift+Tab to the last.
+ */
+export function trapFocus<T>(items: readonly T[], current: T | null, shift: boolean): T | null {
+  if (!items.length) return null;
+  const i = current === null ? -1 : items.indexOf(current);
+  if (i === -1) return shift ? items[items.length - 1]! : items[0]!;
+  if (shift && i === 0) return items[items.length - 1]!;
+  if (!shift && i === items.length - 1) return items[0]!;
+  return null;
+}
+
+/** The part of an Element that inertOutside needs (a real DOM element, or a test double). */
+export interface InertNode {
+  readonly tagName: string;
+  readonly parentElement: InertNode | null;
+  readonly children: ArrayLike<InertNode>;
+  hasAttribute(name: string): boolean;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+}
+
+const MODAL_MARK = 'data-pf-inert';
+
+/**
+ * Open sheets in opening order. Every sheet is portalled straight into <body>, so the page and the
+ * sheets are siblings there and modality is one rule over <body>'s children: everything except the
+ * top sheet is inert, earlier sheets included. A sheet that opens while another is open (a bet
+ * settling behind the reality check) is never itself inside an inert subtree, and closing either
+ * one, in any order, leaves the right one active.
+ */
+export function applyModalStack(body: InertNode, stack: readonly InertNode[]): void {
+  const top = stack[stack.length - 1] ?? null;
+  for (const el of Array.from(body.children)) {
+    if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+    const want = top !== null && el !== top;
+    // Only touch what this rule set (MODAL_MARK): an element inert for another reason stays so.
+    if (want && !el.hasAttribute('inert')) { el.setAttribute('inert', ''); el.setAttribute(MODAL_MARK, ''); }
+    else if (!want && el.hasAttribute(MODAL_MARK)) { el.removeAttribute('inert'); el.removeAttribute(MODAL_MARK); }
+  }
+}
+
+const openSheets: HTMLElement[] = [];
+
+/**
+ * Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. Focus
+ * moves into it on open, Tab and Shift+Tab cycle inside it, and focus returns to the opener on close.
+ * It is aria-modal and portalled into <body>; while it is the top sheet, the page and any earlier
+ * sheet are inert (applyModalStack), so neither the keyboard, the pointer nor a screen reader's
+ * virtual cursor can reach what is behind it.
+ */
 export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
   // The latest onClose, so a parent passing a new function each render does not re-run the
   // open effect (which would pull focus out of an input on every keystroke).
   const closeRef = useRef(onClose);
@@ -134,22 +191,39 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
+    const me = backdrop.current;
+    if (me) { openSheets.push(me); applyModalStack(document.body, openSheets); }
     // Focus the dialog itself once on open; Tab then moves into its controls.
     ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'Escape' && e.key !== 'Tab') || !ref.current) return;
+      // With sheets stacked, only the top one (the last opened) handles Escape and traps focus.
+      if (openSheets[openSheets.length - 1] !== me) return;
+      if (e.key === 'Escape') { closeRef.current(); return; }
+      const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+      const active = document.activeElement as HTMLElement | null;
+      const inside = !!active && ref.current.contains(active);
+      if (!items.length) { e.preventDefault(); ref.current.focus(); return; }
+      const next = trapFocus(items, inside ? active : null, e.shiftKey);
+      if (next) { e.preventDefault(); next.focus(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
+      const at = me ? openSheets.indexOf(me) : -1;
+      if (at !== -1) { openSheets.splice(at, 1); applyModalStack(document.body, openSheets); }
       prev?.focus?.();
     };
   }, [open]);
   if (!open) return null;
-  return (
-    <div className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+  const sheet = (
+    <div ref={backdrop} className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={labelledBy ? undefined : title} aria-labelledby={labelledBy}
         className={cx('pf-sheet-in max-h-[92dvh] w-full overflow-y-auto outline-none rounded-t-[16px] border border-line-strong/70 bg-surface p-5 pb-[max(20px,env(safe-area-inset-bottom))] sm:rounded-[14px] sm:p-7', wide ? 'max-w-[640px]' : 'max-w-[460px]')}>
         {children}
       </div>
     </div>
   );
+  // On the server (and in tests without a DOM) there is no <body> to portal into.
+  return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
 }

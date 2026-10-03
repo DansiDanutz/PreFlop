@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { pruneNonces } from './auth/envelope.ts';
+import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
 import { deliverDue } from './routes/partner.ts';
@@ -98,11 +99,11 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       await runOutboxOnce(db, t);
       await sweepOnce(db, t);
       await deliverDue(db);
-      if (mail) await deliverMail(db, mail.transport, mail.from);
       // Housekeeping once a minute: consumed request nonces past the replay window.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
+        await pruneBetChanges(db);
       }
     } catch (e) {
       console.error('worker error', e);
@@ -112,10 +113,20 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
     if (current || stopped) return;
     current = tick().finally(() => { current = null; });
   }, everyMs);
+  // Email runs on its own loop: a slow provider or a backlog never holds up the game tick (settlement,
+  // refunds, the heartbeat). One pass at a time, so a slow pass only delays the next email pass.
+  let mailing: Promise<void> | null = null;
+  const mailTimer = mail ? setInterval(() => {
+    if (mailing || stopped) return;
+    mailing = deliverMail(db, mail.transport, mail.from)
+      .then(() => {}, (e) => { console.error('mail worker error', e); })
+      .finally(() => { mailing = null; });
+  }, everyMs) : null;
   return async () => {
     stopped = true;
     clearInterval(timer);
-    await current;
+    if (mailTimer) clearInterval(mailTimer);
+    await Promise.all([current, mailing]);
     await db.query('delete from worker_heartbeats where worker_id = $1', [workerId]).catch(() => {});
   };
 }

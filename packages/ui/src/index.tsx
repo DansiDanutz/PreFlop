@@ -250,15 +250,36 @@ export function RoundStepper({ phase, className }: { phase: RoundPhase; classNam
 
 // ------------------------------------------------------------------ money
 
-/** Formats integer minor units for a currency (PLAY/CHIP/DIAMOND are whole units; EUR 2 dp; USDT/USDC 6 dp shown as 2). */
-export function formatMoney(minor: number, currency: string): string {
-  const digits: Record<string, number> = { EUR: 2, USDT: 6, USDC: 6, PLAY: 0, CHIP: 0, DIAMOND: 0 };
-  const d = digits[currency] ?? 2;
-  const v = Math.abs(minor) / 10 ** d;
+/** Minor-unit digits per currency: PLAY/CHIP/DIAMOND are whole units, EUR has cents, USDT/USDC 6 dp. */
+export const CURRENCY_DIGITS: Record<string, number> = { EUR: 2, USDT: 6, USDC: 6, PLAY: 0, CHIP: 0, DIAMOND: 0 };
+
+/** The number alone, scaled by the currency's minor digits: 150 EUR → "1.50", 1500 PLAY → "1,500". USDT/USDC show 2 dp. */
+export function formatAmount(minor: number, currency: string): string {
+  const d = CURRENCY_DIGITS[currency] ?? 2;
   const shown = currency === 'USDT' || currency === 'USDC' ? 2 : d;
-  const n = v.toLocaleString('en-US', { minimumFractionDigits: shown, maximumFractionDigits: shown });
+  const n = (Math.abs(minor) / 10 ** d).toLocaleString('en-US', { minimumFractionDigits: shown, maximumFractionDigits: shown });
+  return minor < 0 ? `-${n}` : n;
+}
+
+/**
+ * Formats integer minor units with their unit, so an amount is never ambiguous:
+ * "1,000 free chips" (PLAY), "1,500 chips" (CHIP), "100 ◆" (DIAMOND), "€1.50" (EUR), "1.00 USDT".
+ */
+export function formatMoney(minor: number, currency: string): string {
+  const n = formatAmount(Math.abs(minor), currency);
   const sign = minor < 0 ? '-' : '';
-  return currency === 'EUR' ? `${sign}€${n}` : currency === 'PLAY' ? `${sign}${n}` : currency === 'DIAMOND' ? `${sign}${n} ◆` : `${sign}${n} ${currency}`;
+  switch (currency) {
+    case 'EUR': return `${sign}€${n}`;
+    case 'PLAY': return `${sign}${n} free chips`;
+    case 'CHIP': return `${sign}${n} chips`;
+    case 'DIAMOND': return `${sign}${n} ◆`;
+    default: return `${sign}${n} ${currency}`;
+  }
+}
+
+/** Compact form for tight spots (stake pills, a balance beside a chip icon): no word unit for PLAY/CHIP. */
+export function formatMoneyShort(minor: number, currency: string): string {
+  return currency === 'PLAY' || currency === 'CHIP' ? formatAmount(minor, currency) : formatMoney(minor, currency);
 }
 
 export const currencyLabel = (c: string) => ({ PLAY: 'Free chips', CHIP: 'Chips', DIAMOND: 'Diamonds', EUR: 'Euro', USDT: 'USDT', USDC: 'USDC' })[c] ?? c;

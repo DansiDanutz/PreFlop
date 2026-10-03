@@ -1,19 +1,23 @@
+import nodemailer from 'nodemailer';
 import type { Config } from '../config.ts';
 import type { Db, Tx } from './db.ts';
 
 /**
  * Outgoing email. Messages are written to email_outbox inside the transaction that needs them
- * (registration, password reset), and the worker hands them to a transport. No email provider is
- * integrated yet, and no mail library is installed:
+ * (registration, password reset), and the worker hands them to a transport:
  *
- * - development and test: the log transport prints each message (and its link) to stdout;
- * - production: messages stay queued and the API logs a warning at start, until a provider is
- *   plugged in. To plug one, implement MailTransport (an HTTP API such as SES, Postmark or
- *   SendGrid needs only fetch) and return it from mailTransportFor(); SMTP_URL and MAIL_FROM are
- *   already read into config.mail. Queued messages are sent once a transport exists.
+ * - SMTP_URL set (smtp:// or smtps://, any environment): SMTP through nodemailer, sender MAIL_FROM
+ *   (required in production when SMTP_URL is set, see config.ts);
+ * - otherwise, development and test: the log transport prints each message (and its link);
+ * - otherwise, production: messages stay queued and the API logs a warning at start.
+ *
+ * Links in the messages point at WEB_URL (the public player web app).
  */
 
 export interface Mail { to: string; subject: string; text: string; template: 'verify_email' | 'reset_password' }
+
+/** Queue options: when the message's link stops working (it is then never sent). */
+export interface QueueOptions { expiresInMs?: number }
 
 export interface MailTransport {
   readonly name: string;
@@ -28,52 +32,125 @@ export const logTransport: MailTransport = {
   },
 };
 
-/**
- * The transport for this configuration, or null when none is available (messages stay queued).
- * This is the one place to wire a real provider.
- */
+/** The minimal nodemailer surface used here (a test can pass a fake). */
+export interface SmtpSender { sendMail(m: { from: string; to: string; subject: string; text: string }): Promise<unknown> }
+
+/** SMTP through nodemailer. The URL carries host, port, credentials and TLS (smtps:// = implicit TLS). */
+export function smtpTransport(smtpUrl: string, create: (url: string) => SmtpSender = (url) => nodemailer.createTransport(url)): MailTransport {
+  const proto = new URL(smtpUrl).protocol;
+  if (proto !== 'smtp:' && proto !== 'smtps:') throw new Error(`SMTP_URL must start with smtp:// or smtps:// (got ${proto})`);
+  const sender = create(smtpUrl);
+  return {
+    name: proto === 'smtps:' ? 'smtps' : 'smtp',
+    async send(m) {
+      await sender.sendMail({ from: m.from, to: m.to, subject: m.subject, text: m.text });
+    },
+  };
+}
+
+/** The transport for this configuration, or null when none is available (messages stay queued). */
 export function mailTransportFor(config: Config): MailTransport | null {
+  if (config.mail.smtpUrl) return smtpTransport(config.mail.smtpUrl);
   if (config.nodeEnv !== 'production') return logTransport;
   return null;
 }
 
 /** A start-up warning when production cannot send email, or null. */
 export function mailWarning(config: Config): string | null {
-  if (config.nodeEnv !== 'production' || mailTransportFor(config)) return null;
-  return config.mail.smtpUrl
-    ? 'SMTP_URL is set, but this build has no SMTP transport: emails stay queued in email_outbox (see lib/mailer.ts to plug a provider)'
-    : 'no email provider is configured: verification and password-reset emails stay queued in email_outbox (see lib/mailer.ts)';
-}
-
-/** Queues one message in the caller's transaction. */
-export async function queueMail(c: Tx, m: Mail): Promise<void> {
-  await c.query('insert into email_outbox (to_email, template, subject, body) values ($1, $2, $3, $4)', [m.to, m.template, m.subject, m.text]);
+  if (config.nodeEnv !== 'production' || config.mail.smtpUrl) return null;
+  return 'SMTP_URL is not set: verification and password-reset emails stay queued in email_outbox until it is';
 }
 
 /**
- * Sends up to `limit` queued messages. Each row is claimed with SKIP LOCKED, so several workers
- * never send one twice. A sent message keeps its row (audit of what was sent) but loses its body,
- * which may hold a live link. Failures are retried on later ticks, at most 10 times.
+ * Queues one message in the caller's transaction. A message of the same template to the same
+ * address that is still queued is cancelled: its link was just replaced (issueEmailToken), so only
+ * the newest message is ever sent.
  */
-export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20): Promise<number> {
+export async function queueMail(c: Tx, m: Mail, o: QueueOptions = {}): Promise<void> {
+  await c.query(
+    `update email_outbox set status = 'cancelled', body = '', last_error = 'replaced by a newer message'
+      where to_email = $1 and template = $2 and status = 'pending'`, [m.to, m.template]);
+  await c.query(
+    `insert into email_outbox (to_email, template, subject, body, expires_at)
+     values ($1, $2, $3, $4, case when $5::bigint is null then null else now() + ($5::bigint || ' milliseconds')::interval end)`,
+    [m.to, m.template, m.subject, m.text, o.expiresInMs ?? null]);
+}
+
+/** Cancels queued messages whose link has expired; they are never sent late. */
+export async function expireMail(db: Db | Tx): Promise<number> {
+  return (await db.query(
+    `update email_outbox set status = 'cancelled', body = '', last_error = 'link expired before delivery'
+      where status = 'pending' and expires_at is not null and expires_at <= now()`)).rowCount ?? 0;
+}
+
+/** Longest wait for one send; a provider that hangs counts as a failed attempt (retried later). */
+export const MAIL_SEND_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`send timed out after ${ms} ms`)), ms); });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+/** Attempts per message before it is marked failed. */
+export const MAIL_MAX_ATTEMPTS = 8;
+/** Wait before attempt n+1 after n failures: 1 min, 2, 4, … capped at 6 h. */
+export const mailBackoffMs = (failures: number): number => Math.min(6 * 3_600_000, 60_000 * 2 ** Math.max(0, failures - 1));
+
+/** Counters of this process, for GET /v1/admin/metrics. */
+export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0, expired: 0 };
+
+/**
+ * Sends up to `limit` due messages. Each row is claimed with SKIP LOCKED, so several workers
+ * never send one twice. A sent message keeps its row (audit of what was sent) but loses its body,
+ * which may hold a live link. A failure counts one attempt and schedules the next one with
+ * exponential backoff (next_attempt_at); a message is tried at most once per call, so one worker
+ * pass never burns through its retries. After MAIL_MAX_ATTEMPTS it is marked failed (logged and
+ * counted in the metrics). A message whose link has expired is cancelled, never sent.
+ *
+ * It runs on its own loop (startWorker), never inside the game tick: a slow provider or a backlog
+ * cannot delay settlement, refunds or the heartbeat.
+ */
+export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20, sendTimeoutMs = MAIL_SEND_TIMEOUT_MS): Promise<number> {
+  // Expired links are cancelled (and their bodies cleared) even when no transport is configured:
+  // queued mail must not keep dead links around waiting for SMTP to be set up.
+  mailStats.expired += await expireMail(db);
   if (!transport) return 0;
   let sent = 0;
+  const tried: number[] = [];
   for (let i = 0; i < limit; i++) {
     const c = await db.connect();
     try {
       await c.query('begin');
-      const m = (await c.query<{ id: number; to_email: string; template: Mail['template']; subject: string; body: string }>(
-        `select id, to_email, template, subject, body from email_outbox where sent_at is null and attempts < 10 order by id limit 1 for update skip locked`)).rows[0];
+      const m = (await c.query<{ id: number; to_email: string; template: Mail['template']; subject: string; body: string; attempts: number }>(
+        `select id, to_email, template, subject, body, attempts from email_outbox
+          where status = 'pending' and next_attempt_at <= now() and (expires_at is null or expires_at > now())
+            and not (id = any($1::bigint[]))
+          order by next_attempt_at, id limit 1 for update skip locked`, [tried])).rows[0];
       if (!m) {
         await c.query('commit');
         break;
       }
+      tried.push(m.id);
       try {
-        await transport.send({ from, to: m.to_email, subject: m.subject, text: m.body, template: m.template });
-        await c.query(`update email_outbox set sent_at = now(), attempts = attempts + 1, body = '', last_error = null where id = $1`, [m.id]);
+        await withTimeout(transport.send({ from, to: m.to_email, subject: m.subject, text: m.body, template: m.template }), sendTimeoutMs);
+        await c.query(`update email_outbox set status = 'sent', sent_at = now(), attempts = attempts + 1, body = '', last_error = null where id = $1`, [m.id]);
+        mailStats.sent++;
         sent++;
       } catch (e) {
-        await c.query('update email_outbox set attempts = attempts + 1, last_error = $2 where id = $1', [m.id, String((e as Error).message).slice(0, 300)]);
+        const attempts = m.attempts + 1;
+        const error = String((e as Error).message).slice(0, 300);
+        const gaveUp = attempts >= MAIL_MAX_ATTEMPTS;
+        await c.query(
+          `update email_outbox set attempts = $2, last_error = $3,
+                  status = case when $4 then 'failed' else 'pending' end,
+                  body = case when $4 then '' else body end,
+                  failed_at = case when $4 then now() end,
+                  next_attempt_at = now() + ($5 || ' milliseconds')::interval
+            where id = $1`, [m.id, attempts, error, gaveUp, String(mailBackoffMs(attempts))]);
+        mailStats.failedAttempts++;
+        if (gaveUp) mailStats.gaveUp++;
+        console.warn(`[mail] ${gaveUp ? 'giving up on' : 'will retry'} message ${m.id} (${m.template}) after attempt ${attempts}/${MAIL_MAX_ATTEMPTS} via ${transport.name}: ${error}`);
       }
       await c.query('commit');
     } catch (e) {

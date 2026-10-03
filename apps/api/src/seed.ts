@@ -43,7 +43,7 @@ export async function seedSimTable(c: Tx, o: { clubId: string; tableId: string; 
   await c.query(
     `insert into poker_tables (id, club_id, name, mode, currency, kind, certification, max_round_loss_minor, real_money_approved_at, real_money_approved_by)
      values ($1, $2, $3, $4, $5, 'simulated', $6, $7, case when $8::text is null then null else now() end, $8)
-     on conflict (id) do update set certification = excluded.certification, status = 'active', pause_reason = null`,
+     on conflict (id) do update set certification = excluded.certification, status = 'active', pause_reason = null, pause_kind = null`,
     [o.tableId, o.clubId, o.name, o.mode ?? 'play', currency, JSON.stringify(fullCertification('system:seed')), o.maxRoundLossMinor ?? defaultRoundLossMinor(currency),
       o.realMoneyApprovedBy ?? null]);
   await c.query(

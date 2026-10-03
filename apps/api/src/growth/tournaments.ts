@@ -1,5 +1,5 @@
 import { type Flop, MODES, type PlayMode, price, settle } from '@preflop/odds-engine';
-import { statsOf, tableNotApproved } from '../bets/service.ts';
+import { assertReplayMatches, priceAcceptable, statsOf, tableNotApproved } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
@@ -204,19 +204,28 @@ export async function unregister(c: Tx, id: string, userId: string, ev: EventBat
 
 export interface TournamentBetInput { roundId: string; selectionId: string; stake: number; oddsCenti: number; acceptPriceChange?: boolean | undefined; idempotencyKey: string }
 
+/** A reused idempotency key replays only the same bet (round, selection, stake, odds unless a price change was accepted); else 422. */
+const assertSameTournamentBet = (b: TBetRow, i: TournamentBetInput) => assertReplayMatches(
+  { round_id: b.round_id, selection_id: b.selection_id, stake_minor: Number(b.stake), odds_centi: b.odds_centi },
+  { roundId: i.roundId, selectionId: i.selectionId, stakeMinor: i.stake, oddsCenti: i.oddsCenti, acceptPriceChange: i.acceptPriceChange });
+
 interface TBetRow { id: string; tournament_id: string; user_id: string; round_id: string; selection_id: string; stake: string; odds_centi: number; status: string; payout: string | null; created_at: Date; settled_at: Date | null }
 
 export async function placeTournamentBet(db: Db, id: string, userId: string, i: TournamentBetInput, ev: EventBatch, now = new Date()): Promise<TBetRow & { table_id: string }> {
   const replay = (await db.query<TBetRow & { table_id: string }>(
     'select b.*, r.table_id from tournament_bets b join rounds r on r.id = b.round_id where b.tournament_id = $1 and b.user_id = $2 and b.idempotency_key = $3',
     [id, userId, i.idempotencyKey])).rows[0];
-  if (replay) return replay;
+  if (replay) {
+    assertSameTournamentBet(replay, i);
+    return replay;
+  }
   if (!Number.isSafeInteger(i.stake) || i.stake <= 0) throw unprocessable('invalid_stake', 'the stake is a positive whole number of points');
   let stats;
   try { stats = statsOf(i.selectionId); } catch { throw unprocessable('unknown_selection', `no selection ${i.selectionId}`); }
   const p = price(stats, 'direct');
   if (!p.offered) throw unprocessable('not_offered', p.reason ?? 'selection not offered');
-  if (p.oddsCenti !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
+  // Same rule as direct bets: an accepted change covers only the price the player was shown.
+  if (!priceAcceptable(p.oddsCenti, i)) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
 
   const out = await tx(db, async (c) => {
     // Lock order: round, then entry, exactly as settlement takes them.
@@ -266,7 +275,8 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
     await audit(c, { type: 'tournament.bet', tournamentId: id, betId, userId, roundId: i.roundId, selectionId: i.selectionId, stake: i.stake, oddsCenti: p.oddsCenti });
     return { row, tableId: r.table_id, replay: false };
   });
-  if (!out.replay) changed(ev, id);
+  if (out.replay) assertSameTournamentBet(out.row, i);
+  else changed(ev, id);
   return { ...out.row, table_id: out.tableId };
 }
 

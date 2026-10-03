@@ -78,7 +78,8 @@ export interface Book { channel: string; flop_count: number; families: Record<st
 export interface TableSummary {
   id: string; name: string; club_id: string; club_name: string; city: string | null; kind: 'physical' | 'simulated';
   mode: PlayMode; currency: string; status: 'active' | 'paused' | 'retired'; ready: boolean; problems: string[]; stream_live: boolean;
-  current_round: { id: string; hand_no: number; state: RoundState; step: Step } | null;
+  /** review_deadline: see Round. */
+  current_round: { id: string; hand_no: number; state: RoundState; step: Step; review_deadline?: string | null } | null;
   open_round_id: string | null;
   last_flop: { round_id: string; hand_no: number; cards: string[] } | null;
 }
@@ -89,12 +90,26 @@ export interface Lobby { clubs: ClubSummary[]; tables: TableSummary[] }
 export interface Round {
   id: string; table_id: string; hand_no: number; state: RoundState; step: Step; mode: PlayMode; currency: string;
   opened_at: string; locked_at: string | null; settled_at: string | null; voided_at: string | null; void_reason: string | null; flop: string[] | null;
+  /** ISO-8601 time the review must be decided by (review start + REVIEW_SLA_MS; undecided → VOID). Null unless state is REVIEW. */
+  review_deadline?: string | null;
 }
 
 export interface PlaceBet { round_id: string; selection_id: string; stake_minor: number; odds_centi: number; accept_price_change?: boolean; room_id?: string }
 export interface BetView { bet_id: string; round_id: string; selection_id: string; stake_minor: number; odds_centi: number; potential_payout_minor: number; mode: PlayMode; currency: string; status: string }
-export interface MyBet extends BetView { payout_minor: number | null; placed_at: string; settled_at: string | null; hand_no: number; table_id: string; table_name: string; flop: string[] | null; room_id?: string | null }
-export interface MyStats { bets: number; won: number; lost: number; staked_minor: number; returned_minor: number }
+export interface MyBet extends BetView {
+  payout_minor: number | null; placed_at: string; settled_at: string | null; hand_no: number; table_id: string; table_name: string; flop: string[] | null; room_id?: string | null;
+  /** The Idempotency-Key the bet was placed with: how a client finds out whether its uncertain request landed. */
+  idempotency_key?: string | null;
+}
+/** GET /v1/me/bets filters. `before` is a bet_id (the previous page's next_before); room_id "none" means bets outside rooms. */
+export interface MyBetsFilter { limit?: number; round_id?: string; status?: string; before?: string; mode?: PlayMode; currency?: string; room_id?: string }
+/** A money amount of one (mode, currency): amounts of different currencies are never added together. */
+export interface CurrencyAmount { currency: string; mode: PlayMode; amount_minor: number }
+/** Top-level fields: play money only (as before). by_currency: one row per (mode, currency) bet in. */
+export interface MyStats {
+  bets: number; won: number; lost: number; staked_minor: number; returned_minor: number;
+  by_currency?: { mode: PlayMode; currency: string; bets: number; won: number; lost: number; staked_minor: number; returned_minor: number }[];
+}
 export interface LedgerLine { kind: string; ref: string; created_at: string; account_id: string; amount_minor: number; currency: string }
 
 // --- rooms (organizer- or club-run books in chips or diamonds)
@@ -112,8 +127,11 @@ export interface RoomDetail extends Room { odds: Record<string, number | null> }
 export interface OrgOverview {
   org: { id: string; kind: OrgKind; name: string; status: string; settings: Record<string, unknown> };
   kpis: { label: string; value: number; currency?: string; hint?: string }[];
-  /** One row per day and currency (amounts are minor units of that currency). */
-  series: { day: string; currency: string; turnover_minor: number; ggr_minor: number; bets: number }[];
+  /** One row per day, mode and currency (amounts are minor units of that currency). */
+  series: { day: string; mode?: PlayMode; currency: string; turnover_minor: number; ggr_minor: number; bets: number }[];
+  /** 30-day totals per (mode, currency). */
+  turnover_by_currency?: CurrencyAmount[];
+  ggr_by_currency?: CurrencyAmount[];
 }
 export interface StaffCredential { id: string; table_id: string; person_id: string; role: 'dealer' | 'floor' | 'floor_manager'; revoked: boolean; created_at: string }
 export interface Device { id: string; table_id: string; revoked: boolean; last_seq: number; created_at: string }
@@ -272,6 +290,18 @@ export interface AdminAgents {
   agents: (Agent & { display_name: string; email: string; players: number; parent_name: string | null })[];
   statements: AgentStatement[];
 }
+// --- news (migration 015)
+/** A published post as the public site lists it (no body). */
+export interface NewsCard { id: string; slug: string; title: string; summary: string; tags: string[]; published_at: string }
+/** GET /v1/news/:slug. `body` is the small Markdown subset rendered by @preflop/ui/markdown. */
+export interface NewsPost extends NewsCard { body: string; updated_at: string }
+/** Every post, drafts included, for the PreFlop team. */
+export interface AdminNewsPost {
+  id: string; slug: string; title: string; summary: string; body: string; tags: string[]; status: 'draft' | 'published';
+  published_at: string | null; author_id: string | null; created_at: string; updated_at: string;
+}
+/** Create (title required) or update (every field optional). A slug is made from the title when none is given. */
+export interface NewsInput { title: string; summary?: string; body?: string; tags?: string[]; slug?: string }
 export interface Badge { id: string; kind: 'champion' | 'podium' | 'top10'; label: string; leaderboard_id: string | null; awarded_at: string }
 
 const isProblem = (d: unknown): d is Problem => !!d && typeof d === 'object' && typeof (d as Problem).type === 'string';
@@ -338,6 +368,10 @@ export function createClient(o: ClientOptions) {
     rooms: () => get<{ rooms: Room[] }>('/v1/rooms'),
     room: (id: string) => get<RoomDetail>(`/v1/rooms/${encodeURIComponent(id)}`),
     apply: (a: { kind: OrgKind; name: string; email: string; details?: Record<string, unknown> }) => post<{ id: string }>('/v1/applications', a),
+    /** Published news, newest first. 400 bad_request for a limit outside 1–50 or a malformed tag. */
+    newsList: (f: { limit?: number; tag?: string } = {}) => get<{ posts: NewsCard[] }>(`/v1/news${q(f)}`, S.newsListSchema),
+    /** One published post; 404 not_found for drafts and unknown slugs. */
+    newsPost: (slug: string) => get<NewsPost>(`/v1/news/${encodeURIComponent(slug)}`, S.newsPostSchema),
 
     // ---------- auth
     /** 403 underage (under 18), 403 territory_blocked; country is ISO 3166-1 alpha-2, date_of_birth YYYY-MM-DD. Sends a verification email. */
@@ -366,7 +400,8 @@ export function createClient(o: ClientOptions) {
     wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets', S.walletsSchema),
     resetPlay: () => post<{ balance_minor: number }>('/v1/me/play/reset', {}, undefined, S.balanceSchema),
     placeBet: (b: PlaceBet, idempotencyKey = newIdempotencyKey()) => post<BetView>('/v1/bets', b, { 'idempotency-key': idempotencyKey }, S.betViewSchema),
-    myBets: (f: { limit?: number; round_id?: string; status?: string } = {}) => get<{ bets: MyBet[] }>(`/v1/me/bets${q(f)}`, S.myBetsSchema),
+    /** Newest first; next_before (null on the last page) is the `before` of the next page. */
+    myBets: (f: MyBetsFilter = {}) => get<{ bets: MyBet[]; next_before?: string | null }>(`/v1/me/bets${q({ ...f })}`, S.myBetsSchema),
     myLedger: () => get<{ entries: LedgerLine[] }>('/v1/me/ledger'),
     myStats: () => get<MyStats>('/v1/me/stats', S.myStatsSchema),
     favorites: () => get<{ selection_ids: string[] }>('/v1/me/favorites'),
@@ -390,18 +425,22 @@ export function createClient(o: ClientOptions) {
     selfExclude: (days: number) => post<{ until: string }>('/v1/me/self-exclusion', { days }),
     startKyc: () => post<{ kyc_status: string }>('/v1/me/kyc'),
     payments: () => get<{ payments: Payment[] }>('/v1/me/payments', S.paymentsSchema),
-    deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }) => post<Payment>('/v1/me/deposits', b, undefined, S.paymentSchema),
-    withdraw: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string; destination?: string }) => post<Payment>('/v1/me/withdrawals', b, undefined, S.paymentSchema),
-    buyChips: (b: { chips: number; pay_with: string }) => post<Payment>('/v1/me/chips/purchases', b, undefined, S.paymentSchema),
+    // Money in/out: pass the same idempotencyKey to retry safely (a retry never moves money twice).
+    deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }, idempotencyKey = newIdempotencyKey()) => post<Payment>('/v1/me/deposits', b, { 'idempotency-key': idempotencyKey }, S.paymentSchema),
+    withdraw: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string; destination?: string }, idempotencyKey = newIdempotencyKey()) => post<Payment>('/v1/me/withdrawals', b, { 'idempotency-key': idempotencyKey }, S.paymentSchema),
+    buyChips: (b: { chips: number; pay_with: string }, idempotencyKey = newIdempotencyKey()) => post<Payment>('/v1/me/chips/purchases', b, { 'idempotency-key': idempotencyKey }, S.paymentSchema),
 
     // ---------- organization portals (club / partner / organizer)
     orgOverview: (id: string) => get<OrgOverview>(`${org(id)}/overview`),
     orgUpdate: (id: string, b: { name?: string; settings?: Record<string, unknown> }) => put<{ ok: true }>(`${org(id)}`, b),
     orgMembers: (id: string) => get<{ members: { user_id: string; email: string; display_name: string; role: OrgRole }[] }>(`${org(id)}/members`),
     orgAddMember: (id: string, b: { email: string; role: OrgRole }) => post<{ ok: true }>(`${org(id)}/members`, b),
+    orgSetMemberRole: (id: string, userId: string, role: OrgRole) => put<{ ok: true }>(`${org(id)}/members/${encodeURIComponent(userId)}`, { role }),
+    orgRemoveMember: (id: string, userId: string) => del<{ ok: true }>(`${org(id)}/members/${encodeURIComponent(userId)}`),
     orgStatements: (id: string, period?: string) => get<{ statements: Statement[] }>(`${org(id)}/statements${q({ period })}`),
     orgRounds: (id: string, f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number })[] }>(`${org(id)}/rounds${q(f)}`),
-    orgPlayers: (id: string) => get<{ players: { user_id: string; email: string | null; display_name: string; balance_minor: number; currency: string; bets: number }[] }>(`${org(id)}/players`),
+    /** balances: one entry per (mode, currency). balance_minor/currency are deprecated: the first currency only. */
+    orgPlayers: (id: string) => get<{ players: { user_id: string; email: string | null; display_name: string; balances?: CurrencyAmount[]; balance_minor: number; currency: string; bets: number }[] }>(`${org(id)}/players`),
     // club
     clubTables: (id: string) => get<{ tables: ClubTable[] }>(`${org(id)}/tables`),
     clubCreateTable: (id: string, b: { name: string; kind: 'physical' | 'simulated'; mode: PlayMode; currency: string }) => post<{ id: string }>(`${org(id)}/tables`, b),
@@ -423,12 +462,12 @@ export function createClient(o: ClientOptions) {
     orgUpdateRoom: (id: string, roomId: string, b: Partial<{ name: string; rules: RoomRules; status: Room['status']; visibility: Room['visibility'] }>) => put<Room>(`${org(id)}/rooms/${encodeURIComponent(roomId)}`, b),
     orgValidateRules: (id: string, b: { mode: PlayMode; house: 'organizer' | 'pool'; rules: RoomRules }) => post<{ ok: boolean; problems: string[]; organizer_ev?: number; fee_rate_bound?: number }>(`${org(id)}/rooms/validate`, b),
     orgTreasury: (id: string) => get<{ accounts: { purpose: string; mode: PlayMode; currency: string; balance_minor: number; reserved_minor?: number }[] }>(`${org(id)}/treasury`),
-    orgFundCollateral: (id: string, b: { mode: PlayMode; currency: string; amount_minor: number }) => post<{ ok: true }>(`${org(id)}/collateral/deposits`, b),
+    orgFundCollateral: (id: string, b: { mode: PlayMode; currency: string; amount_minor: number }, idempotencyKey = newIdempotencyKey()) => post<{ ok: true }>(`${org(id)}/collateral/deposits`, b, { 'idempotency-key': idempotencyKey }),
     diamondPacks: (id: string) => get<{ packs: DiamondPack[] }>(`${org(id)}/diamonds/packs`),
-    buyDiamonds: (id: string, b: { diamonds: number; pay_with: 'EUR' | 'USDT' | 'USDC' }) => post<Payment>(`${org(id)}/diamonds/purchases`, b),
-    buyOrgChips: (id: string, b: { chips: number; pay_with: 'EUR' | 'USDT' | 'USDC' }) => post<Payment>(`${org(id)}/chips/purchases`, b),
+    buyDiamonds: (id: string, b: { diamonds: number; pay_with: 'EUR' | 'USDT' | 'USDC' }, idempotencyKey = newIdempotencyKey()) => post<Payment>(`${org(id)}/diamonds/purchases`, b, { 'idempotency-key': idempotencyKey }),
+    buyOrgChips: (id: string, b: { chips: number; pay_with: 'EUR' | 'USDT' | 'USDC' }, idempotencyKey = newIdempotencyKey()) => post<Payment>(`${org(id)}/chips/purchases`, b, { 'idempotency-key': idempotencyKey }),
     orgTransfers: (id: string) => get<{ transfers: Transfer[] }>(`${org(id)}/transfers`),
-    orgTransfer: (id: string, b: { email: string; mode: PlayMode; amount_minor: number }) => post<Transfer>(`${org(id)}/transfers`, b),
+    orgTransfer: (id: string, b: { email: string; mode: PlayMode; amount_minor: number }, idempotencyKey = newIdempotencyKey()) => post<Transfer>(`${org(id)}/transfers`, b, { 'idempotency-key': idempotencyKey }),
     orgDilution: (id: string, period?: string) => get<Dilution>(`${org(id)}/dilution${q({ period })}`),
     // partner
     partnerClients: (id: string) => get<{ clients: ApiClient[] }>(`${org(id)}/api-clients`),
@@ -448,7 +487,8 @@ export function createClient(o: ClientOptions) {
     partnerCreatePlayer: (token: string, player_ref: string, display_name?: string) => req<{ player_ref: string; user_id: string }>('POST', '/v1/partner/players', { player_ref, ...(display_name ? { display_name } : {}) }, { authorization: `Bearer ${token}` }),
     partnerPlayerSession: (token: string, player_ref: string) => req<{ token: string; user_id: string }>('POST', `/v1/partner/players/${encodeURIComponent(player_ref)}/session`, {}, { authorization: `Bearer ${token}` }),
 
-    adminOverview: () => get<{ users: { n: number }; bets_24h: { n: number; staked: number }; rounds_24h: { settled: number; voided: number }; open_alerts: { n: number }; tables: TableSummary[] }>('/v1/admin/overview'),
+    /** bets_24h.staked_by_currency: 24 h stakes per (mode, currency). `staked` (a sum across currencies) is no longer sent. */
+    adminOverview: () => get<{ users: { n: number }; bets_24h: { n: number; staked_by_currency: CurrencyAmount[]; /** @deprecated not sent any more: use staked_by_currency */ staked?: number }; rounds_24h: { settled: number; voided: number }; open_alerts: { n: number }; tables: TableSummary[] }>('/v1/admin/overview'),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),
     adminAlerts: () => get<{ alerts: Alert[] }>('/v1/admin/alerts'),
@@ -474,6 +514,15 @@ export function createClient(o: ClientOptions) {
     adminFundLeaderboard: (lb: string, amount_minor: number) => post<Leaderboard>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/fund`, { amount_minor }),
     adminSettleLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/settle`),
     adminCancelLeaderboard: (lb: string) => post<{ ok: true }>(`/v1/admin/leaderboards/${encodeURIComponent(lb)}/cancel`),
+    // news (admin, ops; every change is audited)
+    adminNews: () => get<{ posts: AdminNewsPost[] }>('/v1/admin/news', S.adminNewsListSchema),
+    /** 409 slug_taken when an explicit slug is in use. */
+    adminCreateNews: (b: NewsInput) => post<AdminNewsPost>('/v1/admin/news', b, undefined, S.adminNewsSchema),
+    adminUpdateNews: (id: string, b: Partial<NewsInput>) => req<AdminNewsPost>('PUT', `/v1/admin/news/${encodeURIComponent(id)}`, b, {}, S.adminNewsSchema),
+    /** A first publication is dated now; publishing again after an unpublish keeps the original date. */
+    adminPublishNews: (id: string) => post<AdminNewsPost>(`/v1/admin/news/${encodeURIComponent(id)}/publish`, {}, undefined, S.adminNewsSchema),
+    adminUnpublishNews: (id: string) => post<AdminNewsPost>(`/v1/admin/news/${encodeURIComponent(id)}/unpublish`, {}, undefined, S.adminNewsSchema),
+    adminDeleteNews: (id: string) => del<{ ok: true }>(`/v1/admin/news/${encodeURIComponent(id)}`),
     adminPromotions: () => get<{ promotions: Promotion[] }>('/v1/admin/promotions'),
     adminCreatePromotion: (b: PromotionInput) => post<Promotion>('/v1/admin/promotions', b),
     adminDecidePromotion: (id: string, decision: 'approve' | 'reject', note?: string) => post<{ id: string; status: string }>(`/v1/admin/promotions/${encodeURIComponent(id)}/decision`, { decision, ...(note ? { note } : {}) }),
@@ -523,22 +572,30 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
   let ws: WebSocket | null = null;
   let closed = false;
   let retry = 500;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let topics = [...o.topics];
   const open = () => {
-    ws = new WebSocket(o.url);
-    ws.onopen = () => {
+    timer = null;
+    // A reconnect scheduled before close() (logout, token change, unmount) never opens a socket.
+    if (closed) return;
+    const sock = new WebSocket(o.url);
+    ws = sock;
+    sock.onopen = () => {
+      if (closed || ws !== sock) { sock.close(); return; }
       retry = 500;
       o.onStatus?.('open');
-      if (o.token) ws?.send(JSON.stringify({ type: 'auth', token: o.token }));
-      ws?.send(JSON.stringify({ subscribe: topics }));
+      if (o.token) sock.send(JSON.stringify({ type: 'auth', token: o.token }));
+      sock.send(JSON.stringify({ subscribe: topics }));
     };
-    ws.onmessage = (m) => {
+    sock.onmessage = (m) => {
+      if (closed || ws !== sock) return;
       const e = parseStreamFrame(m.data);
       if (e) o.onEvent(e);
     };
-    ws.onclose = () => {
+    sock.onclose = () => {
+      if (closed || ws !== sock) return;
       o.onStatus?.('closed');
-      if (!closed) setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
+      timer = setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
     };
   };
   open();
@@ -548,9 +605,13 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
       topics = [...next];
       if (ws?.readyState === 1) ws.send(JSON.stringify({ subscribe: topics, unsubscribe: un }));
     },
+    /** Disposes the stream for good: cancels a pending reconnect and closes the socket. */
     close() {
       closed = true;
-      ws?.close();
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      const s = ws;
+      ws = null;
+      s?.close();
     },
   };
 }

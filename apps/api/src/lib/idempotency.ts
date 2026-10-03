@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import type { Tx } from './db.ts';
-import { unprocessable } from './errors.ts';
+import type { FastifyRequest } from 'fastify';
+import { type Db, type Tx, tx } from './db.ts';
+import { badRequest, unprocessable } from './errors.ts';
 
 export interface StoredResponse {
   status: number;
@@ -24,4 +25,33 @@ export async function idempotent(c: Tx, principal: string, key: string, method: 
     'insert into idempotency_responses (principal, idempotency_key, method, path, request_sha256, status, body) values ($1, $2, $3, $4, $5, $6, $7)',
     [principal, key, method, path, reqHash, res.status, JSON.stringify(res.body)]);
   return res;
+}
+
+/** The Idempotency-Key header of a money write: 8–200 characters (as POST /v1/bets), else 400. */
+export function requireIdempotencyKey(req: FastifyRequest): string {
+  const key = req.headers['idempotency-key'];
+  if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
+  return key;
+}
+
+/**
+ * A payment or ledger reference derived from (principal, key) instead of a fresh random id: a
+ * retry that slips past the stored response still posts to the same ledger (kind, ref) and the
+ * same payment id, which the database accepts only once.
+ */
+export const keyedRef = (prefix: string, principal: string, key: string): string =>
+  `${prefix}_${createHash('sha256').update(`${principal}\u0000${key}`).digest('base64url').slice(0, 24)}`;
+
+/**
+ * A money-in/out write that happens at most once per (principal, Idempotency-Key): one transaction,
+ * serialised on the key (two concurrent retries queue, the second finds the stored response), the
+ * response stored with the effect. `fn` gets the deterministic reference to post under.
+ */
+export async function idempotentMoneyWrite(db: Db, principal: string, key: string, req: FastifyRequest, prefix: string,
+  fn: (c: Tx, ref: string) => Promise<StoredResponse>): Promise<StoredResponse> {
+  const ref = keyedRef(prefix, principal, key);
+  return tx(db, async (c) => {
+    await c.query('select pg_advisory_xact_lock(hashtext($1))', [`money:${principal}:${key}`]);
+    return idempotent(c, principal, key, req.method, req.url, req.rawBody ?? '', () => fn(c, ref));
+  });
 }

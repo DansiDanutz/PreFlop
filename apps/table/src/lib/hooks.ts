@@ -54,6 +54,29 @@ export interface Runner {
   failed: { action: Action; problem: ApiProblem; retryable: boolean } | null;
 }
 
+export type RunOutcome =
+  | { ok: true; result: unknown }
+  | { ok: false; failed: { action: Action; problem: ApiProblem; retryable: boolean } | null };
+
+/**
+ * Sends one action and reports the outcome. `onDone` (the local workflow: remembered entries,
+ * refresh) runs ONLY for an acknowledged write; a missing or unreadable acknowledgement comes back
+ * as a retryable failure that keeps the same Action (and so the same Idempotency-Key).
+ */
+export async function runAction(api: Pick<TableApi, 'send'>, a: Action, onDone?: (a: Action, result: unknown) => void,
+  onProblem?: (a: Action, p: ApiProblem) => boolean | void): Promise<RunOutcome> {
+  let res: unknown;
+  try {
+    res = await api.send(a);
+  } catch (e) {
+    const p = e instanceof ApiProblem ? e : new ApiProblem(0, 'network');
+    const handled = onProblem?.(a, p);
+    return { ok: false, failed: handled ? null : { action: a, problem: p, retryable: isRetryable(p.type) || p.status >= 500 } };
+  }
+  onDone?.(a, res);
+  return { ok: true, result: res };
+}
+
 /**
  * Runs one write at a time. On no answer (network / timeout / retry_later) the action is kept
  * and the user gets a RETRY that resends the SAME Idempotency-Key with a fresh nonce. Nothing is
@@ -69,13 +92,9 @@ export function useRunner(api: TableApi, onDone?: (a: Action, result: unknown) =
     setPending(a);
     setFailed(null);
     try {
-      const res = await api.send(a);
-      onDone?.(a, res);
-      return res;
-    } catch (e) {
-      const p = e instanceof ApiProblem ? e : new ApiProblem(0, 'network');
-      const handled = onProblem?.(a, p);
-      if (!handled) setFailed({ action: a, problem: p, retryable: isRetryable(p.type) || p.status >= 500 });
+      const out = await runAction(api, a, onDone, onProblem);
+      if (out.ok) return out.result;
+      if (out.failed) setFailed(out.failed);
       return undefined;
     } finally {
       inflight.current = false;

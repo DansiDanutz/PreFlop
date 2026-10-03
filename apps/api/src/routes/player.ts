@@ -13,6 +13,7 @@ import { ApiError, badRequest, conflict, unauthorized } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { LOGIN_LOCKOUT, LoginRefusal, guardedLogin } from '../lib/loginLockout.ts';
+import { limitParam } from '../lib/query.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
 import { acct, post } from '../lib/ledger.ts';
@@ -37,6 +38,8 @@ const Login = z.object({
   // One-time code, required when the account has two-factor authentication on.
   otp: z.string().trim().max(10).optional(),
 });
+const qText = z.string().min(1).max(200).optional();
+const MyBetsQuery = z.object({ round_id: qText, status: qText, before: qText, mode: qText, currency: qText, room_id: qText }).passthrough();
 const Bet = z.object({
   round_id: z.string(),
   selection_id: z.string(),
@@ -217,16 +220,23 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/me/bets', async (req) => {
     const u = await ctx.user(req);
-    const q = req.query as { limit?: string; round_id?: string; status?: string };
-    const limit = Math.min(200, Math.max(1, Number(q.limit ?? 50)));
+    // Newest first. Pages: pass the last bet_id of a page as `before` (next_before) for the next one.
+    // Filters: status, round_id, and one wallet (mode + currency, room_id or "none" for no room).
+    const q = MyBetsQuery.parse(req.query ?? {});
+    const limit = limitParam(req.query, 200, 50);
     const rows = (await ctx.db.query(
       `select b.id as bet_id, b.round_id, b.room_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
-              b.at_risk_minor, b.house_kind, r.hand_no, r.table_id, r.flop, t.name as table_name
+              b.at_risk_minor, b.house_kind, b.idempotency_key, r.hand_no, r.table_id, r.flop, t.name as table_name
          from bets b join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.user_id = $1 and ($2::text is null or b.round_id = $2) and ($3::text is null or b.status = $3)
-        order by b.placed_at desc limit $4`, [u.id, q.round_id ?? null, q.status ?? null, limit])).rows;
+          and ($5::text is null or b.mode = $5) and ($6::text is null or b.currency = $6)
+          and ($7::text is null or ($7 = 'none' and b.room_id is null) or b.room_id = $7)
+          and ($8::text is null or (b.placed_at, b.id) < (select c.placed_at, c.id from bets c where c.id = $8 and c.user_id = $1))
+        order by b.placed_at desc, b.id desc limit $4`,
+      [u.id, q.round_id ?? null, q.status ?? null, limit, q.mode ?? null, q.currency ?? null, q.room_id ?? null, q.before ?? null])).rows;
     // Same amount settlement pays (the at-risk stake; a pool share is unknown until settlement: 0).
-    return { bets: rows.map(({ at_risk_minor, ...b }) => ({ ...b, potential_payout_minor: potentialPayoutMinor({ ...b, at_risk_minor }) })) };
+    const bets = rows.map(({ at_risk_minor, ...b }) => ({ ...b, potential_payout_minor: potentialPayoutMinor({ ...b, at_risk_minor }) }));
+    return { bets, next_before: rows.length === limit ? rows[rows.length - 1]!.bet_id : null };
   });
 
   app.get('/v1/me/ledger', async (req) => {
@@ -240,11 +250,15 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/me/stats', async (req) => {
     const u = await ctx.user(req);
-    const s = (await ctx.db.query(
-      `select count(*)::int as bets, count(*) filter (where status = 'won')::int as won, count(*) filter (where status = 'lost')::int as lost,
+    // One row per (mode, currency) the player has bet in; amounts of different currencies are never
+    // added. The top-level fields stay the play-money row (as before) for older clients.
+    const rows = (await ctx.db.query<{ mode: string; currency: string; bets: number; won: number; lost: number; staked_minor: number; returned_minor: number }>(
+      `select mode, currency, count(*)::int as bets, count(*) filter (where status = 'won')::int as won, count(*) filter (where status = 'lost')::int as lost,
               coalesce(sum(stake_minor) filter (where status in ('won','lost')), 0)::bigint as staked_minor,
               coalesce(sum(payout_minor) filter (where status = 'won'), 0)::bigint as returned_minor
-         from bets where user_id = $1 and mode = 'play'`, [u.id])).rows[0];
-    return s;
+         from bets where user_id = $1 group by mode, currency order by mode, currency`, [u.id])).rows;
+    const play = rows.filter((r) => r.mode === 'play');
+    const sum = (k: 'bets' | 'won' | 'lost' | 'staked_minor' | 'returned_minor') => play.reduce((a, r) => a + Number(r[k]), 0);
+    return { bets: sum('bets'), won: sum('won'), lost: sum('lost'), staked_minor: sum('staked_minor'), returned_minor: sum('returned_minor'), by_currency: rows };
   });
 }

@@ -1,6 +1,8 @@
 import { Spinner, cx } from '@preflop/ui';
 import { AlertTriangle, RotateCw, X } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { inertSiblings, restoreFocus, trapTab } from '../lib/focus.ts';
 import type { Runner } from '../lib/hooks.ts';
 
 type Tone = 'accent' | 'danger' | 'warn' | 'neutral';
@@ -87,18 +89,57 @@ export function ActionStatus({ runner, className }: { runner: Runner; className?
   );
 }
 
-/** Modal sheet. */
+/**
+ * Modal sheet with dialog semantics: role="dialog", aria-modal, labelled by its title. Rendered
+ * into <body> so the rest of the page can be made inert while it is open; Tab / Shift+Tab stay
+ * inside, Escape closes, and focus returns to the opener on close (lib/focus.ts).
+ */
 export function Sheet({ title, onClose, children, wide }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" onClick={onClose}>
-      <div className={cx('pf-pop max-h-[92vh] w-full overflow-auto rounded-[22px] border border-line-strong bg-surface p-6 shadow-2xl', wide ? 'max-w-3xl' : 'max-w-lg')} onClick={(e) => e.stopPropagation()}>
+  const titleId = useId();
+  const overlay = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  // The opener is read during the first render, before anything in the sheet can take focus.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  useLayoutEffect(() => {
+    const undoInert = inertSiblings(document.body, overlay.current!);
+    return () => {
+      undoInert();
+      restoreFocus(opener);
+    };
+  }, [opener]);
+  useEffect(() => {
+    // A child with autoFocus already has focus; otherwise start on the dialog itself, never on a
+    // confirm button.
+    const p = panel.current;
+    if (p && !p.contains(document.activeElement)) p.focus({ preventScroll: true });
+  }, []);
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      // Portals bubble through the React tree: only the innermost sheet closes.
+      e.stopPropagation();
+      e.preventDefault();
+      close.current();
+      return;
+    }
+    if (e.key === 'Tab' && panel.current) {
+      e.stopPropagation();
+      trapTab(panel.current, e, document.activeElement);
+    }
+  };
+  return createPortal(
+    <div ref={overlay} className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" onClick={onClose}>
+      <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown}
+        className={cx('pf-pop max-h-[92vh] w-full overflow-auto rounded-[22px] border border-line-strong bg-surface p-6 shadow-2xl outline-none', wide ? 'max-w-3xl' : 'max-w-lg')} onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-4">
-          <h2 className="font-serif text-2xl">{title}</h2>
+          <h2 id={titleId} className="font-serif text-2xl">{title}</h2>
           <button type="button" onClick={onClose} className="grid h-12 w-12 place-items-center rounded-full border border-line text-muted active:text-ink" aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

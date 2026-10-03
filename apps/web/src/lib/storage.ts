@@ -51,4 +51,21 @@ export const KEYS = {
   savedTables: 'pf.savedTables',
   lastTable: 'pf.lastTable',
   stake: 'pf.stake',
+  howToPlaySeen: 'pf.howToPlay.seen',
+  /** A confirmed bet whose outcome is not known yet (sessionStorage: this tab only). */
+  betIntent: 'pf.betIntent',
 } as const;
+
+let firstRunHelpTaken = false;
+/**
+ * First-run onboarding: true exactly once per device (and at most once per page load when storage
+ * is blocked), so How to play opens by itself on a player's first visit and never again.
+ */
+export function takeFirstRunHelp(): boolean {
+  if (firstRunHelpTaken || readString(KEYS.howToPlaySeen) === '1') return false;
+  firstRunHelpTaken = true;
+  writeString(KEYS.howToPlaySeen, '1');
+  return true;
+}
+/** Test hook: forget the in-memory flag. */
+export const resetFirstRunHelp = () => { firstRunHelpTaken = false; };

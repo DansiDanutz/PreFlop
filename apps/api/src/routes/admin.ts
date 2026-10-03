@@ -8,11 +8,13 @@ import { retryCount, retryStats, tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
+import { mailStats } from '../lib/mailer.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
+import { limitParam } from '../lib/query.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { MONITOR } from '../rounds/monitor.ts';
-import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound } from '../rounds/service.ts';
+import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound, withReviewDeadline } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
 import { RESERVED_SETTINGS } from './org.ts';
@@ -29,7 +31,7 @@ const Setting = z.object({ value: z.unknown(), note: z.string().max(500).optiona
 /** Evidence of one round for reviewers: capture record, image, entries and procedure ordinals. */
 export async function evidenceOf(ctx: AppContext, roundId: string) {
   const round = (await ctx.db.query(
-    `select id, table_id, hand_no, state, procedure_step as step, mode, currency, opened_at, locked_at, settled_at, voided_at, void_reason, flop, review_reasons
+    `select id, table_id, hand_no, state, procedure_step as step, mode, currency, opened_at, locked_at, settled_at, voided_at, void_reason, flop, review_reasons, review_started_at
        from rounds where id = $1`, [roundId])).rows[0];
   if (!round) throw notFound('round');
   const cap = (await ctx.db.query<{ capture: Record<string, unknown>; image: Buffer | null }>('select capture, image from captures where round_id = $1', [roundId])).rows[0];
@@ -41,16 +43,19 @@ export async function evidenceOf(ctx: AppContext, roundId: string) {
     const mime = text.startsWith('<svg') ? 'image/svg+xml' : cap.image[0] === 0x89 ? 'image/png' : 'image/jpeg';
     image = `data:${mime};base64,${cap.image.toString('base64')}`;
   }
-  return { round, capture: cap?.capture ?? null, image_data_url: image, entries, events };
+  return { round: withReviewDeadline(round, ctx.config.reviewSlaMs), capture: cap?.capture ?? null, image_data_url: image, entries, events };
 }
 
 export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/admin/overview', async (req) => {
     await requirePlatform(ctx, req);
     const q = async (sql: string) => (await ctx.db.query(sql)).rows[0];
+    // Stakes per (mode, currency): a CHIP, a euro cent and a micro-USDT are never added together.
+    const staked = (await ctx.db.query<{ currency: string; mode: string; amount_minor: number }>(
+      `select currency, mode, sum(stake_minor)::bigint as amount_minor from bets where placed_at > now() - interval '24 hours' group by currency, mode order by currency, mode`)).rows;
     return {
       users: await q('select count(*)::int as n from users'),
-      bets_24h: await q(`select count(*)::int as n, coalesce(sum(stake_minor),0)::bigint as staked from bets where placed_at > now() - interval '24 hours'`),
+      bets_24h: { ...(await q(`select count(*)::int as n from bets where placed_at > now() - interval '24 hours'`)), staked_by_currency: staked },
       rounds_24h: await q(`select count(*) filter (where state='SETTLED')::int as settled, count(*) filter (where state='VOID')::int as voided from rounds where opened_at > now() - interval '24 hours'`),
       open_alerts: await q('select count(*)::int as n from alerts where resolved_at is null'),
       tables: await tableSummaries(ctx),
@@ -70,6 +75,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       `select count(*) filter (where status in ('pending','sending'))::int as pending, count(*) filter (where status = 'failed')::int as failed,
               extract(epoch from (now() - min(created_at) filter (where status in ('pending','sending'))))::float8 as oldest_pending_age_s
          from webhook_deliveries where status in ('pending','sending','failed')`);
+    const mail = await one<{ pending: number; failed: number; retrying: number; oldest_pending_age_s: number | null }>(
+      `select count(*) filter (where status = 'pending')::int as pending, count(*) filter (where status = 'failed')::int as failed,
+              count(*) filter (where status = 'pending' and attempts > 0)::int as retrying,
+              extract(epoch from (now() - min(created_at) filter (where status = 'pending')))::float8 as oldest_pending_age_s
+         from email_outbox where status in ('pending','failed')`);
     const alerts = await one<{ open: number; critical: number }>(
       `select count(*)::int as open, count(*) filter (where severity = 'critical')::int as critical from alerts where resolved_at is null`);
     const states = (await ctx.db.query<{ state: string; n: number }>('select state, count(*)::int as n from rounds group by state order by state')).rows;
@@ -80,6 +90,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       at: new Date().toISOString(),
       outbox: { pending: outbox.pending, oldest_pending_age_s: outbox.oldest_age_s === null ? null : Math.round(outbox.oldest_age_s * 10) / 10 },
       webhook_deliveries: { pending: webhooks.pending, failed: webhooks.failed, oldest_pending_age_s: webhooks.oldest_pending_age_s === null ? null : Math.round(webhooks.oldest_pending_age_s * 10) / 10 },
+      email_outbox: {
+        pending: mail.pending, retrying: mail.retrying, failed: mail.failed,
+        oldest_pending_age_s: mail.oldest_pending_age_s === null ? null : Math.round(mail.oldest_pending_age_s * 10) / 10,
+      },
       alerts: { open: alerts.open, open_critical: alerts.critical },
       rounds_by_state: Object.fromEntries(states.map((r) => [r.state, r.n])),
       sweeper_voids_last_hour: sweeper.n,
@@ -90,6 +104,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         uptime_s: Math.round((Date.now() - ctx.stats.startedAt.getTime()) / 1000),
         db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
         ws_clients: ctx.stats.wsClients,
+        mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp, expired: mailStats.expired },
       },
     };
   });
@@ -138,8 +153,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     await requirePlatform(ctx, req);
     return { rounds: (await ctx.db.query(
       `select r.id, r.table_id, r.hand_no, r.state, r.procedure_step as step, r.mode, r.currency, r.opened_at, r.locked_at, r.settled_at, r.voided_at, r.void_reason,
-              r.flop, r.review_reasons, t.name as table_name
-         from rounds r join poker_tables t on t.id = r.table_id where r.state in ('REVIEW','EVIDENCE_REJECTED') order by r.review_started_at nulls last, r.opened_at`)).rows };
+              r.flop, r.review_reasons, r.review_started_at, t.name as table_name
+         from rounds r join poker_tables t on t.id = r.table_id where r.state in ('REVIEW','EVIDENCE_REJECTED') order by r.review_started_at nulls last, r.opened_at`))
+      .rows.map((r) => withReviewDeadline(r, ctx.config.reviewSlaMs)) };
   });
   app.get('/v1/admin/rounds/:id/evidence', async (req) => {
     await requirePlatform(ctx, req);
@@ -189,11 +205,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const q = req.query as { table_id?: string; state?: string; limit?: string };
     return { rounds: (await ctx.db.query(
       `select r.id, r.table_id, r.hand_no, r.state, r.procedure_step as step, r.mode, r.currency, r.opened_at, r.locked_at, r.settled_at, r.voided_at, r.void_reason, r.flop,
-              t.name as table_name, count(b.id)::int as bets, coalesce(sum(b.stake_minor), 0)::bigint as staked_minor,
+              r.review_started_at, t.name as table_name, count(b.id)::int as bets, coalesce(sum(b.stake_minor), 0)::bigint as staked_minor,
               coalesce(sum(b.payout_minor) filter (where b.status = 'won'), 0)::bigint as paid_minor
          from rounds r join poker_tables t on t.id = r.table_id left join bets b on b.round_id = r.id
         where ($1::text is null or r.table_id = $1) and ($2::text is null or r.state = $2)
-        group by r.id, t.name order by r.opened_at desc limit $3`, [q.table_id ?? null, q.state ?? null, Math.min(500, Number(q.limit ?? 100))])).rows };
+        group by r.id, t.name order by r.opened_at desc limit $3`, [q.table_id ?? null, q.state ?? null, limitParam(q, 500, 100)]))
+      .rows.map((r) => withReviewDeadline(r, ctx.config.reviewSlaMs)) };
   });
 
   // ---------------------------------------------------------------- risk
@@ -225,7 +242,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id, u.created_at,
               (select count(*)::int from bets b where b.user_id = u.id) as bets
          from users u where ($1::text is null or u.email ilike '%' || $1 || '%' or u.display_name ilike '%' || $1 || '%')
-        order by u.created_at desc limit $2`, [q.q ?? null, Math.min(500, Number(q.limit ?? 100))])).rows };
+        order by u.created_at desc limit $2`, [q.q ?? null, limitParam(q, 500, 100)])).rows };
   });
   app.put('/v1/admin/users/:id', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'support', 'risk');
@@ -237,7 +254,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!cur) throw notFound('user');
       // Support and risk manage players, not the team: no changes to staff accounts or to themselves.
       if (u.platform_role !== 'admin' && (id === u.id || cur.platform_role !== null)) throw forbidden('forbidden_target', 'only an admin can change a PreFlop team account');
-      if (cur.status === 'self_excluded' && b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
+      // Whatever the current status (self_excluded, or suspended in between), an account under a
+      // self-exclusion that has not ended cannot be made active; migration 016 enforces it in SQL too.
+      if (b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
         throw conflict('self_excluded', 'a self-exclusion cannot be lifted before it ends');
       const r = (await c.query(
         `update users set status = coalesce($2, status), kyc_status = coalesce($3, kyc_status), platform_role = case when $5 then $4 else platform_role end
@@ -364,9 +383,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0];
         if (open) await voidRound(c, await lockRound(c, open.id), 'table paused by PreFlop', `user:${u.id}`, ev, ['OPEN']);
       }
-      const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
+      // The PreFlop team lifts any hold (monitor, evidence, platform, floor); the audit keeps which one.
+      const prev = (await c.query<{ pause_kind: string | null }>('select pause_kind from poker_tables where id = $1 for update', [id])).rows[0];
+      if (!prev) throw notFound('table');
+      const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, pause_kind = case when $2 = 'paused' then 'platform' end,
+                               monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
       if (!r.rowCount) throw notFound('table');
-      await audit(c, { type: `table.${b.status === 'paused' ? 'paused' : 'resumed'}`, tableId: id, reason: b.reason ?? null, by: u.id });
+      await audit(c, { type: `table.${b.status === 'paused' ? 'paused' : 'resumed'}`, tableId: id, reason: b.reason ?? null, previousPauseKind: prev.pause_kind, by: u.id });
       if (b.status === 'active') await ensureOpenRound(c, id, ev);
     });
     publish(ev);
@@ -385,12 +408,12 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       `select t.id as tx_id, t.kind, t.ref, t.created_at, e.account_id, e.amount_minor, e.currency
          from ledger_entries e join ledger_tx t on t.id = e.tx_id
         where ($1::text is null or e.account_id ilike '%' || $1 || '%') and ($2::text is null or t.kind = $2)
-        order by e.id desc limit $3`, [q.account ?? null, q.kind ?? null, Math.min(1000, Number(q.limit ?? 200))])).rows;
+        order by e.id desc limit $3`, [q.account ?? null, q.kind ?? null, limitParam(q, 1000, 200)])).rows;
     return { accounts, entries };
   });
   app.get('/v1/admin/audit', async (req) => {
     await requirePlatform(ctx, req, 'admin', 'risk');
-    const limit = Math.min(500, Number((req.query as { limit?: string }).limit ?? 100));
+    const limit = limitParam(req.query, 500, 100);
     return { chain: await verifyAuditChain(ctx.db), events: (await ctx.db.query('select seq, at, hash, event from audit_log order by seq desc limit $1', [limit])).rows };
   });
   app.get('/v1/admin/statements', async (req) => {

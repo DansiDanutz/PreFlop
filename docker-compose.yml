@@ -1,15 +1,22 @@
 # Local / staging stack. Real money stays OFF (settings.modes_enabled) and physical-table play
 # stays disabled (owner decision) — the stack runs on simulated tables.
+#
+# The API image runs with NODE_ENV=production, so its start-up checks apply here too: the database
+# password must be random. Generate one before the first start (see .env.example):
+#   cp .env.example .env && sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env
+# Compose reads POSTGRES_PASSWORD from the environment or .env and refuses to start without it.
 services:
   postgres:
     image: postgres:16
-    environment: { POSTGRES_PASSWORD: preflop, POSTGRES_DB: preflop }
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}
+      POSTGRES_DB: preflop
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 20 }
   api:
     build: { context: ., target: api }
     environment:
-      DATABASE_URL: postgres://postgres:preflop@postgres:5432/preflop
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}@postgres:5432/preflop
       CORS_ORIGINS: http://localhost:8080,http://localhost:8081,http://localhost:8082
       WEB_URL: http://localhost:8080
     ports: ["4000:4000"]
@@ -18,7 +25,7 @@ services:
     build: { context: ., target: sim }
     environment:
       API_URL: http://api:4000
-      DATABASE_URL: postgres://postgres:preflop@postgres:5432/preflop
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}@postgres:5432/preflop
       BETTING_WINDOW_MS: "20000"
     depends_on: [api]
   web:

@@ -1,24 +1,45 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Route, Routes, useLocation } from 'react-router';
 import { AppLayout } from './components/AppShell.tsx';
 import { SiteLayout } from './components/site/SiteLayout.tsx';
 import { RequireAuth, useSessionGuard } from './lib/auth.tsx';
-import { LeaderboardPage, LeaderboardsPage } from './pages/app/Leaderboards.tsx';
-import { PromotionsPage } from './pages/app/Promotions.tsx';
-import { TournamentPage, TournamentsPage } from './pages/app/Tournaments.tsx';
-import { ActivityPage } from './pages/app/Activity.tsx';
-import { ClubPage } from './pages/app/Club.tsx';
-import { ClubsPage } from './pages/app/Clubs.tsx';
-import { LobbyPage } from './pages/app/Lobby.tsx';
-import { ProfilePage } from './pages/app/Profile.tsx';
-import { TablePage } from './pages/app/Table.tsx';
+import { lazyNamed } from './lib/lazy.ts';
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './pages/Auth.tsx';
-import { EmbedTablePage } from './pages/Embed.tsx';
-import { ForClubsPage, ForOrganizersPage, ForPartnersPage } from './pages/site/Business.tsx';
 import { LandingPage } from './pages/site/Landing.tsx';
-import { PrivacyPage, ResponsiblePage, TermsPage } from './pages/site/Legal.tsx';
 import { NotFoundPage } from './pages/site/NotFound.tsx';
-import { OddsPage } from './pages/site/Odds.tsx';
+
+// Route-level code splitting: the landing page and sign-in load first; the player app, the
+// partner widget and the other site pages are separate same-origin chunks.
+const leaderboards = () => import('./pages/app/Leaderboards.tsx');
+const tournaments = () => import('./pages/app/Tournaments.tsx');
+const business = () => import('./pages/site/Business.tsx');
+const legal = () => import('./pages/site/Legal.tsx');
+const LeaderboardPage = lazyNamed(leaderboards, 'LeaderboardPage');
+const LeaderboardsPage = lazyNamed(leaderboards, 'LeaderboardsPage');
+const PromotionsPage = lazyNamed(() => import('./pages/app/Promotions.tsx'), 'PromotionsPage');
+const TournamentPage = lazyNamed(tournaments, 'TournamentPage');
+const TournamentsPage = lazyNamed(tournaments, 'TournamentsPage');
+const ActivityPage = lazyNamed(() => import('./pages/app/Activity.tsx'), 'ActivityPage');
+const ClubPage = lazyNamed(() => import('./pages/app/Club.tsx'), 'ClubPage');
+const ClubsPage = lazyNamed(() => import('./pages/app/Clubs.tsx'), 'ClubsPage');
+const LobbyPage = lazyNamed(() => import('./pages/app/Lobby.tsx'), 'LobbyPage');
+const ProfilePage = lazyNamed(() => import('./pages/app/Profile.tsx'), 'ProfilePage');
+const TablePage = lazyNamed(() => import('./pages/app/Table.tsx'), 'TablePage');
+const EmbedTablePage = lazyNamed(() => import('./pages/Embed.tsx'), 'EmbedTablePage');
+const ForClubsPage = lazyNamed(business, 'ForClubsPage');
+const ForOrganizersPage = lazyNamed(business, 'ForOrganizersPage');
+const ForPartnersPage = lazyNamed(business, 'ForPartnersPage');
+const PrivacyPage = lazyNamed(legal, 'PrivacyPage');
+const ResponsiblePage = lazyNamed(legal, 'ResponsiblePage');
+const TermsPage = lazyNamed(legal, 'TermsPage');
+const OddsPage = lazyNamed(() => import('./pages/site/Odds.tsx'), 'OddsPage');
+const DemoPage = lazyNamed(() => import('./pages/site/Demo.tsx'), 'DemoPage');
+const AgentsPage = lazyNamed(() => import('./pages/site/Agents.tsx'), 'AgentsPage');
+const FairnessPage = lazyNamed(() => import('./pages/site/Fairness.tsx'), 'FairnessPage');
+const PlayersPage = lazyNamed(() => import('./pages/site/Players.tsx'), 'PlayersPage');
+const news = () => import('./pages/site/News.tsx');
+const NewsPage = lazyNamed(news, 'NewsPage');
+const NewsArticlePage = lazyNamed(news, 'NewsArticlePage');
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -26,18 +47,30 @@ function ScrollToTop() {
   return null;
 }
 
+/** Fallback while a route chunk loads (the layouts keep their chrome with an inner boundary). */
+export function PageLoading() {
+  return <div role="status" aria-label="Loading" className="grid min-h-[40vh] place-items-center"><span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-line-strong border-t-accent" /></div>;
+}
+
 export function App() {
   useSessionGuard();
   return (
     <>
       <ScrollToTop />
+      <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route element={<SiteLayout />}>
           <Route index element={<LandingPage />} />
           <Route path="odds" element={<OddsPage />} />
+          <Route path="demo" element={<DemoPage />} />
           <Route path="clubs" element={<ForClubsPage />} />
           <Route path="partners" element={<ForPartnersPage />} />
           <Route path="organizers" element={<ForOrganizersPage />} />
+          <Route path="players" element={<PlayersPage />} />
+          <Route path="agents" element={<AgentsPage />} />
+          <Route path="fairness" element={<FairnessPage />} />
+          <Route path="news" element={<NewsPage />} />
+          <Route path="news/:slug" element={<NewsArticlePage />} />
           <Route path="responsible-gaming" element={<ResponsiblePage />} />
           <Route path="terms" element={<TermsPage />} />
           <Route path="privacy" element={<PrivacyPage />} />
@@ -66,6 +99,7 @@ export function App() {
         <Route path="embed/table/:id" element={<EmbedTablePage />} />
         <Route path="embed" element={<EmbedTablePage />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

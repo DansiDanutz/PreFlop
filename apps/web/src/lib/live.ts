@@ -85,10 +85,12 @@ export type StreamStatus = 'connecting' | 'open' | 'closed';
 /**
  * Bets are paused while the live stream is not open: the player would otherwise bet on a round
  * whose lock or flop they cannot see. The server stays authoritative (it refuses late bets
- * whatever the screen shows); this keeps the screen honest. `message` is null when connected.
+ * whatever the screen shows); this keeps the screen honest. `message` is null when connected
+ * and in sync.
  */
-export function streamGate(ws: StreamStatus): { paused: boolean; message: string | null } {
-  if (ws === 'open') return { paused: false, message: null };
+export function streamGate(ws: StreamStatus, resyncing = false): { paused: boolean; message: string | null } {
+  // Re-opened after a drop: still paused until the table is refetched (events were missed).
+  if (ws === 'open') return resyncing ? { paused: true, message: 'Reconnected · updating the table…' } : { paused: false, message: null };
   if (ws === 'connecting') return { paused: true, message: 'Connecting to the table… bets paused' };
   return { paused: true, message: 'Reconnecting… bets paused' };
 }

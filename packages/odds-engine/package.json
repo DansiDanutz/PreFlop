@@ -10,6 +10,11 @@
       "preflop-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./stake-split": {
+      "preflop-source": "./src/stakeSplit.ts",
+      "types": "./dist/stakeSplit.d.ts",
+      "import": "./dist/stakeSplit.js"
     }
   },
   "scripts": {

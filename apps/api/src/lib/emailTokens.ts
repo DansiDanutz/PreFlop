@@ -45,7 +45,7 @@ export async function sendVerification(c: Tx, config: Config, userId: string, em
   await queueMail(c, {
     to: email, template: 'verify_email', subject: 'Confirm your email for PreFlop',
     text: `Confirm that this is your email address by opening this link within 48 hours:\n\n${link}\n\nIf you did not create a PreFlop account, ignore this message.`,
-  });
+  }, { expiresInMs: EMAIL_TOKEN_TTL_MS.verify });
 }
 
 /** Queues the password-reset message for a user. */
@@ -55,5 +55,5 @@ export async function sendPasswordReset(c: Tx, config: Config, userId: string, e
   await queueMail(c, {
     to: email, template: 'reset_password', subject: 'Reset your PreFlop password',
     text: `Someone asked to reset the password of your PreFlop account. To choose a new one, open this link within 1 hour:\n\n${link}\n\nIf it was not you, ignore this message: your password stays the same.`,
-  });
+  }, { expiresInMs: EMAIL_TOKEN_TTL_MS.reset });
 }

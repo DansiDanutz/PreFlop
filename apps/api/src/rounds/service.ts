@@ -54,6 +54,21 @@ export interface Timing {
 }
 
 export const roundId = (tableId: string, handNo: number) => `${tableId}:h${handNo}`;
+
+/**
+ * When a round's review must be decided (docs/14): review_started_at + REVIEW_SLA_MS as ISO-8601,
+ * the same instant the worker voids an undecided review at. Null unless the round is in REVIEW.
+ */
+export function reviewDeadline(r: { state: string; review_started_at?: Date | string | null }, reviewSlaMs: number): string | null {
+  if (r.state !== 'REVIEW' || !r.review_started_at) return null;
+  return new Date(new Date(r.review_started_at).getTime() + reviewSlaMs).toISOString();
+}
+
+/** A round row for an API payload: review_started_at (selected for the purpose) becomes review_deadline. */
+export function withReviewDeadline<T extends { state: string; review_started_at?: Date | string | null }>(r: T, reviewSlaMs: number): Omit<T, 'review_started_at'> & { review_deadline: string | null } {
+  const { review_started_at, ...rest } = r;
+  return { ...rest, review_deadline: reviewDeadline({ state: r.state, review_started_at: review_started_at ?? null }, reviewSlaMs) };
+}
 const VOIDABLE: RoundState[] = ['OPEN', 'LOCKED', 'DEALT', 'REVIEW', 'EVIDENCE_REJECTED'];
 
 export async function lockRound(c: Tx, id: string): Promise<RoundRow> {
@@ -243,9 +258,11 @@ const ms = (d: Date | null) => (d ? d.getTime() : undefined);
 
 /**
  * Capture route (docs/13 §4). Returns a result instead of throwing so evidence rows written on
- * a refusal (capture_attempts, alerts) still commit.
+ * a refusal (capture_attempts, alerts) still commit. `malformed` lists the schema problems found at
+ * HTTP ingress: such a record is rejected like an inauthentic one (attempt, alert, 3-strike pause)
+ * and never replayed, admitted or added to the chain.
  */
-export async function receiveCapture(c: Tx, tableId: string, handNo: number, deviceId: string, body: SignedCapture & { image_base64?: string }, t: Timing, ev: EventBatch): Promise<CaptureResult> {
+export async function receiveCapture(c: Tx, tableId: string, handNo: number, deviceId: string, body: SignedCapture & { image_base64?: string }, t: Timing, ev: EventBatch, malformed: readonly string[] = []): Promise<CaptureResult> {
   const rid = roundId(tableId, handNo);
   const r = await lockRound(c, rid);
   const d = (await c.query<DeviceRow>('select * from devices where id = $1 for update', [deviceId])).rows[0];
@@ -258,7 +275,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
   };
 
   // 1. Idempotent replay, in any round state, before any other check.
-  if (cap && Number.isSafeInteger(cap.seq)) {
+  if (!malformed.length && cap && Number.isSafeInteger(cap.seq)) {
     const prev = (await c.query<{ signature: string; admitted: boolean; round_id: string }>('select signature, admitted, round_id from captures where device_id = $1 and seq = $2', [deviceId, cap.seq])).rows[0];
     if (prev) {
       // A replay is acknowledged only for the hand it was stored for; the same record sent to another hand is a conflict.
@@ -278,7 +295,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
   // 3. Authenticity, once, against the checkpoint before this capture.
   let publicKey;
   try { publicKey = createPublicKey(d.public_key_pem); } catch { publicKey = undefined; }
-  const auth = cap && publicKey
+  const auth = malformed.length ? { authentic: false, problems: [...malformed] } : cap && publicKey
     ? verifyCaptureAuthenticity(body, {
       device: { deviceId: d.id, tableId: d.table_id, publicKey, revoked: d.revoked },
       expectedTableId: tableId, expectedRoundId: rid, expectedHandNo: handNo, lastSeq: d.last_seq, lastHash: d.last_hash,
@@ -291,7 +308,7 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
     const failures = (await c.query<{ n: number }>('select count(*)::int as n from capture_attempts where round_id = $1', [rid])).rows[0]!.n;
     if (failures >= 3) {
       await voidRound(c, r, 'capture failed 3 times', 'system:evidence', ev);
-      await c.query(`update poker_tables set status = 'paused', pause_reason = 'Table Box inspection required (3 failed captures)' where id = $1`, [tableId]);
+      await c.query(`update poker_tables set status = 'paused', pause_kind = 'evidence', pause_reason = 'Table Box inspection required (3 failed captures)' where id = $1`, [tableId]);
       await alert(c, { tableId, kind: 'device_flagged', severity: 'critical', details: { deviceId } });
     }
     return { status: 422, body: { type: 'evidence_rejected', title: 'capture failed authenticity checks', status: 422, expected_seq: d.last_seq + 1, expected_prev_hash: d.last_hash, problems: auth.problems } };
@@ -368,8 +385,9 @@ export async function resolve(c: Tx, rid: string, t: Timing, ev: EventBatch): Pr
     await voidRound(c, r, 'result deadline passed', 'system:resolve', ev);
     return 'void:deadline';
   }
-  const tbl = (await c.query<{ status: string; pause_reason: string | null }>('select status, pause_reason from poker_tables where id = $1', [r.table_id])).rows[0]!;
-  if (tbl.status === 'paused' && tbl.pause_reason?.startsWith('outcome monitor')) {
+  // Keyed on the machine pause kind, never on the free-text reason (anyone pausing can type that).
+  const tbl = (await c.query<{ status: string; pause_kind: string | null }>('select status, pause_kind from poker_tables where id = $1', [r.table_id])).rows[0]!;
+  if (tbl.status === 'paused' && tbl.pause_kind === 'monitor') {
     await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev);
     return 'void:monitor';
   }
@@ -487,7 +505,7 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
   // Outcome monitoring: a stacked deck trips the CUSUM and pauses the table (docs/12 §2a).
   const m = updateMonitor(t.monitor ?? {}, flop);
   if (m.alarms.length) {
-    await c.query(`update poker_tables set monitor = '{}'::jsonb, monitor_hands = monitor_hands + 1, status = 'paused',
+    await c.query(`update poker_tables set monitor = '{}'::jsonb, monitor_hands = monitor_hands + 1, status = 'paused', pause_kind = 'monitor',
                    pause_reason = 'outcome monitor alarm: inspect shuffler and table' where id = $1`, [r.table_id]);
     await alert(c, { tableId: r.table_id, roundId: r.id, kind: 'outcome_monitor_alarm', severity: 'critical', details: { alarms: m.alarms } });
     await audit(c, { type: 'table.paused', tableId: r.table_id, reason: 'outcome_monitor_alarm', alarms: m.alarms.map((a) => a.selectionId) });

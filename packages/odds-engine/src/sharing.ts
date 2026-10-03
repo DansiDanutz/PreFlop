@@ -1,4 +1,6 @@
 import { allocateLargestRemainder } from './fees.ts';
+import { GLOBAL_RULES } from './globalRules.ts';
+import { MODES } from './modes.ts';
 
 /**
  * Dynamic revenue sharing. A participant's share is not a fixed percentage:
@@ -179,6 +181,248 @@ export function computeStatement(input: StatementInput): Statement {
   const preflopMinor = amounts.get('PreFlop')!;
   amounts.delete('PreFlop');
   return { rates, appliedShare: applied, capped: scale < 1, shortfallMinor, amounts, preflopMinor, carryForwardMinor: 0 };
+}
+
+// ---------- Tier metrics in one unit (EUR cents) ----------
+
+/**
+ * POLICY ASSUMPTION, not a market rate: for TIER THRESHOLDS ONLY, one USDT and one USDC count
+ * as one euro. Tier ladders (e.g. PARTNER_POLICY) are written in EUR cents; turnover in any
+ * other currency is converted with this table before it is compared with a threshold.
+ * Settlement amounts are never converted: a USDT statement pays USDT.
+ * Change it here (and in docs/09 §1) if the commercial team adopts a different rule.
+ */
+export const STABLECOIN_EUR_RATE = 1;
+
+/** EUR per ONE MAJOR unit of each currency that counts towards turnover tiers. */
+export const TIER_EUR_PER_MAJOR: Readonly<Record<string, number>> = Object.freeze({
+  EUR: 1,
+  USDT: STABLECOIN_EUR_RATE,
+  USDC: STABLECOIN_EUR_RATE,
+  // Virtual chips are sold at a fixed list price (globalRules.ts).
+  CHIP: 1 / GLOBAL_RULES.virtualChips.chipsPerEuro,
+});
+
+/** Decimal places of a currency's minor unit, from the play modes (EUR 2, USDT/USDC 6, CHIP 0). */
+export function currencyMinorDigits(currency: string): number {
+  for (const m of Object.values(MODES)) if (m.currencies.includes(currency)) return m.minorDigits;
+  throw new RangeError(`unknown currency '${currency}'`);
+}
+
+/**
+ * A turnover amount (minor units of `currency`) expressed in EUR cents, the unit every
+ * turnover tier ladder uses. Rounded down to a whole cent. Currencies without a EUR value
+ * (play money, diamonds) count as 0, i.e. they never lift a party above its first tier.
+ */
+export function tierTurnoverEurCents(currency: string, minor: number): number {
+  if (!Number.isSafeInteger(minor) || minor < 0) throw new RangeError(`turnover must be a non-negative safe integer, got ${minor}`);
+  const rate = TIER_EUR_PER_MAJOR[currency];
+  if (rate === undefined) return 0;
+  const digits = currencyMinorDigits(currency);
+  // Exact integer scaling to whole cents first (BigInt), then the policy rate.
+  const cents = digits >= 2 ? Number(BigInt(minor) / 10n ** BigInt(digits - 2)) : minor * 10 ** (2 - digits);
+  return Math.floor(cents * rate + 1e-9);
+}
+
+// ---------- Joint statements: every entitlement on the same GGR under one cap ----------
+
+/**
+ * A revenue bucket: the PreFlop-house GGR and turnover of one slice of traffic, e.g.
+ * "direct players at club X's tables" or "partner P's players at club X's tables".
+ * Each bucket carries the costs PreFlop bears on that traffic (its channel in costModel.ts).
+ */
+export interface RevenueCell {
+  readonly id: string;
+  /** GGR in minor units; may be negative. */
+  readonly revenueMinor: number;
+  readonly turnoverMinor: number;
+  /** Promotions PreFlop funds, as a fraction of positive GGR. */
+  readonly promotionsShare: number;
+  /** Variable cost per unit staked (payments, KYC, streaming). */
+  readonly turnoverCostRate: number;
+}
+
+/** One party's claim under one policy, on the GGR of the buckets it is entitled to. */
+export interface Entitlement {
+  readonly party: string;
+  readonly policy: SharePolicy;
+  readonly metrics: Metrics;
+  readonly cells: readonly string[];
+  /** Loss carried in for this (party, policy), netted before any share is paid. */
+  readonly carriedLossMinor?: number;
+}
+
+export interface JointStatementInput {
+  readonly cells: readonly RevenueCell[];
+  readonly entitlements: readonly Entitlement[];
+  /** PreFlop's net-margin floor per unit staked. */
+  readonly netTarget: number;
+}
+
+export interface EntitlementResult {
+  readonly party: string;
+  readonly policyId: string;
+  /** Rate from the tier ladders, before the joint cap (bps). */
+  readonly rateBps: number;
+  /** Σ GGR of the entitlement's buckets this period. */
+  readonly baseMinor: number;
+  readonly carriedLossMinor: number;
+  /** base − carried loss; no share is paid unless it is positive. */
+  readonly shareableMinor: number;
+  /** rate × shareable, before the cap (may be fractional). */
+  readonly nominalMinor: number;
+  /** What is paid, after the joint cap. */
+  readonly amountMinor: number;
+  /** Loss carried into the next period for this (party, policy). */
+  readonly carryForwardMinor: number;
+  /** Index into `pools`, or -1 for an entitlement with no buckets. */
+  readonly pool: number;
+  readonly capped: boolean;
+}
+
+export interface PoolResult {
+  readonly pool: number;
+  readonly cells: readonly string[];
+  readonly revenueMinor: number;
+  readonly turnoverMinor: number;
+  /** Most PreFlop can pay out of this pool and still keep netTarget per unit staked (≥ 0). */
+  readonly budgetMinor: number;
+  readonly nominalMinor: number;
+  readonly paidMinor: number;
+  readonly capped: boolean;
+  /** How far PreFlop's net falls short of the floor even at zero shares (0 when funded). */
+  readonly shortfallMinor: number;
+  /** GGR − shares paid (before PreFlop's own costs). */
+  readonly preflopMinor: number;
+}
+
+export interface JointStatement {
+  readonly entitlements: readonly EntitlementResult[];
+  readonly pools: readonly PoolResult[];
+}
+
+/**
+ * Computes every entitlement of a period TOGETHER. Buckets that share a claimant (a club's
+ * direct traffic and the partner traffic at its tables, a partner's traffic across clubs) form
+ * one pool (connected components: a party links every bucket it claims from, under any policy); all entitlements in a pool are scaled down by one factor so that
+ *
+ *   Σ shares ≤ Σ_cells [ GGR − b·max(GGR, 0) − c_t·turnover ] − T·Σ turnover
+ *
+ * i.e. PreFlop's net after shares and costs never falls below the floor T for the pool,
+ * however many parties are paid out of the same GGR. Losing buckets reduce the budget of their
+ * pool (adjustments are netted), and each (party, policy) nets its own carried loss first.
+ * Amounts are rounded down, so the floor holds to the unit.
+ */
+export function computeJointStatement(input: JointStatementInput): JointStatement {
+  const cells = new Map<string, RevenueCell>();
+  for (const c of input.cells) {
+    if (cells.has(c.id)) throw new RangeError(`duplicate cell '${c.id}'`);
+    if (!Number.isSafeInteger(c.revenueMinor) || !Number.isSafeInteger(c.turnoverMinor) || c.turnoverMinor < 0)
+      throw new RangeError(`cell '${c.id}': revenue and turnover must be safe integers, turnover non-negative`);
+    cells.set(c.id, c);
+  }
+  const seen = new Set<string>();
+  for (const e of input.entitlements) {
+    if (e.party === 'PreFlop' || !e.party) throw new RangeError(`invalid party '${e.party}'`);
+    const key = `${e.party}\u0000${e.policy.id}`;
+    if (seen.has(key)) throw new RangeError(`duplicate entitlement '${e.party}' / '${e.policy.id}'`);
+    seen.add(key);
+    const carried = e.carriedLossMinor ?? 0;
+    if (!Number.isSafeInteger(carried) || carried < 0) throw new RangeError('carried loss must be a non-negative safe integer');
+    for (const id of e.cells) if (!cells.has(id)) throw new RangeError(`entitlement '${e.party}' names unknown cell '${id}'`);
+  }
+
+  // Pools: connected components of cells linked by a shared entitlement (union-find).
+  const parent = new Map<string, string>([...cells.keys()].map((k) => [k, k]));
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  // Every bucket a party claims from (under any of its policies) joins that party's pool.
+  const anchor = new Map<string, string>();
+  for (const e of input.entitlements) for (const id of e.cells) {
+    const first = anchor.get(e.party);
+    if (first === undefined) { anchor.set(e.party, id); continue; }
+    const a = find(first), b = find(id);
+    if (a !== b) parent.set(b, a);
+  }
+  const poolOf = new Map<string, number>();
+  const poolCells: string[][] = [];
+  for (const id of cells.keys()) {
+    const root = find(id);
+    if (!poolOf.has(root)) { poolOf.set(root, poolCells.length); poolCells.push([]); }
+    poolCells[poolOf.get(root)!]!.push(id);
+  }
+
+  const pre = input.entitlements.map((e) => {
+    const rateBps = computeShare(e.policy, e.metrics).bps;
+    const baseMinor = e.cells.reduce((a, id) => a + cells.get(id)!.revenueMinor, 0);
+    const carriedLossMinor = e.carriedLossMinor ?? 0;
+    const shareableMinor = baseMinor - carriedLossMinor;
+    const nominalMinor = shareableMinor > 0 ? (rateBps * shareableMinor) / 10000 : 0;
+    const pool = e.cells.length ? poolOf.get(find(e.cells[0]!))! : -1;
+    return { e, rateBps, baseMinor, carriedLossMinor, shareableMinor, nominalMinor, pool, carryForwardMinor: shareableMinor < 0 ? -shareableMinor : 0 };
+  });
+
+  const amounts = new Array<number>(pre.length).fill(0);
+  const pools: PoolResult[] = poolCells.map((ids, pool) => {
+    let revenueMinor = 0, turnoverMinor = 0, atZero = 0;
+    for (const id of ids) {
+      const c = cells.get(id)!;
+      revenueMinor += c.revenueMinor;
+      turnoverMinor += c.turnoverMinor;
+      atZero += c.revenueMinor - c.promotionsShare * Math.max(0, c.revenueMinor) - c.turnoverCostRate * c.turnoverMinor;
+    }
+    const headroom = atZero - input.netTarget * turnoverMinor;
+    // Rounded down (never up), so the floor holds even with floating-point noise.
+    const budgetMinor = Math.max(0, Math.floor(headroom));
+    const members = pre.map((p, i) => ({ p, i })).filter((x) => x.p.pool === pool);
+    const nominalMinor = members.reduce((a, x) => a + x.p.nominalMinor, 0);
+    const capped = nominalMinor > budgetMinor;
+    const scale = capped ? budgetMinor / nominalMinor : 1;
+    let paid = 0;
+    for (const { p, i } of members) {
+      amounts[i] = Math.max(0, Math.floor(p.nominalMinor * scale + 1e-6));
+      paid += amounts[i]!;
+    }
+    // Rounding must never take the pool above its budget: trim any excess unit from the largest amounts.
+    for (const { i } of [...members].sort((a, b) => amounts[b.i]! - amounts[a.i]! || a.i - b.i)) {
+      if (paid <= budgetMinor) break;
+      const cut = Math.min(amounts[i]!, paid - budgetMinor);
+      amounts[i] = amounts[i]! - cut;
+      paid -= cut;
+    }
+    return {
+      pool, cells: ids, revenueMinor, turnoverMinor, budgetMinor, nominalMinor, paidMinor: paid, capped,
+      shortfallMinor: Math.max(0, Math.ceil(-headroom - 1e-6)), preflopMinor: revenueMinor - paid,
+    };
+  });
+
+  return {
+    pools,
+    entitlements: pre.map((p, i) => ({
+      party: p.e.party, policyId: p.e.policy.id, rateBps: p.rateBps, baseMinor: p.baseMinor, carriedLossMinor: p.carriedLossMinor,
+      shareableMinor: p.shareableMinor, nominalMinor: p.nominalMinor, amountMinor: amounts[i]!, carryForwardMinor: p.carryForwardMinor,
+      pool: p.pool, capped: p.pool >= 0 && pools[p.pool]!.capped,
+    })),
+  };
+}
+
+/**
+ * Closing carry of one (party, policy) after a run of periods, oldest first:
+ * each period nets its GGR against the loss carried in; a negative result is carried on.
+ * Deterministic from the per-period GGR alone, so a rerun or a backdated correction
+ * (which changes an earlier period's GGR) always yields the same carry for the same ledger.
+ */
+export function carryForward(periodRevenuesMinor: readonly number[], openingCarryMinor = 0): number {
+  let carry = openingCarryMinor;
+  for (const r of periodRevenuesMinor) {
+    const shareable = r - carry;
+    carry = shareable < 0 ? -shareable : 0;
+  }
+  return carry;
 }
 
 // ---------- Placeholder policies (planning assumptions, not agreed terms) ----------

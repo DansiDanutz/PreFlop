@@ -7,6 +7,8 @@ import { api } from '../../lib/api.ts';
 import { nf, pad3 } from '../../lib/format.ts';
 import { Kpi, PageHeader, QueryView } from '../../components/ui.tsx';
 import { KindChip, Problems, RoundStateBadge, TableStatus } from '../../components/domain.tsx';
+import { MoneyByCurrency } from '../../components/money.tsx';
+import type { MoneyField } from '../../lib/money.ts';
 
 export function TableWallCard({ t }: { t: TableSummary }) {
   const r = t.current_round;
@@ -37,8 +39,19 @@ export function TableWallCard({ t }: { t: TableSummary }) {
   );
 }
 
+/** The 24h stake from GET /v1/admin/overview: per currency on newer servers, one cross-currency number on older ones. */
+export function stakeField(b: Record<string, unknown>): MoneyField {
+  for (const k of ['staked_by_currency', 'staked']) {
+    const v = b[k];
+    if (Array.isArray(v) || typeof v === 'number' || typeof v === 'string') return v as MoneyField;
+  }
+  return null;
+}
+
 export function Overview() {
   const q = useQuery({ queryKey: ['admin', 'overview'], queryFn: api.adminOverview, refetchInterval: 5000 });
+  // Same query key as the review queue page, so both share one cache entry.
+  const review = useQuery({ queryKey: ['admin', 'review'], queryFn: api.adminReviewQueue, refetchInterval: 10_000 });
   return (
     <>
       <PageHeader eyebrow="PreFlop team" title="Overview" subtitle="Platform health over the last 24 hours and every table, live. Refreshes every 5 seconds."
@@ -46,12 +59,19 @@ export function Overview() {
       <QueryView q={q} what="the admin overview">
         {(d) => {
           const live = d.tables.filter((t) => t.status === 'active' && t.ready).length;
+          const notReady = d.tables.filter((t) => t.status === 'active' && !t.ready).length;
+          const inReview = review.data?.rounds.length;
           return (
             <div className="space-y-8">
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                <Kpi label={<Link to="/admin/review" className="hover:underline">Awaiting review</Link>} value={inReview === undefined ? (review.isError ? '—' : '…') : nf(inReview)}
+                  tone={inReview ? 'warn' : undefined} hint={inReview ? 'Rounds a floor manager must settle, or you void' : 'Nothing waiting'} />
+                <Kpi label={<Link to="/admin/tables" className="hover:underline">Tables not ready</Link>} value={nf(notReady)} tone={notReady ? 'warn' : undefined}
+                  hint={`${live} of ${d.tables.filter((t) => t.status === 'active').length} active tables dealing`} />
                 <Kpi label="Users" value={nf(d.users.n)} />
                 <Kpi label="Bets · 24h" value={nf(d.bets_24h.n)} />
-                <Kpi label="Stake · 24h" value={nf(Number(d.bets_24h.staked))} hint="Minor units, all modes combined" />
+                <Kpi label="Stake · 24h" value={<MoneyByCurrency value={stakeField(d.bets_24h as unknown as Record<string, unknown>)} />}
+                  hint={Array.isArray(stakeField(d.bets_24h as unknown as Record<string, unknown>)) ? 'Per currency, never added together' : undefined} />
                 <Kpi label="Settled · 24h" value={nf(d.rounds_24h.settled)} tone="accent" />
                 <Kpi label="Voided · 24h" value={nf(d.rounds_24h.voided)} tone={d.rounds_24h.voided ? 'warn' : undefined} />
                 <Kpi label="Open alerts" value={<Link to="/admin/alerts" className="hover:underline">{nf(d.open_alerts.n)}</Link>} tone={d.open_alerts.n ? 'danger' : undefined} />

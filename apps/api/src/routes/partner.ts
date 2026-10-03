@@ -12,6 +12,7 @@ import { ApiError, badRequest, conflict, notFound, unauthorized, unprocessable }
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
+import { limitParam } from '../lib/query.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.ts';
@@ -137,26 +138,51 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send({ id, url: b.url, events: b.events, active: true, created_at: new Date().toISOString(), secret });
   });
   app.delete(`${P}/webhooks/:hookId`, async (req) => {
-    const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
+    const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
     const { hookId } = req.params as { hookId: string };
-    const r = await ctx.db.query('update webhooks set active = false where id = $1 and org_id = $2', [hookId, org.id]);
-    if (!r.rowCount) throw notFound('webhook');
-    return { ok: true };
+    return tx(ctx.db, async (c) => {
+      // The row lock orders this with the delivery claim (which joins webhooks): queued deliveries
+      // (pending, including retries) are cancelled now and never sent. A delivery a sender already
+      // claimed ('sending') may finish; if it fails it is cancelled instead of retried.
+      const r = await c.query('update webhooks set active = false where id = $1 and org_id = $2', [hookId, org.id]);
+      if (!r.rowCount) throw notFound('webhook');
+      const cancelled = (await c.query(
+        `update webhook_deliveries set status = 'cancelled', last_error = 'webhook disabled', claimed_at = null
+          where webhook_id = $1 and status = 'pending'`, [hookId])).rowCount ?? 0;
+      await audit(c, { type: 'partner.webhook_disabled', webhookId: hookId, cancelled, by: user.id });
+      return { ok: true, cancelled };
+    });
+  });
+  /** Re-enables a disabled webhook. Only events from now on are delivered; cancelled ones stay cancelled. */
+  app.post(`${P}/webhooks/:hookId/enable`, async (req) => {
+    const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
+    const { hookId } = req.params as { hookId: string };
+    return tx(ctx.db, async (c) => {
+      const r = await c.query('update webhooks set active = true where id = $1 and org_id = $2', [hookId, org.id]);
+      if (!r.rowCount) throw notFound('webhook');
+      await audit(c, { type: 'partner.webhook_enabled', webhookId: hookId, by: user.id });
+      return { ok: true };
+    });
   });
   app.post(`${P}/webhooks/:hookId/test`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
     const { hookId } = req.params as { hookId: string };
-    const w = (await ctx.db.query('select id from webhooks where id = $1 and org_id = $2', [hookId, org.id])).rows[0];
-    if (!w) throw notFound('webhook');
     const id = newId('whd');
-    await ctx.db.query(`insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload) values ($1, $2, $3, 'test', $4)`,
-      [id, hookId, newId('evt'), JSON.stringify({ type: 'test', data: { hello: 'from PreFlop' } })]);
+    // The active check and the insert hold the hook row (FOR SHARE) until commit, as event fan-out
+    // does: a concurrent disable either waits and cancels this delivery, or wins and is seen here.
+    await tx(ctx.db, async (c) => {
+      const w = (await c.query<{ active: boolean }>('select id, active from webhooks where id = $1 and org_id = $2 for share', [hookId, org.id])).rows[0];
+      if (!w) throw notFound('webhook');
+      if (!w.active) throw conflict('webhook_disabled', 'this webhook is disabled; enable it first');
+      await c.query(`insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload) values ($1, $2, $3, 'test', $4)`,
+        [id, hookId, newId('evt'), JSON.stringify({ type: 'test', data: { hello: 'from PreFlop' } })]);
+    });
     await deliverDue(ctx.db, 5);
     return (await ctx.db.query('select id, webhook_id, event_type, status, attempts, last_error, created_at from webhook_deliveries where id = $1', [id])).rows[0];
   });
   app.get(`${P}/bets`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'] });
-    const limit = Math.min(1000, Number((req.query as { limit?: string }).limit ?? 200));
+    const limit = limitParam(req.query, 1000, 200);
     return { bets: (await ctx.db.query(
       `select b.id as bet_id, b.round_id, b.selection_id, b.stake_minor, b.odds_centi, b.mode, b.currency, b.status, b.payout_minor, b.placed_at, b.settled_at,
               r.hand_no, r.table_id, r.flop, t.name as table_name, u.external_ref as player_ref
@@ -253,9 +279,12 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/partner/bets', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
     const key = req.headers['idempotency-key'];
-    if (typeof key !== 'string' || key.length < 8) throw badRequest('Idempotency-Key header required');
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
     const b = z.object({ player_ref: z.string(), round_id: z.string(), selection_id: z.string(), stake_minor: z.number().int().positive(), odds_centi: z.number().int(), accept_price_change: z.boolean().optional() }).parse(req.body);
     const userId = await partnerPlayer(ctx.db, p.orgId, b.player_ref);
+    // Same per-player bet limiter as POST /v1/bets, keyed on the player (not the partner): a
+    // partner's server cannot bet faster for one player than that player could themselves.
+    ctx.limits.bets.consume(`user:${userId}`);
     const ev = new EventBatch();
     const out = await placeBet(ctx.db, {
       userId, idempotencyKey: `${p.orgId}:${key}`, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi,
@@ -288,17 +317,26 @@ export const WEBHOOK_CLAIM_STALE_MS = 5 * 60_000;
  * callers never send the same row. The outcome is written only while the claim is still ours
  * (status 'sending' and the same attempts count); a claim older than WEBHOOK_CLAIM_STALE_MS is
  * taken over, and then the late sender's result is ignored.
+ *
+ * Only deliveries of active webhooks are claimed. Disabling a webhook cancels its queued rows
+ * (DELETE …/webhooks/:id); a row already claimed may finish, and is cancelled if it fails.
  */
 export async function deliverDue(db: Db, limit = 20, staleMs = WEBHOOK_CLAIM_STALE_MS): Promise<number> {
+  // A disabled webhook's abandoned claim (its sender died) is cancelled, not taken over.
+  await db.query(
+    `update webhook_deliveries d set status = 'cancelled', last_error = 'webhook disabled', claimed_at = null
+       from webhooks w
+      where w.id = d.webhook_id and not w.active and d.status = 'sending' and d.claimed_at <= now() - ($1 || ' milliseconds')::interval`, [String(staleMs)]);
   const due = (await db.query<{ id: string; url: string; secret: string; payload: unknown; attempts: number; created_at: Date }>(
     `with claimed as (
        update webhook_deliveries d set status = 'sending', claimed_at = now(), attempts = d.attempts + 1
         where d.id in (
-          select id from webhook_deliveries
-           where (status = 'pending' and next_attempt_at <= now())
-              or (status = 'sending' and claimed_at <= now() - ($2 || ' milliseconds')::interval)
-           order by next_attempt_at limit $1
-           for update skip locked)
+          select x.id from webhook_deliveries x join webhooks w on w.id = x.webhook_id
+           where w.active
+             and ((x.status = 'pending' and x.next_attempt_at <= now())
+              or (x.status = 'sending' and x.claimed_at <= now() - ($2 || ' milliseconds')::interval))
+           order by x.next_attempt_at limit $1
+           for update of x skip locked)
         returning d.id, d.webhook_id, d.payload, d.attempts, d.created_at)
      select c.id, w.url, w.secret, c.payload, c.attempts, c.created_at from claimed c join webhooks w on w.id = c.webhook_id`,
     [limit, String(staleMs)])).rows;
@@ -321,7 +359,10 @@ export async function deliverDue(db: Db, limit = 20, staleMs = WEBHOOK_CLAIM_STA
     } else {
       const expired = Date.now() - d.created_at.getTime() > 24 * 3600_000;
       const backoff = Math.min(3600, 2 ** Math.min(d.attempts, 12));
-      await db.query(`update webhook_deliveries set last_error = $2, status = $3, next_attempt_at = now() + ($4 || ' seconds')::interval, claimed_at = null
+      // A failed in-flight delivery of a webhook disabled meanwhile is cancelled, not retried.
+      await db.query(`update webhook_deliveries d set last_error = $2,
+                              status = case when (select active from webhooks w where w.id = d.webhook_id) then $3 else 'cancelled' end,
+                              next_attempt_at = now() + ($4 || ' seconds')::interval, claimed_at = null
                        where id = $1 and status = 'sending' and attempts = $5`,
         [d.id, error.slice(0, 300), expired ? 'failed' : 'pending', String(backoff), d.attempts]);
     }

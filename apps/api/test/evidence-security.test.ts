@@ -29,7 +29,9 @@ describe('signed evidence (docs/13 §8.4)', () => {
     const { cards } = await h.sim.procedure(n);
     const { capture, image, signed } = h.sim.buildCapture(n, cards);
     const before = await device();
-    const forged = { capture: { ...capture, cards: [cards[0]!, cards[1]!, cards[0] === 'As' ? 'Ks' : 'As'] as [string, string, string] }, signature: signed.signature };
+    // a third card that is NOT the real one (and not already on the flop), so the capture really differs
+    const other = ['As', 'Ks', 'Qs', 'Js'].find((c) => !cards.includes(c))!;
+    const forged = { capture: { ...capture, cards: [cards[0]!, cards[1]!, other] as [string, string, string] }, signature: signed.signature };
     const bad = await h.sim.sendCapture(n, forged, image);
     expect(bad.status).toBe(422);
     expect(bad.body.type).toBe('evidence_rejected');

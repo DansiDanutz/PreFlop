@@ -46,6 +46,8 @@ describe('dealer task', () => {
 describe('problem messages', () => {
   it('maps the server codes', () => {
     expect(problemMessage('duplicate_entry')).toMatch(/different people/);
+    expect(problemMessage('platform_resume_required')).toMatch(/integrity hold/);
+    expect(problemMessage('platform_review_required')).toMatch(/PreFlop team decides/);
     expect(problemMessage('stale_request')).toMatch(/clock/);
     expect(problemMessage('forbidden_role', 'a person who entered the flop cannot resolve its review')).toMatch(/entered this flop/);
     expect(problemMessage('something_new', 'Readable title')).toBe('Readable title');

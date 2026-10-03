@@ -16,10 +16,10 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 |---|---|
 | `GET /v1/health` | Liveness: the process answers. Never touches the database |
 | `GET /v1/health/ready` | Readiness: `200 {ready: true, checks}` when the database answers within 2 s and a worker has beaten within `WORKER_HEARTBEAT_MAX_AGE_MS` (15 s). Otherwise `503 not_ready` with the same `checks` (`database.ok`, `worker.ok`, `worker.last_beat_age_ms`) |
-| `GET /v1/book?channel=direct\|club\|partner` | Every market and selection, with its exact probability and odds |
+| `GET /v1/book?channel=direct\|club\|partner` | Every market and selection, with its exact probability and odds. Another `channel` value is `400 bad_request` |
 | `GET /v1/modes` | Enabled play modes, and `physical_play_enabled` (off by owner decision) |
 | `GET /v1/lobby` · `GET /v1/clubs/:id` · `GET /v1/tables/:id` | Clubs and tables, with readiness, the current round, the last flop and the history |
-| `GET /v1/tables/:id/rounds/current` · `GET /v1/rounds/:id` | Round state |
+| `GET /v1/tables/:id/rounds/current` · `GET /v1/rounds/:id` | Round state, with `review_deadline` (see *Review deadline*) |
 | `GET /v1/rooms` · `GET /v1/rooms/:id` | Public rooms run by organizers. A room's `odds` map shows its own book |
 | `POST /v1/applications` | Website application forms for a club, partner or organizer |
 | `WS /v1/stream` | Subscribe with `{"subscribe":["lobby","table:<id>"]}`. To receive your own bet events, send `{"type":"auth","token":"<session>"}` as the **first** frame (answered with `{"type":"auth","ok":true}`). Tokens in the URL are ignored |
@@ -35,16 +35,16 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `POST /v1/me/password {current, new}` | Change the password; signs out every other session. A wrong `current` counts toward the login lockout (`403 wrong_password`; the session stays valid) |
 | `POST /v1/me/mfa/setup` · `mfa/enable {code}` · `mfa/disable {code}` | Two-factor authentication (TOTP). `setup` returns `{secret, otpauth_uri}`; nothing changes at sign-in until `enable` confirms a code |
 | `GET /v1/me/session` | The play session of this sign-in: `started_at`, `minutes_played`, `limit_minutes`, `ends_at`, `limit_reached`, `reality_check_minutes`, and `results` (bets, staked, returned, open stakes and `net_minor` per wallet) |
-| `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user |
-| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History. A bet's `potential_payout_minor` is what settlement pays if it wins: the at-risk stake at the accepted odds, and 0 for a pool bet (its share is known only at settlement), as in the placement response |
+| `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user. A reused key replays the stored bet only for the same round, selection, stake and room (and the same odds unless `accept_price_change`); anything else is `422 idempotency_mismatch`. The price must equal the current price; with `accept_price_change: true` the client accepts a change only to the price it was shown, so `odds_centi` must be the `odds_centi` of the `409 price_changed` it received (a current price that is equal or better for the player is taken; a price that moved again against the player is a new `409 price_changed`). Clients keep one key per confirmed bet and retry an uncertain outcome (network error, 5xx) with that same key and body. Tournament bets (`idempotency_key` in the body) and partner bets follow the same rule |
+| `GET /v1/me/bets` · `/v1/me/ledger` · `/v1/me/stats` | History. A bet's `potential_payout_minor` is what settlement pays if it wins: the at-risk stake at the accepted odds, and 0 for a pool bet (its share is known only at settlement), as in the placement response. `bets` is newest first with `next_before` (the cursor for `?before=`, null on the last page) and filters `status`, `round_id`, `mode`, `currency` and `room_id` (`none` = outside rooms); each bet carries its `idempotency_key`, so a client can tell whether an uncertain request landed. `stats` keeps play money at the top level and adds `by_currency` (see *Per-currency amounts*) |
 | `POST /v1/me/play/reset` | Resets play money at any time |
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
-| `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one waits 24 h. Self-exclusion ends the sessions |
+| `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one (or a removal) waits 24 h in `pending`. Editing a field again supersedes its queued change (asking for 200, then reducing to 50, leaves 50 and cancels the 200; re-stating the current value cancels a queued raise); queued changes of other fields are kept, and a new raise restarts the shared `pending_effective_at`. Self-exclusion ends the sessions and is never shortened: excluding again keeps the later end |
 | `POST /v1/me/kyc` | KYC through the sandbox provider. The sandbox KYC, deposit and withdrawal rails return `503 provider_not_configured` when `NODE_ENV=production` |
 | `POST /v1/me/org-claims` | Redeem a single-use owner link (`claim_used`, `claim_expired`) |
-| `POST /v1/me/deposits` · `withdrawals` · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent). Deposits also need the account checks in *Accounts and security*; withdrawals never do |
-| `POST /v1/me/chips/purchases` | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC |
+| `POST /v1/me/deposits` · `withdrawals` (+ `Idempotency-Key`) · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent, summed per currency in exact minor units over 24 h, the new deposit included; stablecoins convert once, rounding up). Deposits also need the account checks in *Accounts and security*; withdrawals never do. See *Idempotent money* |
+| `POST /v1/me/chips/purchases` (+ `Idempotency-Key`) | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC |
 
 ## Provider (club tables)
 These calls use the signed envelope, and every write needs an `Idempotency-Key`. The order of the routes is the order of a hand:
@@ -58,9 +58,10 @@ These calls use the signed envelope, and every write needs an `Idempotency-Key`.
 7. `capture` and `capture/image` (device)
 
 Other provider routes:
-- `void` and `pause`/`resume` (floor manager);
+- `void` and `pause`/`resume` (floor manager). A pause records `pause_kind: floor`; a pause on a table already held for `monitor`, `evidence` or `platform` keeps that hold. `resume` lifts only a `floor` pause: other holds answer `403 platform_resume_required` and are lifted by the PreFlop team (`PUT /v1/admin/tables/:id/status`). On a round carrying real money, `void` is refused (`403 platform_review_required`) once deal-start is recorded, even while the round is still LOCKED;
+- `capture` validates the full signed record at ingress (every field, its type and range, no unknown field). A malformed record, e.g. one without a numeric `capturedAt`, is `422 evidence_rejected`, logged in `capture_attempts`, counts toward the 3 failed attempts and never advances the device chain;
 - `rounds/:id/review` and `rounds/:id/evidence` (floor manager);
-- `heartbeat`, `state`, `devices/:id/checkpoint`.
+- `heartbeat`, `state`, `devices/:id/checkpoint`. `state` returns `table.pause_kind` and, on each of `rounds[]`, `review_deadline`.
 
 ## Organization portals (`/v1/org/:orgId/...`)
 **Access:**
@@ -68,14 +69,14 @@ Other provider routes:
 - The PreFlop team can read every organization. Platform `admin` and `ops` can also write.
 
 **Common to every organization:**
-- `overview`;
+- `overview`: `kpis`, `series` (per day, mode and currency) and 30-day `turnover_by_currency` / `ggr_by_currency` (see *Per-currency amounts*);
 - `PUT /` (settings);
 - `members`. Only an owner (or the PreFlop team) changes an owner's role, and the last owner cannot be demoted (`last_owner`);
 - `statements?period=YYYY-MM` (dynamic sharing, `docs/09`);
-- `rounds`;
-- `players`;
+- `rounds` (with `review_deadline`; `?limit=` 1–500, default 100);
+- `players`, with `balances` per currency;
 - `treasury`;
-- `transfers`.
+- `transfers` (POST needs an `Idempotency-Key`).
 
 **Club:**
 - `tables` (GET, POST). A new table's round loss limit is set in its currency (`docs/04` §3). A `real-fiat` or `real-crypto` table starts **not approved** for real money (see *PreFlop team*);
@@ -84,14 +85,15 @@ Other provider routes:
 
 **Organizers and clubs:**
 - `rooms` (GET, POST, PUT) and `rooms/validate`, which returns any problems, the guaranteed organizer EV and the fee-rate bound;
-- `collateral/deposits`;
-- `diamonds/packs` and `diamonds/purchases`;
-- `chips/purchases`;
+- `collateral/deposits` (+ `Idempotency-Key`);
+- `diamonds/packs` and `diamonds/purchases` (+ `Idempotency-Key`);
+- `chips/purchases` (+ `Idempotency-Key`; partners too);
+- room rules: a pool room (chips **or diamonds**) needs a rake within the pool bounds (500–2,000 bps); a diamond room cannot set `provider_share_bps` above 0 (`422 provider_share_unsupported`: provider clubs are paid by PreFlop in EUR, docs/08);
 - `dilution`.
 
 **Partner:**
 - `api-clients` (the secret is shown once) and `api-clients/:id/revoke`. Revoking a client also ends every session of the partner's players;
-- `webhooks`, `webhooks/:id/test` and DELETE;
+- `webhooks`, `webhooks/:id/test`, DELETE (disable) and `webhooks/:id/enable`. Disabling cancels the webhook's queued and retrying deliveries (status `cancelled`); a delivery a sender has already claimed may finish (and is cancelled if it fails). Re-enabling sends only events from then on; `test` on a disabled webhook is `409 webhook_disabled`. Both are audited;
 - `bets`;
 - `widget` (GET, PUT): settings plus an iframe snippet.
 
@@ -101,7 +103,7 @@ Other provider routes:
 | `POST /v1/partner/oauth/token` | Client credentials → bearer token (1 h). Rate-limited per IP |
 | `POST /v1/partner/players` · `/v1/partner/players/:ref/session` | Partner players, and the widget session token. Both take an optional `date_of_birth` (recorded once; `403 underage` under 18). The partner is the licensed operator: it verifies its players' age, identity and location |
 | `POST /v1/partner/players/:ref/deposits` (+ `Idempotency-Key`, 8–200 characters) | Transfer wallet mode. Free chips are issued; virtual chips come out of the partner's treasury (bought through `POST /v1/org/:id/chips/purchases`), never beyond its balance (`insufficient_treasury`). A retry with the same key returns the original response and never credits twice; the same key with a different request gets `422 idempotency_mismatch`. No key: `400` |
-| `POST /v1/partner/bets` (+ `Idempotency-Key`) · `GET /v1/partner/bets` | Bets on the `partner` channel |
+| `POST /v1/partner/bets` (+ `Idempotency-Key`, 8–200 characters) · `GET /v1/partner/bets` | Bets on the `partner` channel. Rate-limited per partner player, with the same limiter as `POST /v1/bets` |
 
 **Suspension:** while a partner organization is not `active`, its tokens stop working, and its players get `403 partner_suspended` on every signed-in call and on bets. Suspending the partner (`PUT /v1/admin/orgs/:id/status`) also ends its players' sessions.
 
@@ -111,25 +113,26 @@ Other provider routes:
 - Deduplicate by `event_id`.
 - Delivery rows are written **in the same transaction** as the settlement or void that produced the event, so an event cannot be lost between the commit and the fan-out, whichever process (API or worker) settled the round. `round.voided` goes to every subscribed partner; `bet.settled` and `bet.voided` only to the partner whose player placed the bet.
 - A sender **claims** rows before sending (`for update skip locked`, status `sending`), so several workers never send one delivery twice. A claim older than 5 minutes is taken over, and the late sender's result is then ignored.
+- Only deliveries of **active** webhooks are claimed. Disabling a webhook cancels its queued deliveries, including retries; a delivery already claimed may finish, a failed one is cancelled instead of retried, and an abandoned claim is cancelled instead of taken over.
 
 ## PreFlop team (`/v1/admin/...`)
 **Monitoring:**
-- `overview`;
+- `overview`: `bets_24h.staked_by_currency` (the old mixed-currency `staked` is no longer sent; see *Per-currency amounts*);
 - `metrics`: operational counters as JSON (see *Health and metrics*);
 - `alerts` and `alerts/:id/resolve`;
-- `review-queue`;
-- `rounds`, `rounds/:id/evidence` and `rounds/:id/void`. The team can void and refund any round;
+- `review-queue` (with `review_deadline`);
+- `rounds` (with `review_deadline`), `rounds/:id/evidence` (`round.review_deadline`) and `rounds/:id/void`. The team can void and refund any round;
 - `rounds/:id/review` (`admin`, `ops`): `{action: settle, cards} | {action: void, reason}` on a **real-money** round in REVIEW. The club cannot settle its own real-money rounds (`403 platform_review_required` on the provider route). Other modes stay with the club's floor manager (`403 club_review_required` here);
 - `risk`: worst-case exposure per open round, plus the CUSUM outcome monitor.
 
 **Administration:**
-- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early. Only admins change roles, and support and risk cannot change a team account or their own (`forbidden_target`);
+- `users` (GET, PUT): status, KYC and roles. A self-exclusion cannot be lifted early, by any path: `status: active` is `409 self_excluded` while `self_excluded_until` is in the future, whatever the current status (e.g. via `suspended`), and the database refuses it too (migration 016 trigger). Only admins change roles, and support and risk cannot change a team account or their own (`forbidden_target`);
 - `orgs` (GET, POST, `:id/status`, `:id/owner-claim`);
 - `applications` and `applications/:id/decision`. An approved application creates the organization:
   - if the applicant applied while signed in, their account becomes the owner;
   - otherwise the response carries a single-use `owner_claim` link (14 days) for the team to send to the owner;
 - **ownership is never granted by email**, because addresses are not verified. `POST /v1/admin/orgs` also returns an `owner_claim`, and `:id/owner-claim` issues a fresh one, revoking unclaimed links. The owner redeems it signed in with `POST /v1/me/org-claims {token}` (console page `/claim/:token`);
-- `tables` and `tables/:id/status`;
+- `tables` and `tables/:id/status` (a pause records `pause_kind: platform`). `status: active` lifts any hold, including `monitor` and `evidence` ones the club cannot lift; the audit event records `previousPauseKind`;
 - `PUT tables/:id/real-money {approved, note?}` (`admin`, `ops`): approves or revokes a table for real money. Until approved, real-money bets there get `403 table_not_approved`, and so do bets of a real-money tournament on any table, including play-money tables. Audited as `table.real_money_approved` / `table.real_money_revoked`;
 - `settings` (`modes_enabled`, `physical_play_enabled`, `territories`, `require_staff_mfa`). `territories` must be `{"blocked": [...], "real_money_allowed": [...]}` and `require_staff_mfa` a boolean (`422 invalid_value`).
 
@@ -144,7 +147,7 @@ Other provider routes:
 |---|---|---|
 | `429 rate_limited` | More than `RATE_LIMIT_AUTH_PER_MIN` (20) calls a minute to `POST /v1/auth/login`, or separately to `/v1/auth/register` | Per client IP, per API instance |
 | `429 rate_limited` | More than `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` (30) calls a minute to `POST /v1/partner/oauth/token` | Per client IP, per API instance |
-| `429 rate_limited` | More than `RATE_LIMIT_BETS_PER_MIN` (120) calls a minute to `POST /v1/bets` | Per signed-in user, per API instance |
+| `429 rate_limited` | More than `RATE_LIMIT_BETS_PER_MIN` (120) calls a minute to `POST /v1/bets`, tournament bets and `POST /v1/partner/bets` together | Per player (signed-in user or partner player), per API instance |
 | `429 rate_limited` | More than `RATE_LIMIT_AUTH_PER_MIN` (20) calls a minute to `verify-email`, `forgot-password` and `reset-password` together | Per client IP, per API instance |
 | `429 rate_limited` | More than 3 emails in 15 minutes from `forgot-password` (per address) or `resend-verification` (per account) | Per address or account, per API instance |
 | `429 rate_limited` | More than 10 codes in 15 minutes to `mfa/enable` or `mfa/disable` | Per user, per API instance |
@@ -162,6 +165,45 @@ Betting limits and gates (`docs/04` §3):
 | `403 table_not_approved` | Real-money bet at a table the PreFlop team has not approved |
 | `403 partner_suspended` | The player belongs to a partner that is not active |
 
+## Idempotent money
+Every route that moves money or value in or out needs an `Idempotency-Key` header of 8–200 characters (`400 bad_request` without one), as `POST /v1/bets` does:
+`POST /v1/me/deposits`, `/v1/me/withdrawals`, `/v1/me/chips/purchases`, and `POST /v1/org/:id/chips/purchases`, `diamonds/purchases`, `collateral/deposits`, `transfers` (and the partner's `players/:ref/deposits`).
+
+- The payment id, its provider reference and its ledger postings are derived from (caller, key), and the response is stored in the same transaction. A retry with the same key and body returns the original response (same `id`) and never moves money twice, also when two retries race.
+- The same key with a different body, or on another of these routes, is `422 idempotency_mismatch`.
+- A failed request (`403 limit_reached`, `422 insufficient_funds`, …) stores nothing: the key can be retried.
+- `payments.provider_ref` is unique (migration 014). `409 duplicate_payment` means a ledger posting for that reference already exists (it should never surface through the routes above).
+- The typed client sends a fresh key per call (`deposit`, `withdraw`, `buyChips`, `buyDiamonds`, `buyOrgChips`, `orgFundCollateral`, `orgTransfer` take an optional last `idempotencyKey` argument: pass the same one to retry).
+
+## Review deadline
+Every round payload that can show a round in REVIEW carries `review_deadline`: an ISO-8601 UTC string, `review_started_at + REVIEW_SLA_MS` (30 minutes by default), the moment the worker voids an undecided review. It is `null` whenever the round is not in REVIEW (including `EVIDENCE_REJECTED`).
+
+| Payload | Where |
+|---|---|
+| `GET /v1/provider/tables/:t/state` | `rounds[].review_deadline` |
+| `GET /v1/lobby` · `/v1/clubs/:id` · `/v1/tables/:id` (and every table summary: admin overview, admin and club `tables`) | `current_round.review_deadline` |
+| `GET /v1/tables/:id/rounds/current` | `latest.review_deadline` |
+| `GET /v1/rounds/:id` | `review_deadline` |
+| `GET /v1/admin/review-queue` · `GET /v1/admin/rounds` | `rounds[].review_deadline` |
+| `GET /v1/admin/rounds/:id/evidence` · `GET /v1/provider/rounds/:id/evidence` | `round.review_deadline` |
+| `GET /v1/org/:id/rounds` | `rounds[].review_deadline` |
+
+## Per-currency amounts
+Amounts of different currencies are never added together. Totals come as arrays of `CurrencyAmount = {currency, mode, amount_minor}`, one entry per (mode, currency), sorted by currency:
+
+| Route | Shape |
+|---|---|
+| `GET /v1/admin/overview` | `bets_24h: {n, staked_by_currency: CurrencyAmount[]}`. `n` counts every bet. **`bets_24h.staked` was removed** (it summed CHIP, cents and micro-USDT) |
+| `GET /v1/org/:id/overview` | `turnover_by_currency: CurrencyAmount[]`, `ggr_by_currency: CurrencyAmount[]` (30 days; GGR = stakes − payouts of settled bets). `series[]` rows now also carry `mode`: `{day, mode, currency, turnover_minor, ggr_minor, bets}`, one per day and currency. `kpis` are unchanged (already one per currency) |
+| `GET /v1/org/:id/players` | `players[].balances: CurrencyAmount[]` (the player's wallets in this organization's economy). `balance_minor` / `currency` are kept but deprecated: they are the **first** entry of `balances` only, no longer a sum across chips and diamonds |
+| `GET /v1/me/stats` | Top level unchanged (play money only): `{bets, won, lost, staked_minor, returned_minor}`, plus `by_currency: [{mode, currency, bets, won, lost, staked_minor, returned_minor}]`, one per (mode, currency) the player has bet in. `staked_minor` and `returned_minor` count settled bets |
+
+## Query parameters
+`?limit=` on list routes (`/v1/admin/rounds`, `users`, `ledger`, `audit`; `/v1/org/:id/rounds`, `/v1/org/:id/bets`; `/v1/me/bets`) is a whole number ≥ 1; larger values are served as the route's maximum. Anything else (`abc`, `1.5`, `0`, empty) is `400 bad_request`.
+
+## Table pauses
+`poker_tables.pause_kind` (migration 014) says, for code, why a table is paused: `monitor` (outcome-monitor alarm), `evidence` (Table Box inspection after failed captures), `floor` (club tablet) or `platform` (PreFlop team); `null` while active. `pause_reason` stays the human text. Only `pause_kind = monitor` makes the resolver void a dealt round, whatever the reason text says. The club tablet resumes only `floor` pauses (`403 platform_resume_required` otherwise); `monitor`, `evidence` and `platform` holds are lifted by PreFlop `admin`, `ops` or `risk` with `PUT /v1/admin/tables/:id/status {status: active}` after review.
+
 ## Accounts and security
 Real money is off today. These rules are in place so it can be switched on.
 
@@ -173,7 +215,7 @@ Real money is off today. These rules are in place so it can be switched on.
 
 **Session limit and reality checks.** A play session starts at sign-in (`sessions.play_started_at`). With a `session_minutes` limit, bets (`POST /v1/bets`, tournament bets) are refused with `403 session_limit` once that many minutes have passed. Betting resumes in a new session: the player signs out and in again, and the new session starts at once (no enforced pause; the limit makes the player stop and decide). `GET /v1/me/session` drives the clock in the player app and a reality check every `reality_check_minutes` (the limit, or 60): time played, net result this session, *Continue* or *Take a break* (sign out).
 
-**Email.** Verification (48 h) and reset (1 h) links are random tokens; only their SHA-256 is stored (`email_tokens`), each works once, and only while the account keeps the address it was sent to. A new link replaces the earlier unused one. Messages go to `email_outbox` in the same transaction and the worker sends them. No email provider is integrated: outside production the log transport prints each message (with its link) to stdout; in production messages stay queued and the API warns at start. To plug a provider, implement `MailTransport` and return it from `mailTransportFor()` in `apps/api/src/lib/mailer.ts` (an HTTP mail API needs only `fetch`); `MAIL_FROM`, `SMTP_URL` and `WEB_URL` (the link base) are read into `config.mail`. A sent message keeps its row but loses its body.
+**Email.** Verification (48 h) and reset (1 h) links are random tokens; only their SHA-256 is stored (`email_tokens`), each works once, and only while the account keeps the address it was sent to. A new link replaces the earlier unused one. Links point at `WEB_URL`. Messages go to `email_outbox` in the same transaction and the worker sends them. With `SMTP_URL` (`smtp://` or `smtps://`, credentials in the URL) they go out over SMTP (nodemailer) from `MAIL_FROM`; in production `SMTP_URL` then requires an explicit `MAIL_FROM` of your own domain and a public `https` `WEB_URL`. Without `SMTP_URL`, outside production the log transport prints each message (with its link) to stdout; in production messages stay queued and the API warns at start. Each message is tried at most once per worker pass; a failure records `last_error` and schedules the next attempt with exponential backoff (`next_attempt_at`: 1 min, 2, 4, … capped at 6 h). After 8 attempts the message is `failed` (logged; counted in `GET /v1/admin/metrics`). A sent message keeps its row but loses its body.
 
 **Passwords.** Player passwords are 8–200 characters. PreFlop team accounts (`platform_role` set) need a strong one on change and reset (12+ characters, 3 character classes, no common words; `422 weak_password`). A reset signs out every session and also verifies the email; a change signs out every other session.
 
@@ -206,6 +248,7 @@ Real money is off today. These rules are in place so it can be switched on.
 |---|---|
 | `outbox.pending` · `outbox.oldest_pending_age_s` | Outbox lag: jobs not done yet, and the age of the oldest |
 | `webhook_deliveries.pending` · `failed` · `oldest_pending_age_s` | Webhook backlog (including deliveries being sent), and deliveries that gave up after 24 h |
+| `email_outbox.pending` · `retrying` · `failed` · `oldest_pending_age_s` | Email backlog, messages waiting for a retry, and messages that gave up after 8 attempts. `instance.mail` counts this process's sends, failed attempts and give-ups |
 | `alerts.open` · `alerts.open_critical` | Unresolved alerts |
 | `rounds_by_state` | Count of rounds per state (`OPEN`, `LOCKED`, …, `SETTLED`, `VOID`) |
 | `sweeper_voids_last_hour` | Rounds the deadline sweeper voided in the last hour |
@@ -228,7 +271,7 @@ Database counters are global; `instance` describes only the API process that ans
 
 ## Run it
 ```bash
-pnpm install && pnpm -r build
+pnpm install && VITE_API_URL=http://localhost:4000 pnpm -r build   # web/console production builds require VITE_API_URL
 DATABASE_URL=postgres://postgres@localhost:5432/preflop pnpm --filter @preflop/api dev   # API + worker on :4000
 pnpm --filter @preflop/api sim     # 5 simulated tables
 ADMIN_PASSWORD=… pnpm --filter @preflop/api demo   # demo orgs; passwords from env or generated and printed
@@ -290,3 +333,16 @@ The ledger kinds are:
 - `tournament.buyin`, `tournament.refund` (ref: the buy-in);
 - `tournament.added`, `tournament.added_return`, `tournament.fee` (ref: the tournament);
 - `tournament.payout` (ref `<tournament>:<user>`).
+
+## News (migration 015)
+Posts about the app and the platform, shown on the website at `/news` and written in the console (admin → Platform → News).
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/news?limit=1–50&tag=` | Published posts, newest first, without bodies. A bad `limit` or `tag` is `400` |
+| `GET /v1/news/:slug` | One published post with its body; drafts and unknown slugs are `404` |
+| `GET /v1/admin/news` | Every post, drafts included (`admin`, `ops`) |
+| `POST /v1/admin/news` · `PUT /v1/admin/news/:id` | Create (title 3–120, summary ≤ 300, body ≤ 20,000, ≤ 8 tags) or update. The slug is made from the title (`-2`, `-3`… when taken); an explicit slug in use is `409 slug_taken` |
+| `POST /v1/admin/news/:id/publish` · `/unpublish` · `DELETE /v1/admin/news/:id` | A first publication is dated now; republishing keeps the date |
+
+Every change is audited (`news.created`, `news.updated`, `news.published`, `news.unpublished`, `news.deleted`). The body is a small Markdown subset (paragraphs, `##`/`###`, lists, bold, italic, code, https links) rendered by `@preflop/ui/markdown` into React elements, never into raw HTML.

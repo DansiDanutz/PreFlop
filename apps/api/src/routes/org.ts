@@ -3,16 +3,19 @@ import { MODES, type PlayMode, dilution } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
-import { ROOM_CURRENCY, type RoomRules, orgCollateralReserved, validateRoomRules } from '../bets/rooms.ts';
+import { ROOM_CURRENCY, type RoomRules, assertRoomRulesSupported, orgCollateralReserved, validateRoomRules } from '../bets/rooms.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
+import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { defaultRoundLossMinor } from '../lib/limits.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
+import { limitParam } from '../lib/query.ts';
 import { orgStatements } from '../lib/statements.ts';
 import { buyChips, buyDiamonds, diamondPacks } from '../payments/sandbox.ts';
 import { CERT_FLAGS, type CertItem } from '../rounds/readiness.ts';
+import { withReviewDeadline } from '../rounds/service.ts';
 import { roomSelect, roomView } from './account.ts';
 import { tableSummaries } from './public.ts';
 
@@ -58,11 +61,11 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const { org } = await requireOrg(ctx, req, oid(req));
     const where = org.kind === 'club' ? `r.table_id in (select id from poker_tables where club_id = $1)`
       : org.kind === 'partner' ? `b.partner_id = $1` : `b.house_owner = $1`;
-    const series = (await ctx.db.query<{ day: string; currency: string; turnover_minor: number; ggr_minor: number; bets: number }>(
-      `select to_char(date_trunc('day', b.placed_at), 'YYYY-MM-DD') as day, b.currency, coalesce(sum(b.stake_minor), 0)::bigint as turnover_minor,
+    const series = (await ctx.db.query<{ day: string; mode: PlayMode; currency: string; turnover_minor: number; ggr_minor: number; bets: number }>(
+      `select to_char(date_trunc('day', b.placed_at), 'YYYY-MM-DD') as day, b.mode, b.currency, coalesce(sum(b.stake_minor), 0)::bigint as turnover_minor,
               coalesce(sum(b.stake_minor - coalesce(b.payout_minor, 0)) filter (where b.status in ('won','lost')), 0)::bigint as ggr_minor, count(*)::int as bets
          from bets b join rounds r on r.id = b.round_id
-        where ${where} and b.placed_at > now() - interval '30 days' group by 1, 2 order by 1, 2`, [org.id])).rows;
+        where ${where} and b.placed_at > now() - interval '30 days' group by 1, 2, 3 order by 1, 2, 3`, [org.id])).rows;
     const kpis: { label: string; value: number; currency?: string; hint?: string }[] = [];
     const sum = (k: 'turnover_minor' | 'ggr_minor' | 'bets', cur?: string) => series.filter((x) => !cur || x.currency === cur).reduce((a, x) => a + Number(x[k]), 0);
     kpis.push({ label: 'Bets (30 days)', value: sum('bets') });
@@ -77,7 +80,12 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
       const players = (await ctx.db.query<{ n: number }>(`select count(distinct user_id)::int as n from room_members m join rooms r on r.id = m.room_id where r.org_id = $1`, [org.id])).rows[0]!.n;
       kpis.unshift({ label: 'Active rooms', value: rooms }, { label: 'Players', value: players });
     }
-    return { org, kpis, series };
+    // 30-day totals per (mode, currency): amounts of different currencies are never added together.
+    const totals = (k: 'turnover_minor' | 'ggr_minor') => [...new Set(series.map((x) => `${x.mode}\u0000${x.currency}`))].sort().map((mc) => {
+      const [mode, currency] = mc.split('\u0000') as [PlayMode, string];
+      return { currency, mode, amount_minor: series.filter((x) => x.mode === mode && x.currency === currency).reduce((a, x) => a + Number(x[k]), 0) };
+    });
+    return { org, kpis, series, turnover_by_currency: totals('turnover_minor'), ggr_by_currency: totals('ggr_minor') };
   });
 
   app.put(`${P}`, async (req) => {
@@ -118,6 +126,39 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     });
     return { ok: true };
   });
+  /**
+   * Change a member's role or remove them. Owners and admins only (viewers are read-only). Only an
+   * owner (or the PreFlop team) makes someone an owner or changes or removes an owner, and the last
+   * owner can be neither demoted nor removed. Both are audited.
+   */
+  const memberChange = async (req: FastifyRequest, next: 'owner' | 'admin' | 'viewer' | null) => {
+    const { org, user, role } = await requireOrg(ctx, req, oid(req), { write: true });
+    const targetId = (req.params as { userId: string }).userId;
+    const ownerPower = role === 'owner' || role.startsWith('platform:');
+    if (next === 'owner' && !ownerPower) throw forbidden('read_only', 'only an owner can add owners');
+    await tx(ctx.db, async (c) => {
+      const owners = (await c.query<{ user_id: string }>(`select user_id from memberships where org_id = $1 and role = 'owner' for update`, [org.id])).rows;
+      const cur = (await c.query<{ role: string }>('select role from memberships where org_id = $1 and user_id = $2 for update', [org.id, targetId])).rows[0];
+      if (!cur) throw notFound('member');
+      if (cur.role === 'owner' && next !== 'owner') {
+        if (!ownerPower) throw forbidden('read_only', next === null ? 'only an owner can remove an owner' : 'only an owner can change an owner’s role');
+        if (owners.length === 1) throw conflict('last_owner', 'an organization needs at least one owner; add another owner first');
+      }
+      if (next === null) {
+        await c.query('delete from memberships where org_id = $1 and user_id = $2', [org.id, targetId]);
+        await audit(c, { type: 'org.member.removed', orgId: org.id, userId: targetId, previousRole: cur.role, by: user.id });
+      } else if (next !== cur.role) {
+        await c.query('update memberships set role = $3 where org_id = $1 and user_id = $2', [org.id, targetId, next]);
+        await audit(c, { type: 'org.member', orgId: org.id, userId: targetId, role: next, previousRole: cur.role, by: user.id });
+      }
+    });
+    return { ok: true as const };
+  };
+  app.put(`${P}/members/:userId`, async (req) => {
+    const b = z.object({ role: z.enum(['owner', 'admin', 'viewer']) }).parse(req.body);
+    return memberChange(req, b.role);
+  });
+  app.delete(`${P}/members/:userId`, async (req) => memberChange(req, null));
 
   app.get(`${P}/statements`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req));
@@ -132,12 +173,12 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
       : 'r.id in (select round_id from bets where house_owner = $1 or partner_id = $1)';
     const rows = (await ctx.db.query(
       `select r.id, r.table_id, r.hand_no, r.state, r.procedure_step as step, r.mode, r.currency, r.opened_at, r.locked_at, r.settled_at, r.voided_at, r.void_reason, r.flop,
-              count(b.id)::int as bets, coalesce(sum(b.stake_minor), 0)::bigint as staked_minor, coalesce(sum(b.payout_minor) filter (where b.status = 'won'), 0)::bigint as paid_minor
+              r.review_started_at, count(b.id)::int as bets, coalesce(sum(b.stake_minor), 0)::bigint as staked_minor, coalesce(sum(b.payout_minor) filter (where b.status = 'won'), 0)::bigint as paid_minor
          from rounds r left join bets b on b.round_id = r.id
         where ${scope} and ($2::text is null or r.table_id = $2) and ($3::text is null or r.state = $3)
         group by r.id order by r.opened_at desc limit $4`,
-      [org.id, q.table_id ?? null, q.state ?? null, Math.min(500, Number(q.limit ?? 100))])).rows;
-    return { rounds: rows };
+      [org.id, q.table_id ?? null, q.state ?? null, limitParam(q, 500, 100)])).rows;
+    return { rounds: rows.map((r) => withReviewDeadline(r, ctx.config.reviewSlaMs)) };
   });
 
   app.get(`${P}/players`, async (req) => {
@@ -162,8 +203,13 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
       `select e.account_id, sum(e.amount_minor)::bigint as b from ledger_entries e where e.account_id like $1 group by e.account_id`, [`%:${walletPurpose(org.id)}:%`])).rows;
     return {
       players: rows.map((p) => {
-        const w = bal.filter((x) => x.account_id.startsWith(`${p.user_id}:`));
-        return { ...p, balance_minor: w.reduce((a, x) => a + Number(x.b), 0), currency: w[0]?.account_id.split(':')[3] ?? '' };
+        // One entry per (mode, currency) of this org's economy (chips and diamonds are never added).
+        const balances = bal.filter((x) => x.account_id.startsWith(`${p.user_id}:`)).map((x) => {
+          const [, , mode, currency] = x.account_id.split(':') as [string, string, PlayMode, string];
+          return { currency, mode, amount_minor: Number(x.b) };
+        }).sort((a, b) => a.currency.localeCompare(b.currency));
+        // Deprecated single-currency fields: the first currency's balance only, never a mixed sum.
+        return { ...p, balances, balance_minor: balances[0]?.amount_minor ?? 0, currency: balances[0]?.currency ?? '' };
       }),
     };
   });
@@ -267,6 +313,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/rooms`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const b = RoomBody.parse(req.body);
+    assertRoomRulesSupported(b.mode, b.rules as RoomRules);
     const v = validateRoomRules(b.mode, b.house, b.rules as RoomRules);
     if (!v.ok) throw unprocessable('invalid_rules', v.problems.join('; '), { problems: v.problems });
     const t = (await ctx.db.query('select status from poker_tables where id = $1', [b.table_id])).rows[0];
@@ -288,6 +335,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const cur = (await ctx.db.query('select * from rooms where id = $1 and org_id = $2', [roomId, org.id])).rows[0];
     if (!cur) throw notFound('room');
     if (b.rules) {
+      assertRoomRulesSupported(cur.mode, b.rules as RoomRules);
       const v = validateRoomRules(cur.mode, cur.house, b.rules as RoomRules);
       if (!v.ok) throw unprocessable('invalid_rules', v.problems.join('; '), { problems: v.problems });
     }
@@ -314,17 +362,23 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     return { accounts };
   });
-  app.post(`${P}/collateral/deposits`, async (req) => {
+  // Money moves below (collateral, purchases, transfers) need an Idempotency-Key (8–200 characters):
+  // refs derive from (user, key) and the response is stored with the effect, so a retry never
+  // moves value twice; the same key with a different request gets 422 idempotency_mismatch.
+  app.post(`${P}/collateral/deposits`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
+    const key = requireIdempotencyKey(req);
     const b = z.object({ mode: z.enum(['virtual-chips', 'diamonds']), currency: z.string(), amount_minor: z.number().int().positive() }).parse(req.body);
-    await tx(ctx.db, async (c) => {
+    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'col', async (c, ref) => {
       const from = acct(org.id, 'treasury', b.mode, b.currency);
       await lockAccount(c, from);
       if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_funds', 'treasury balance too low — buy chips or diamonds first');
-      await post(c, 'collateral.deposit', newId('col'), [{ from, to: acct(org.id, 'collateral', b.mode, b.currency), amountMinor: b.amount_minor }]);
-      await audit(c, { type: 'collateral.deposit', orgId: org.id, ...b, by: user.id });
+      if (!(await post(c, 'collateral.deposit', ref, [{ from, to: acct(org.id, 'collateral', b.mode, b.currency), amountMinor: b.amount_minor }])))
+        throw conflict('duplicate_payment', 'this collateral deposit was already made');
+      await audit(c, { type: 'collateral.deposit', orgId: org.id, ...b, ref, by: user.id });
+      return { status: 200, body: { ok: true } };
     });
-    return { ok: true };
+    return reply.code(res.status).send(res.body);
   });
   app.get(`${P}/diamonds/packs`, async (req) => {
     await requireOrg(ctx, req, oid(req));
@@ -333,19 +387,25 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/diamonds/purchases`, async (req, reply) => {
     // The sandbox payment rail never runs in production (fail closed until a real provider charges).
     if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
-    const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
+    const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
+    const key = requireIdempotencyKey(req);
     const b = z.object({ diamonds: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     if (!(await ctx.modeEnabled('diamonds'))) throw conflict('mode_disabled', 'diamonds are not enabled');
-    return reply.code(201).send(await tx(ctx.db, (c) => buyDiamonds(c, org.id, b.diamonds, b.pay_with)));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
+      ({ status: 201, body: await buyDiamonds(c, org.id, b.diamonds, b.pay_with, ref) }));
+    return reply.code(res.status).send(res.body);
   });
   app.post(`${P}/chips/purchases`, async (req, reply) => {
     // The sandbox payment rail never runs in production (fail closed until a real provider charges).
     if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     // Partners buy chips too: their treasury funds transfer-wallet deposits to their players.
-    const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
+    const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
+    const key = requireIdempotencyKey(req);
     const b = z.object({ chips: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
-    return reply.code(201).send(await tx(ctx.db, (c) => buyChips(c, { orgId: org.id }, b.chips, b.pay_with)));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
+      ({ status: 201, body: await buyChips(c, { orgId: org.id }, b.chips, b.pay_with, ref) }));
+    return reply.code(res.status).send(res.body);
   });
   app.get(`${P}/transfers`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req));
@@ -354,21 +414,23 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   /** Clubs and organizers give chips or diamonds to players online (docs/08): treasury → the player's wallet in this org's economy. */
   app.post(`${P}/transfers`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
+    const key = requireIdempotencyKey(req);
     const b = z.object({ email: z.string().email(), mode: z.enum(['virtual-chips', 'diamonds']), amount_minor: z.number().int().positive() }).parse(req.body);
     const target = (await ctx.db.query<{ id: string; status: string }>('select id, status from users where email = $1', [b.email.toLowerCase()])).rows[0];
     if (!target) throw notFound('player with that email');
     if (target.status !== 'active') throw new ApiError(403, 'player_unavailable', 'this player cannot receive transfers');
     const currency = ROOM_CURRENCY[b.mode];
-    const id = newId('trf');
-    await tx(ctx.db, async (c) => {
+    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'trf', async (c, id) => {
       const from = acct(org.id, 'treasury', b.mode, currency);
       await lockAccount(c, from);
       if ((await balance(c, from)) < b.amount_minor) throw unprocessable('insufficient_funds', 'treasury balance too low');
-      await post(c, 'transfer.player', id, [{ from, to: acct(target.id, walletPurpose(org.id), b.mode, currency), amountMinor: b.amount_minor }]);
+      if (!(await post(c, 'transfer.player', id, [{ from, to: acct(target.id, walletPurpose(org.id), b.mode, currency), amountMinor: b.amount_minor }])))
+        throw conflict('duplicate_payment', 'this transfer was already made');
       await c.query('insert into transfers (id, org_id, user_id, mode, currency, amount_minor, by_user) values ($1, $2, $3, $4, $5, $6, $7)', [id, org.id, target.id, b.mode, currency, b.amount_minor, user.id]);
       await audit(c, { type: 'transfer.player', transferId: id, orgId: org.id, userId: target.id, mode: b.mode, amountMinor: b.amount_minor, by: user.id });
+      return { status: 201, body: { id, org_id: org.id, user_email: b.email.toLowerCase(), mode: b.mode, currency, amount_minor: b.amount_minor, created_at: new Date().toISOString() } };
     });
-    return reply.code(201).send({ id, org_id: org.id, user_email: b.email.toLowerCase(), mode: b.mode, currency, amount_minor: b.amount_minor, created_at: new Date().toISOString() });
+    return reply.code(res.status).send(res.body);
   });
 
   /** Diamond dilution (docs/08): how fast this organizer's diamond economy is consumed. */

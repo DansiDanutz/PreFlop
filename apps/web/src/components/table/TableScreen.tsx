@@ -1,18 +1,21 @@
 import { ApiError } from '@preflop/client';
-import { Badge, Button, type RoundPhase, cx, formatMoney, formatOdds } from '@preflop/ui';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Badge, Button, type RoundPhase, cx, formatMoneyShort, formatOdds } from '@preflop/ui';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Info, LayoutGrid, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../../lib/api.ts';
+import { type BetIntent, type IntentInputs, newIntent, priceOfferFor, withAcceptedPrice } from '../../lib/betIntent.ts';
 import { type BetOption, MAIN_GRID, MAX_FAVORITES, removeFavorite, resolveOption } from '../../lib/bets.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
 import { openHandNo, phaseOf, streamGate, tableStatus } from '../../lib/live.ts';
 import { marketAllowed } from '../../lib/embed.ts';
 import { type BetProblem, betProblem } from '../../lib/problems.ts';
-import { useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
-import { amountLabel, balanceLabel, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
+import { qk, useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
+import { betQuote, quoteLines } from '../../lib/quote.ts';
+import { amountLabel, amountRange, balanceLabel, isLargeStake, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
 import { KEYS, readJson, writeJson, writeString } from '../../lib/storage.ts';
+import { useBetIntent } from '../../lib/useBetIntent.ts';
 import { useTableLive } from '../../lib/useTableLive.ts';
 import { HowToPlay, PracticePill } from '../AppShell.tsx';
 import { MiniFlop } from '../MiniFlop.tsx';
@@ -21,6 +24,7 @@ import { ErrorState, Notice, Sheet, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from './Catalogue.tsx';
 import { LiveBanner } from './LiveBanner.tsx';
 import { RoundCompleteSheet } from './RoundCompleteSheet.tsx';
+import { StakeConfirmSheet } from './StakeConfirmSheet.tsx';
 import { EmptyFavoriteSlot, FavoriteTile } from './Tiles.tsx';
 
 const PRESET_COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5' };
@@ -56,8 +60,10 @@ const PROMPT: Record<RoundPhase, { eyebrow: string; title: string }> = {
  * Used by /app/table/:id (and …/bets, which opens the catalogue) and by /embed/table/:id, where
  * the partner's `embedOptions` limit the markets shown and set the stake pills.
  */
-export function TableScreen({ tableId, embed = false, catalogue = false, embedOptions }: {
+export function TableScreen({ tableId, embed = false, catalogue = false, embedOptions, guest = false }: {
   tableId: string; embed?: boolean; catalogue?: boolean; embedOptions?: { markets: string[] | null; stakes: number[] | null } | undefined;
+  /** Signed-out demo (/demo): the live table is read-only and the bet panel becomes a "Play free" call to action. */
+  guest?: boolean;
 }) {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -83,8 +89,12 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const [confirmReset, setConfirmReset] = useState(false);
   const [help, setHelp] = useState(false);
   const [catalogueOpen, setCatalogueOpen] = useState(catalogue);
+  /** A large stake waiting for the confirm sheet: frozen when the sheet opens, sent as shown. */
+  const [draft, setDraft] = useState<BetIntent | null>(null);
+  /** A price change offered for one exact intent (lib/betIntent.ts): consent never carries over to other inputs. */
+  const [offer, setOffer] = useState<{ intent: BetIntent; oddsCenti: number } | null>(null);
 
-  useEffect(() => { if (!embed) writeString(KEYS.lastTable, tableId); }, [tableId, embed]);
+  useEffect(() => { if (!embed && !guest) writeString(KEYS.lastTable, tableId); }, [tableId, embed, guest]);
   useEffect(() => writeJson(KEYS.stake, stake), [stake]);
   useEffect(() => setCatalogueOpen(catalogue), [catalogue]);
   // A bet chosen elsewhere arrives as ?sel=…
@@ -142,29 +152,38 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const thisRound = useMemo(() => live.placed.filter((b) => b.roundId === openId), [live.placed, openId]);
   const inFlight = useMemo(() => live.placed.filter((b) => b.roundId !== openId && b.status === 'accepted'), [live.placed, openId]);
 
-  const place = useMutation({
-    mutationFn: async (o: { acceptPrice?: number }) => {
-      if (!openId) throw new ApiError(409, { type: 'round_locked', title: 'closed', status: 409 });
-      if (!option?.offered) throw new ApiError(422, { type: 'not_offered', title: 'not offered', status: 422 });
-      return api.placeBet({
-        round_id: openId, selection_id: option.id, stake_minor: stake, odds_centi: o.acceptPrice ?? option.oddsCenti,
-        ...(o.acceptPrice !== undefined ? { accept_price_change: true } : {}),
-        ...(room ? { room_id: room.id } : {}),
-      });
-    },
-    onMutate: () => { setProblem(null); setPlacedMsg(null); },
-    onSuccess: (bet) => {
-      live.addPlaced({ betId: bet.bet_id, roundId: bet.round_id, selectionId: bet.selection_id, stakeMinor: bet.stake_minor, oddsCenti: bet.odds_centi, status: bet.status });
-      const price = pool ? 'in the pool' : `at ${formatOdds(bet.odds_centi)}`;
-      setPlacedMsg(`${nameOf(bet.selection_id)} ${price} for ${amountLabel(bet.stake_minor, bet.currency)}. Good luck.`);
+  const bet = useBetIntent({
+    onPlaced: (b, intent) => {
+      if (intent.tableId === tableId) live.addPlaced({ betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status, currency: b.currency });
+      setProblem(null);
+      const price = intent.roomId && pool ? 'in the pool' : `at ${formatOdds(b.odds_centi)}`;
+      setPlacedMsg(`${nameOf(b.selection_id)} ${price} for ${amountLabel(b.stake_minor, b.currency)}. Good luck.`);
       void qc.invalidateQueries({ queryKey: ['me', 'wallets'] });
+      void qc.invalidateQueries({ queryKey: qk.bets });
     },
-    onError: (err) => {
+    onRefused: (err, intent) => {
       const p = betProblem(err);
+      // The new price is offered for this intent only; accepting it needs a fresh tap.
+      setOffer(p.kind === 'price_changed' && p.oddsCenti > 0 ? { intent, oddsCenti: p.oddsCenti } : null);
       setProblem(room && p.kind === 'insufficient_funds' ? { kind: 'other', message: `Not enough ${balanceLabel(currency).toLowerCase()} in ${room.org_name}.` } : p);
       if (p.kind === 'unauthorized' && !embed) nav(`/login?next=/app/table/${tableId}`);
     },
+    onUnknown: () => setProblem({ kind: 'other', message: 'We could not confirm your prediction yet. We are checking with PreFlop; you can place another one once we know.' }),
+    onNotPlaced: () => setProblem({ kind: 'other', message: 'Your last prediction was not placed. Nothing was taken from your balance.' }),
   });
+
+  // What the slip would send now; a confirm freezes it into an intent with one Idempotency-Key.
+  const inputs: IntentInputs | null = openId && option?.offered
+    ? { tableId, roundId: openId, selectionId: option.id, stakeMinor: stake, oddsCenti: option.oddsCenti, roomId: room?.id ?? null, currency }
+    : null;
+  // The price notice belongs to the bet it was raised for: another selection, stake, wallet or a new
+  // round drops it for good, so a later price change always needs fresh consent.
+  const offerStale = !!offer && !priceOfferFor(offer, inputs);
+  useEffect(() => {
+    if (!offerStale) return;
+    setOffer(null);
+    setProblem((p) => (p?.kind === 'price_changed' ? null : p));
+  }, [offerStale]);
 
   if (live.detail.isError) {
     return (
@@ -179,18 +198,37 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
   const tooMuch = balance !== null && stake > balance;
   // No bets while the live stream is down: the round may already be locked without us seeing it.
-  const gate = streamGate(live.ws);
-  const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !place.isPending && status?.open !== false && !roomMismatch && !(roomId && !room);
+  const gate = streamGate(live.ws, live.resyncing);
+  // The balance must be known: the large-stake confirmation (and the "more than you have" check)
+  // depend on it, so nothing is sent while it is still loading.
+  const canConfirm = balance !== null && !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !bet.busy && status?.open !== false && !roomMismatch && !(roomId && !room);
+  const send = (i: BetIntent) => {
+    setProblem(null); setPlacedMsg(null); setOffer(null); setDraft(null);
+    void bet.submit(i);
+  };
+  const confirm = () => {
+    if (!inputs || !canConfirm) return;
+    const i = newIntent(inputs);
+    if (isLargeStake(stake, balance)) setDraft(i);
+    else send(i);
+  };
+  const liveOffer = priceOfferFor(offer, inputs);
+  const shownProblem = problem?.kind === 'price_changed' && !liveOffer ? null : problem;
+  const liveDraft = draft && inputs && priceOfferFor({ intent: draft, oddsCenti: draft.oddsCenti }, inputs) ? draft : null;
   const favCount = favIds.length;
   const unavailable = !!t && (t.status !== 'active' || status?.label === 'Stream unavailable');
   const prompt = PROMPT[phase];
-  const returns = option?.offered && !pool ? Math.floor((stake * option.oddsCenti) / 100) : null;
+  // The engine's own fee arithmetic: equals the API's potential_payout_minor for this stake.
+  const quote = option?.offered ? betQuote(stake, option.oddsCenti, room) : null;
+  const returns = quote?.totalReturnMinor ?? null;
+  const draftQuote = liveDraft ? betQuote(liveDraft.stakeMinor, liveDraft.oddsCenti, room) : null;
+  const fmt = (m: number) => amountLabel(m, currency);
 
   return (
     <div className={cx('@container', embed && 'px-4 pb-8 pt-4')}>
-      <LiveBanner ws={live.ws} className="mb-4" />
+      {!guest && <LiveBanner ws={live.ws} resyncing={live.resyncing} className="mb-4" />}
       {/* heading */}
-      {!embed && t && (
+      {!embed && !guest && t && (
         <Link to={`/app/clubs/${t.club_id}`} className="inline-flex items-center gap-1.5 text-[14px] text-ink/85 hover:text-ink">
           <ChevronLeft className="h-4 w-4" aria-hidden /> {t.club_name}
         </Link>
@@ -251,7 +289,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
                   <ul className="mt-2 flex flex-wrap gap-2">
                     {[...inFlight, ...thisRound].map((b) => (
                       <li key={b.betId} className={cx('rounded-[6px] border px-3 py-1.5 text-[13px]', b.roundId === openId ? 'border-accent/60 bg-accent-deep/30' : 'border-info/50')}>
-                        {nameOf(b.selectionId)} · {formatMoney(b.stakeMinor, 'PLAY')}
+                        {nameOf(b.selectionId)} · {amountLabel(b.stakeMinor, b.currency)}
                         {b.roundId !== openId && <span className="ml-1 text-muted">· awaiting flop</span>}
                       </li>
                     ))}
@@ -263,6 +301,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         </div>
 
         {/* right: favorites, amount, confirm (second on phones, beside the table on wide screens) */}
+        {guest ? <GuestPanel tableId={tableId} /> : (
         <section aria-labelledby="favs" className="rounded-[12px] border border-line-strong/60 bg-surface p-5 @min-[640px]:p-6 @min-[880px]:col-start-2 @min-[880px]:row-span-2 @min-[880px]:row-start-1">
           <div className="flex items-center gap-2.5">
             <h2 id="favs" className="text-[20px] font-bold">Favorite bets</h2>
@@ -299,7 +338,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
             <div className="mt-5 flex items-center justify-between text-[12px]">
               <span className="text-[14px]">Amount</span>
-              <span className="text-ink/85">{balance === null ? balanceLabel(currency) : `${formatMoney(minStake, 'PLAY')}–${formatMoney(Math.max(minStake, balance), 'PLAY')} ${balanceLabel(currency).toLowerCase()}`}</span>
+              <span className="text-ink/85">{balance === null ? balanceLabel(currency) : amountRange(minStake, Math.max(minStake, balance), currency)}</span>
             </div>
             <div className="mt-2 flex h-12 overflow-hidden rounded-[8px] border border-line-strong/70 bg-bg">
               <button type="button" aria-label="Decrease amount" onClick={() => setStake((s) => Math.max(minStake, s - step))} className="grid w-12 place-items-center bg-surface-3 hover:text-accent"><Minus className="h-4 w-4" /></button>
@@ -313,40 +352,54 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               {presets.map((p) => (
                 <button key={p} type="button" aria-pressed={stake === p} onClick={() => setStake(p)}
                   className={cx('h-10 rounded-[6px] border text-[13px] transition-colors', stake === p ? 'border-accent/60 bg-accent-deep text-accent' : 'border-line-strong/70 text-ink/90 hover:border-accent/50')}>
-                  {formatMoney(p, 'PLAY')}
+                  {formatMoneyShort(p, currency)}
                 </button>
               ))}
             </div>
             {tooMuch && <p className="mt-2 text-xs text-warn">More than your {amountLabel(balance!, currency)}.</p>}
+            {balance === null && (play.isError && !play.isFetching ? (
+              // the room and free-chip balances come from the same wallets query
+              <p className="mt-2 text-xs text-warn" role="alert">
+                Your balance could not be loaded, so predictions are paused.{' '}
+                <button type="button" className="font-semibold text-accent underline" onClick={() => void play.refetch()}>Retry</button>
+              </p>
+            ) : <p className="mt-2 text-xs text-muted" aria-live="polite">Loading your balance…</p>)}
             {stake > 0 && stake < minStake && <p className="mt-2 text-xs text-warn">The minimum here is {amountLabel(minStake, currency)}.</p>}
 
             <div className="mt-5 flex items-baseline justify-between text-[13px]">
               <span className="text-ink/85">{pool ? 'Pool payout' : 'Total return if correct'}</span>
               <span className="font-bold">{pool ? 'Share of the pool' : returns !== null ? amountLabel(returns, currency).replace('free chips', 'chips') : '—'}</span>
             </div>
+            {quoteLines(quote, fmt).length > 0 && (
+              <dl className="mt-2 space-y-1 text-[12px] text-ink/80" aria-label="Fees">
+                {quoteLines(quote, fmt).map((l) => <div key={l.label} className="flex justify-between gap-3"><dt>{l.label}</dt><dd>{l.value}</dd></div>)}
+              </dl>
+            )}
             <p className="mt-1 text-[12px] text-ink/75">
               {pool ? `Winners share the pool after the room’s ${((room?.rules.rake_bps ?? 0) / 100).toFixed(0)}% rake.` : room ? 'Room odds, after the organizer’s fees.' : 'Decimal odds include your original chips.'}
             </p>
 
-            {problem && (
+            {shownProblem && (
               <div className="mt-4">
-                <ProblemNotice problem={problem} pending={place.isPending || gate.paused} canReset={!room}
-                  onAccept={(odds) => place.mutate({ acceptPrice: odds })} onReset={() => setConfirmReset(true)} onDismiss={() => setProblem(null)} />
+                <ProblemNotice problem={shownProblem} offerOdds={liveOffer?.oddsCenti ?? null} pending={bet.busy || gate.paused} canReset={!room}
+                  onAccept={() => { if (liveOffer && canConfirm) send(withAcceptedPrice(liveOffer.intent, liveOffer.oddsCenti)); }}
+                  onReset={() => setConfirmReset(true)} onDismiss={() => { setProblem(null); setOffer(null); }} />
               </div>
             )}
-            {placedMsg && !problem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
+            {placedMsg && !shownProblem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
 
-            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => place.mutate({})}>
-              {place.isPending ? 'Placing…' : gate.paused ? 'Bets paused · reconnecting' : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
+            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={confirm}>
+              {bet.status === 'sending' ? 'Placing…' : bet.status === 'checking' ? 'Checking your last prediction…' : gate.paused ? (live.ws === 'open' ? 'Bets paused · updating' : 'Bets paused · reconnecting') : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
             </Button>
             <p className="mt-4 text-center text-[12px] text-ink/80">{currency === 'PLAY' ? 'Free chips. No purchases, prizes or cash-out.' : noCashValueLine(currency)}</p>
           </div>
         </section>
+        )}
 
         <section aria-label="Recent flops" className="rounded-[12px] border border-line-strong/60 bg-surface px-6 py-6 @min-[640px]:px-8 @min-[880px]:col-start-1 @min-[880px]:row-start-2">
           <div className="flex items-center justify-between">
             <h2 className="text-[16px] font-bold">Recent flops at this table</h2>
-            {!embed && <Link to="/app/activity" className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline">Activity <ChevronRight className="h-4 w-4" aria-hidden /></Link>}
+            {!embed && !guest && <Link to="/app/activity" className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline">Activity <ChevronRight className="h-4 w-4" aria-hidden /></Link>}
           </div>
           {history.length === 0 ? (
             <p className="mt-4 text-[13px] text-ink/75">Completed rounds will appear here.</p>
@@ -392,22 +445,52 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         </div>
       </Sheet>
 
+      <StakeConfirmSheet open={!!liveDraft && canConfirm} onClose={() => setDraft(null)} onConfirm={() => { if (liveDraft) send(liveDraft); }} busy={bet.busy}
+        selection={liveDraft ? nameOf(liveDraft.selectionId) : ''} stake={liveDraft ? fmt(liveDraft.stakeMinor) : ''}
+        allIn={!!liveDraft && balance !== null && liveDraft.stakeMinor >= balance} share={liveDraft && balance ? liveDraft.stakeMinor / balance : 0}
+        breakdown={quoteLines(draftQuote, fmt)}
+        potential={pool ? 'A share of the pool' : draftQuote?.totalReturnMinor != null ? fmt(draftQuote.totalReturnMinor) : '—'} />
+
       <HowToPlay open={help} onClose={() => setHelp(false)} />
     </div>
   );
 }
 
-function ProblemNotice({ problem, pending, canReset, onAccept, onReset, onDismiss }: {
-  problem: BetProblem; pending: boolean; canReset: boolean; onAccept: (odds: number) => void; onReset: () => void; onDismiss: () => void;
+/** The demo's right-hand panel: what playing is, and the way in. */
+export function GuestPanel({ tableId }: { tableId: string }) {
+  const next = encodeURIComponent(`/app/table/${tableId}`);
+  return (
+    <section aria-labelledby="guest-h" className="rounded-[12px] border border-accent/40 bg-surface p-6 @min-[880px]:col-start-2 @min-[880px]:row-span-2 @min-[880px]:row-start-1">
+      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">Watching as a guest</p>
+      <h2 id="guest-h" className="mt-3 font-serif text-[28px] leading-[1.2] tracking-[-0.04em]">Call the next flop yourself.</h2>
+      <p className="mt-3 text-[14px] leading-relaxed text-ink/85">
+        This practice table is dealing now. Create a free account to predict each flop with 10,000 free chips: pick a bet, lock it in, watch the reveal.
+      </p>
+      <ul className="mt-4 space-y-2 text-[13px] text-ink/85">
+        <li>· Every bet priced exactly over all 22,100 possible flops</li>
+        <li>· Free chips only: no purchases, no cash value</li>
+        <li>· 18+ only</li>
+      </ul>
+      <Link to={`/register?next=${next}`} className="mt-6 flex h-[50px] w-full items-center justify-center rounded-[8px] bg-accent text-[15px] font-bold text-accent-ink hover:bg-accent-strong">Play free</Link>
+      <p className="mt-3 text-center text-[13px] text-ink/80">Have an account? <Link to={`/login?next=${next}`} className="text-accent underline">Sign in</Link></p>
+    </section>
+  );
+}
+
+function ProblemNotice({ problem, offerOdds, pending, canReset, onAccept, onReset, onDismiss }: {
+  problem: BetProblem;
+  /** The new price offered for the bet that was refused (null once the slip no longer shows that bet). */
+  offerOdds: number | null;
+  pending: boolean; canReset: boolean; onAccept: () => void; onReset: () => void; onDismiss: () => void;
 }) {
   return (
     <Notice tone={problem.kind === 'round_locked' ? 'info' : 'warn'}>
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <p>{problem.message}</p>
-          {problem.kind === 'price_changed' && problem.oddsCenti > 0 && (
-            <Button size="sm" className="mt-2" disabled={pending} onClick={() => onAccept(problem.oddsCenti)}>
-              Accept {formatOdds(problem.oddsCenti)} and confirm
+          {problem.kind === 'price_changed' && offerOdds !== null && (
+            <Button size="sm" className="mt-2" disabled={pending} onClick={onAccept}>
+              Accept {formatOdds(offerOdds)} and confirm
             </Button>
           )}
           {problem.kind === 'insufficient_funds' && canReset && (

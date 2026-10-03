@@ -117,6 +117,32 @@ const view = (b: { id: string; round_id: string; selection_id: string; stake_min
   potential_payout_minor: potentialPayoutMinor(b), mode: b.mode, currency: b.currency, status: b.status,
 });
 
+/**
+ * A reused Idempotency-Key replays the stored bet only for the same request (docs/13 §7): same
+ * round, selection, stake and room, and the stored odds unless the request accepted a price change
+ * (then any accepted price is the one it asked for). Anything else is 422 idempotency_mismatch,
+ * never a silent "success" for a bet the player did not ask for.
+ */
+export function assertReplayMatches(
+  prior: { round_id: string; selection_id: string; stake_minor: number; odds_centi: number; room_id?: string | null },
+  i: { roundId: string; selectionId: string; stakeMinor: number; oddsCenti: number; acceptPriceChange?: boolean | undefined; roomId?: string | null | undefined },
+): void {
+  const same = prior.round_id === i.roundId && prior.selection_id === i.selectionId && Number(prior.stake_minor) === i.stakeMinor
+    && (prior.room_id ?? null) === (i.roomId ?? null) && (i.acceptPriceChange === true || prior.odds_centi === i.oddsCenti);
+  if (!same) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different bet');
+}
+
+/**
+ * The price check (docs/13 §7). Without accept_price_change the request must carry the current
+ * price exactly. With it, the player has accepted a price change, but only to the price they were
+ * shown: odds_centi must be the new price from the price_changed problem (or the current price is
+ * better for the player). A price that moved again since, against the player, is a new
+ * price_changed with the new odds, never a silent acceptance of a price nobody saw.
+ */
+export function priceAcceptable(currentOddsCenti: number, i: { oddsCenti: number; acceptPriceChange?: boolean | undefined }): boolean {
+  return i.acceptPriceChange === true ? currentOddsCenti >= i.oddsCenti : currentOddsCenti === i.oddsCenti;
+}
+
 /** A partner's player bets only while the partner organization is active (docs/14, Partner API). */
 export const partnerSuspended = () => new ApiError(403, 'partner_suspended', 'the operator of this account is suspended');
 /** Real money is taken only at a table the PreFlop team approved for it (docs/14, PreFlop team). */
@@ -158,7 +184,10 @@ export async function userRoundPayoutIfAdded(c: Tx, roundId: string, userId: str
 export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEnabled: (m: PlayMode) => Promise<boolean>): Promise<BetView> {
   // 1. replay
   const prior = (await db.query('select * from bets where user_id = $1 and idempotency_key = $2', [i.userId, i.idempotencyKey])).rows[0];
-  if (prior) return view(prior);
+  if (prior) {
+    assertReplayMatches(prior, i);
+    return view(prior);
+  }
 
   // 2. validate
   if (!Number.isSafeInteger(i.stakeMinor) || i.stakeMinor < BET_LIMITS.minStakeMinor)
@@ -194,7 +223,7 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
     // 5. price
     const p = price(stats, i.channel ?? 'direct');
     if (!p.offered) throw unprocessable('not_offered', p.reason ?? 'selection not offered');
-    if (p.oddsCenti !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
+    if (!priceAcceptable(p.oddsCenti, i)) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
     const odds = p.oddsCenti;
     const payout = payoutMinor(i.stakeMinor, odds);
     if (payout > table.max_round_loss_minor) throw unprocessable('limit_exceeded', 'payout above the table maximum');
@@ -235,7 +264,10 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
       await audit(c, { type: 'bet.accepted', betId, roundId: r.id, userId: i.userId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds });
       return { replay: false as const, row: ins.rows[0] };
     });
-    if (out.replay) return view(out.row);
+    if (out.replay) {
+      assertReplayMatches(out.row, i);
+      return view(out.row);
+    }
     // 7. committed: nothing in memory to update, so a failure from here on cannot skew exposure
     hooks.afterCommit?.(betId);
     ev.push({ type: 'bet.accepted', userId: i.userId, roundId: r.id, tableId: r.table_id, data: { betId, selectionId: i.selectionId, stakeMinor: i.stakeMinor, oddsCenti: odds, tableId: r.table_id, roomId: null } });

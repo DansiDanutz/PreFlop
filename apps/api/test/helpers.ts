@@ -95,6 +95,10 @@ export async function realMoneyReady(h: Harness, ...userIds: string[]): Promise<
   await h.db.query(`update settings set value = jsonb_set(value, '{real_money_allowed}', (select coalesce(jsonb_agg(distinct x), '[]'::jsonb) from (select jsonb_array_elements_text(value->'real_money_allowed') x union select 'MT') s)) where key = 'territories'`);
 }
 
+let keyN = 0;
+/** A fresh Idempotency-Key header: money in/out routes (deposits, withdrawals, purchases, collateral, transfers) require one. */
+export const idemKey = (): Record<string, string> => ({ 'idempotency-key': `idem-${++keyN}-${Date.now()}` });
+
 let betN = 0;
 export async function bet(h: Harness, token: string, roundId: string, selectionId: string, stake: number, extra: Record<string, unknown> = {}) {
   const book = (await h.api('GET', '/v1/book')).body;

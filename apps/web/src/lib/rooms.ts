@@ -1,5 +1,5 @@
 import type { Room, Wallet } from '@preflop/client';
-import { formatMoney } from '@preflop/ui';
+import { formatAmount, formatMoney } from '@preflop/ui';
 import type { BetOption } from './bets.ts';
 
 /** GET /v1/rooms/:id also returns the room's own price list (selection id → odds, null = not offered). */
@@ -26,17 +26,32 @@ export function stakePresets(minStake = 1): [number, number, number] {
   return [minStake, minStake * 2, minStake * 5];
 }
 
-/** "100 free chips", "100 chips", "100 ◆". */
+/** "100 free chips", "100 chips", "100 ◆", "€1.50": always with the unit of the currency. */
 export function amountLabel(minor: number, currency: string): string {
-  if (currency === 'PLAY') return `${formatMoney(minor, 'PLAY')} free chips`;
-  if (currency === 'CHIP') return `${formatMoney(minor, 'PLAY')} chips`;
   return formatMoney(minor, currency);
+}
+
+/** "1–10,000 free chips", "20–500 ◆", "€0.01–€25.00": a stake range in one unit. */
+export function amountRange(lo: number, hi: number, currency: string): string {
+  return currency === 'EUR' ? `${formatMoney(lo, currency)}–${formatMoney(hi, currency)}` : `${formatAmount(lo, currency)}–${formatMoney(hi, currency)}`;
 }
 
 /** Balance label under the number. */
 export function balanceLabel(currency: string, orgName?: string | null): string {
   const base = currency === 'PLAY' ? 'Free chips' : currency === 'CHIP' ? 'Chips' : currency === 'DIAMOND' ? 'Diamonds' : currency;
   return orgName ? `${base} · ${orgName}` : base;
+}
+
+/** A stake above this share of the balance asks for confirmation first. */
+export const LARGE_STAKE_SHARE = 0.25;
+
+/**
+ * Large-stake guard: true when the stake is more than 25% of the balance (or all of it). Unknown
+ * or empty balances never ask: the server refuses what cannot be covered.
+ */
+export function isLargeStake(stake: number, balance: number | null | undefined): boolean {
+  if (balance === null || balance === undefined || balance <= 0 || stake <= 0) return false;
+  return stake >= balance || stake > balance * LARGE_STAKE_SHARE;
 }
 
 /** Microcopy under Confirm: never suggest cash value outside real-money modes. */

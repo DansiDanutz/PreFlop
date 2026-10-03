@@ -2,7 +2,7 @@ import { ApiError, type TournamentBet, newIdempotencyKey } from '@preflop/client
 import { Button, Segmented, StatusDot, cx, formatOdds } from '@preflop/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, LayoutGrid, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { roundLabel } from '../../lib/flop.ts';
@@ -14,6 +14,8 @@ import {
 import { type TournamentView, tournamentKey } from '../../lib/useTournament.ts';
 import { Notice, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from '../table/Catalogue.tsx';
+import { StakeConfirmSheet } from '../table/StakeConfirmSheet.tsx';
+import { isLargeStake } from '../../lib/rooms.ts';
 import { FavoriteTile } from '../table/Tiles.tsx';
 
 /** A fresh key for every attempt (a price-change retry is a new attempt). */
@@ -55,6 +57,7 @@ export function BetPanel({ d }: { d: TournamentView }) {
   const [priceChange, setPriceChange] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [placed, setPlaced] = useState<string | null>(null);
+  const [bigStake, setBigStake] = useState(false);
 
   const option = resolveOption(book.index, selectedId);
   const nameOf = (id: string) => resolveOption(book.index, id)?.name ?? id;
@@ -66,6 +69,16 @@ export function BetPanel({ d }: { d: TournamentView }) {
   const problem = stakeError(stake, you.stack, t.min_stake, t.max_stake);
   const chip = QUICK_STAKES.find((q) => quickStake(q, you.stack, t.min_stake, t.max_stake) === stake) ?? 'custom';
 
+  // One Idempotency-Key per bet intent (flop, selection, stake): a retry after a lost answer reuses
+  // it, so the server replays the original bet instead of taking a second one.
+  const intentKey = useRef<{ intent: string; key: string } | null>(null);
+  const keyFor = (intent: string) => {
+    if (intentKey.current?.intent !== intent) intentKey.current = { intent, key: attemptKey() };
+    return intentKey.current.key;
+  };
+  // A price-change offer belongs to the exact bet it was shown for: any edit or a new flop drops it.
+  useEffect(() => { setPriceChange(null); }, [openId, selectedId, stake]);
+
   const place = useMutation({
     mutationFn: (o: { acceptPrice?: number }) => {
       if (!openId) throw new ApiError(409, { type: 'round_locked', title: 'closed', status: 409 });
@@ -73,11 +86,12 @@ export function BetPanel({ d }: { d: TournamentView }) {
       return api.tournamentBet(t.id, {
         round_id: openId, selection_id: option.id, stake, odds_centi: o.acceptPrice ?? option.oddsCenti,
         ...(o.acceptPrice !== undefined ? { accept_price_change: true } : {}),
-        idempotency_key: attemptKey(),
+        idempotency_key: keyFor(`${openId}|${option.id}|${stake}`),
       });
     },
-    onMutate: () => { setError(null); setPlaced(null); setPriceChange(null); },
+    onMutate: () => { setError(null); setPlaced(null); setPriceChange(null); setBigStake(false); },
     onSuccess: (bet) => {
+      intentKey.current = null;
       qc.setQueryData<TournamentView>(tournamentKey(t.id), (old) => withBet(old, bet));
       void qc.invalidateQueries({ queryKey: tournamentKey(t.id) });
       setPlaced(`${nameOf(bet.selection_id)} at ${formatOdds(bet.odds_centi)} for ${points(bet.stake)}. Good luck.`);
@@ -180,10 +194,13 @@ export function BetPanel({ d }: { d: TournamentView }) {
       {error && <Notice tone="warn" className="mt-4">{error}</Notice>}
       {placed && !error && <Notice tone="accent" className="mt-4">{placed}</Notice>}
 
-      <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canPlace} onClick={() => place.mutate({})}>
+      <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canPlace} onClick={() => (isLargeStake(stake, you.stack) ? setBigStake(true) : place.mutate({}))}>
         {place.isPending ? 'Placing…' : betThisFlop ? 'Already bet on this flop' : !openId ? 'Waiting for the next round' : `Place bet · uses 1 of ${you.bets_left}`}
       </Button>
 
+      <StakeConfirmSheet open={bigStake && canPlace} onClose={() => setBigStake(false)} onConfirm={() => place.mutate({})} busy={place.isPending}
+        selection={option ? nameOf(selectedId) : ''} stake={points(stake)} allIn={stake >= you.stack} share={you.stack ? stake / you.stack : 0}
+        potential={ret !== null ? points(ret) : '—'} />
       <CatalogueSheet open={catalogue} onClose={() => setCatalogue(false)} options={allOptions} loading={book.isLoading} error={book.isError} onRetry={() => void book.refetch()}
         favorites={favs.ids} onSaveFavorites={(ids) => favs.save(ids)} pool={false} inRoom={false}
         onPick={(o) => { setSelectedId(o.id); setPriceChange(null); setCatalogue(false); }} />

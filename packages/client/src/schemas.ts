@@ -37,13 +37,19 @@ export const betViewSchema = z.object({
 export const myBetSchema = betViewSchema.extend({
   payout_minor: nullable(nonNegMinor), placed_at: isoTime, settled_at: nullable(isoTime),
   hand_no: z.number().int(), table_id: z.string(), table_name: z.string(), flop: nullable(z.array(z.string())),
+  idempotency_key: nullable(z.string()).optional(),
 }).passthrough();
 
-export const myBetsSchema = z.object({ bets: z.array(myBetSchema) }).passthrough();
+export const myBetsSchema = z.object({ bets: z.array(myBetSchema), next_before: nullable(z.string()).optional() }).passthrough();
 
-export const myStatsSchema = z.object({
+const statsFields = {
   bets: z.number().int().nonnegative(), won: z.number().int().nonnegative(), lost: z.number().int().nonnegative(),
   staked_minor: nonNegMinor, returned_minor: nonNegMinor,
+};
+/** Top level: play money. by_currency (optional, newer APIs): one row per (mode, currency). */
+export const myStatsSchema = z.object({
+  ...statsFields,
+  by_currency: z.array(z.object({ mode, currency, ...statsFields }).passthrough()).optional(),
 }).passthrough();
 
 export const paymentSchema = z.object({
@@ -88,3 +94,17 @@ export const tournamentDetailSchema = z.object({
   you: nullable(standingSchema.extend({ bets: z.array(tournamentBetSchema) }).passthrough()),
   server_time: isoTime,
 }).passthrough();
+
+// ------------------------------------------------------------------ news
+
+const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+export const newsCardSchema = z.object({
+  id: z.string().min(1), slug, title: z.string(), summary: z.string(), tags: z.array(z.string()), published_at: isoTime,
+}).passthrough();
+export const newsListSchema = z.object({ posts: z.array(newsCardSchema) }).passthrough();
+export const newsPostSchema = newsCardSchema.extend({ body: z.string(), updated_at: isoTime }).passthrough();
+export const adminNewsSchema = z.object({
+  id: z.string().min(1), slug, title: z.string(), summary: z.string(), body: z.string(), tags: z.array(z.string()),
+  status: z.enum(['draft', 'published']), published_at: nullable(isoTime), author_id: nullable(z.string()), created_at: isoTime, updated_at: isoTime,
+}).passthrough();
+export const adminNewsListSchema = z.object({ posts: z.array(adminNewsSchema) }).passthrough();
