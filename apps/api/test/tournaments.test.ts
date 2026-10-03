@@ -364,3 +364,19 @@ describe('real-money tournament bets on a play table', () => {
     }
   });
 });
+
+describe('tournament bet price consent', () => {
+  it('an accepted price change covers only the price the player was shown', async () => {
+    const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Price consent' }))).body;
+    const [a, b] = [await user('Pa'), await user('Pb')];
+    for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
+    const r = await openRound();
+    const sel = 'paired-board:no';
+    const shown = odds(sel) + 100; // a better price than the server offers now
+    const stale = await h.api('POST', `/v1/tournaments/${t.id}/bets`, a.token, { round_id: r.id, selection_id: sel, stake: 100, odds_centi: shown, accept_price_change: true, idempotency_key: `pc-${Date.now()}` });
+    expect([stale.status, stale.body.type, stale.body.odds_centi]).toEqual([409, 'price_changed', odds(sel)]);
+    const ok = await h.api('POST', `/v1/tournaments/${t.id}/bets`, a.token, { round_id: r.id, selection_id: sel, stake: 100, odds_centi: odds(sel), accept_price_change: true, idempotency_key: `pc2-${Date.now()}` });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    await finishRound(r.n);
+  });
+});

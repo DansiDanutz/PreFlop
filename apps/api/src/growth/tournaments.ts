@@ -1,5 +1,5 @@
 import { type Flop, MODES, type PlayMode, price, settle } from '@preflop/odds-engine';
-import { assertReplayMatches, statsOf, tableNotApproved } from '../bets/service.ts';
+import { assertReplayMatches, priceAcceptable, statsOf, tableNotApproved } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
@@ -224,7 +224,8 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
   try { stats = statsOf(i.selectionId); } catch { throw unprocessable('unknown_selection', `no selection ${i.selectionId}`); }
   const p = price(stats, 'direct');
   if (!p.offered) throw unprocessable('not_offered', p.reason ?? 'selection not offered');
-  if (p.oddsCenti !== i.oddsCenti && !i.acceptPriceChange) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
+  // Same rule as direct bets: an accepted change covers only the price the player was shown.
+  if (!priceAcceptable(p.oddsCenti, i)) throw conflict('price_changed', 'the price changed', { odds_centi: p.oddsCenti });
 
   const out = await tx(db, async (c) => {
     // Lock order: round, then entry, exactly as settlement takes them.

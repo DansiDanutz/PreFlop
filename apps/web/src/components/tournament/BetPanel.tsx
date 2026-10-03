@@ -2,7 +2,7 @@ import { ApiError, type TournamentBet, newIdempotencyKey } from '@preflop/client
 import { Button, Segmented, StatusDot, cx, formatOdds } from '@preflop/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, LayoutGrid, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { roundLabel } from '../../lib/flop.ts';
@@ -69,6 +69,16 @@ export function BetPanel({ d }: { d: TournamentView }) {
   const problem = stakeError(stake, you.stack, t.min_stake, t.max_stake);
   const chip = QUICK_STAKES.find((q) => quickStake(q, you.stack, t.min_stake, t.max_stake) === stake) ?? 'custom';
 
+  // One Idempotency-Key per bet intent (flop, selection, stake): a retry after a lost answer reuses
+  // it, so the server replays the original bet instead of taking a second one.
+  const intentKey = useRef<{ intent: string; key: string } | null>(null);
+  const keyFor = (intent: string) => {
+    if (intentKey.current?.intent !== intent) intentKey.current = { intent, key: attemptKey() };
+    return intentKey.current.key;
+  };
+  // A price-change offer belongs to the exact bet it was shown for: any edit or a new flop drops it.
+  useEffect(() => { setPriceChange(null); }, [openId, selectedId, stake]);
+
   const place = useMutation({
     mutationFn: (o: { acceptPrice?: number }) => {
       if (!openId) throw new ApiError(409, { type: 'round_locked', title: 'closed', status: 409 });
@@ -76,11 +86,12 @@ export function BetPanel({ d }: { d: TournamentView }) {
       return api.tournamentBet(t.id, {
         round_id: openId, selection_id: option.id, stake, odds_centi: o.acceptPrice ?? option.oddsCenti,
         ...(o.acceptPrice !== undefined ? { accept_price_change: true } : {}),
-        idempotency_key: attemptKey(),
+        idempotency_key: keyFor(`${openId}|${option.id}|${stake}`),
       });
     },
     onMutate: () => { setError(null); setPlaced(null); setPriceChange(null); setBigStake(false); },
     onSuccess: (bet) => {
+      intentKey.current = null;
       qc.setQueryData<TournamentView>(tournamentKey(t.id), (old) => withBet(old, bet));
       void qc.invalidateQueries({ queryKey: tournamentKey(t.id) });
       setPlaced(`${nameOf(bet.selection_id)} at ${formatOdds(bet.odds_centi)} for ${points(bet.stake)}. Good luck.`);
