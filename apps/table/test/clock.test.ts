@@ -29,6 +29,9 @@ function server(o: { health?: (now: number) => Response } = {}) {
     const now = Date.now() + AHEAD_MS;
     if (String(url).endsWith('/v1/health')) return o.health ? o.health(now) : json({ ok: true, time: new Date(now).toISOString() });
     if (Math.abs(now - tsOf(init)) > SKEW_MS) return stale();
+    // Each write answers with its own acknowledgement (lib/api.ts isAck).
+    if (String(url).endsWith('/pause')) return json({ status: 'paused' });
+    if (String(url).endsWith('/resume')) return json({ status: 'active' });
     return json({ state: 'VOID' });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -69,7 +72,7 @@ describe('stale_request: re-sync the clock, then retry once', () => {
   it('falls back to the HTTP Date header when the health body has no time', async () => {
     const s = server({ health: (now) => json({ ok: true }, 200, { date: new Date(now).toUTCString() }) });
     const api = new TableApi(id);
-    await expect(api.send(api.resume())).resolves.toEqual({ state: 'VOID' });
+    await expect(api.send(api.resume())).resolves.toEqual({ status: 'active' });
     expect(s.signed()).toHaveLength(2);
   });
 

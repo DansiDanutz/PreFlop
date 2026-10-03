@@ -164,7 +164,7 @@ describe('signing gate', () => {
   afterEach(() => { setSigningGate(() => true); vi.unstubAllGlobals(); });
 
   it('a locked tablet signs nothing: no request leaves, and the action can be retried after unlock', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response('{"shuffle_command":{"nonce":"n"}}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const keys = await generateCredentialKey();
     const id: Identity = { keys, config: { apiUrl: 'https://api.test', tableId: 't1', personId: 'Ana', role: 'dealer', credentialId: 'cred-1', publicKeyPem: '', fingerprint: '', createdAt: 0 } };

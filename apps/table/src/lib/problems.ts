@@ -20,6 +20,8 @@ const MESSAGES: Record<string, string> = {
   bad_request: 'The request was refused.',
   tablet_locked: 'The tablet is locked. Unlock it with your PIN, then retry.',
   network: 'No answer from PreFlop. Check the connection, then retry.',
+  uncertain_response: 'PreFlop answered, but the answer could not be read, so it is not certain the action was recorded. Retry (it is safe: the action will not run twice).',
+  aborted: 'Cancelled.',
   timeout: 'PreFlop did not answer in time. Retry (it is safe: the action will not run twice).',
 };
 
@@ -30,4 +32,4 @@ export function problemMessage(type: string, title?: string): string {
 }
 
 /** Problems a retry with the same Idempotency-Key may fix (no answer, or server busy). */
-export const isRetryable = (type: string) => type === 'tablet_locked' || type === 'network' || type === 'timeout' || type === 'retry_later' || type === 'internal';
+export const isRetryable = (type: string) => type === 'tablet_locked' || type === 'network' || type === 'timeout' || type === 'uncertain_response' || type === 'retry_later' || type === 'internal';
