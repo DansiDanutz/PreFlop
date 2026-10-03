@@ -118,6 +118,39 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     });
     return { ok: true };
   });
+  /**
+   * Change a member's role or remove them. Owners and admins only (viewers are read-only). Only an
+   * owner (or the PreFlop team) makes someone an owner or changes or removes an owner, and the last
+   * owner can be neither demoted nor removed. Both are audited.
+   */
+  const memberChange = async (req: FastifyRequest, next: 'owner' | 'admin' | 'viewer' | null) => {
+    const { org, user, role } = await requireOrg(ctx, req, oid(req), { write: true });
+    const targetId = (req.params as { userId: string }).userId;
+    const ownerPower = role === 'owner' || role.startsWith('platform:');
+    if (next === 'owner' && !ownerPower) throw forbidden('read_only', 'only an owner can add owners');
+    await tx(ctx.db, async (c) => {
+      const owners = (await c.query<{ user_id: string }>(`select user_id from memberships where org_id = $1 and role = 'owner' for update`, [org.id])).rows;
+      const cur = (await c.query<{ role: string }>('select role from memberships where org_id = $1 and user_id = $2 for update', [org.id, targetId])).rows[0];
+      if (!cur) throw notFound('member');
+      if (cur.role === 'owner' && next !== 'owner') {
+        if (!ownerPower) throw forbidden('read_only', next === null ? 'only an owner can remove an owner' : 'only an owner can change an owner’s role');
+        if (owners.length === 1) throw conflict('last_owner', 'an organization needs at least one owner; add another owner first');
+      }
+      if (next === null) {
+        await c.query('delete from memberships where org_id = $1 and user_id = $2', [org.id, targetId]);
+        await audit(c, { type: 'org.member.removed', orgId: org.id, userId: targetId, previousRole: cur.role, by: user.id });
+      } else if (next !== cur.role) {
+        await c.query('update memberships set role = $3 where org_id = $1 and user_id = $2', [org.id, targetId, next]);
+        await audit(c, { type: 'org.member', orgId: org.id, userId: targetId, role: next, previousRole: cur.role, by: user.id });
+      }
+    });
+    return { ok: true as const };
+  };
+  app.put(`${P}/members/:userId`, async (req) => {
+    const b = z.object({ role: z.enum(['owner', 'admin', 'viewer']) }).parse(req.body);
+    return memberChange(req, b.role);
+  });
+  app.delete(`${P}/members/:userId`, async (req) => memberChange(req, null));
 
   app.get(`${P}/statements`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req));

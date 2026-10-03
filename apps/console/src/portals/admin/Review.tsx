@@ -1,38 +1,71 @@
-import { useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Ban, Info, Tablet } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Ban, Info, Tablet } from 'lucide-react';
 import { Button, Card, Flop, cx } from '@preflop/ui';
 import { api } from '../../lib/api.ts';
 import { fmtDateTime, pad3, relTime } from '../../lib/format.ts';
+import { byUrgency, sameCards, timeLeft, urgencyKey } from '../../lib/review.ts';
 import { DataTable } from '../../components/DataTable.tsx';
 import { Callout, ConfirmDialog, KeyVal, PageHeader, QueryView, Section, useAction } from '../../components/ui.tsx';
 import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
 
 const FLOOR_NOTE = 'Settling a review is done by a floor manager on the club tablet, with a floor_manager credential belonging to someone who did not submit either entry. The PreFlop team can only void.';
 
+/** Rounds in review as the API returns them; `review_deadline` (ISO or null) comes from newer servers. */
+type QueueRound = Awaited<ReturnType<typeof api.adminReviewQueue>>['rounds'][number] & { review_deadline?: string | null };
+
+function useNow(ms = 1000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(t);
+  }, [ms]);
+  return now;
+}
+
+export function TimeLeftCell({ deadline, now }: { deadline: string | null | undefined; now: number }) {
+  const t = timeLeft(deadline, now);
+  return (
+    <span title={deadline ? `Deadline ${fmtDateTime(deadline)}` : 'No deadline from the server'}
+      className={cx('inline-flex items-center gap-1 whitespace-nowrap tabular-nums', t.tone === 'danger' && 'font-semibold text-danger', t.tone === 'warn' && 'font-semibold text-warn', t.tone === 'muted' && 'text-faint')}>
+      {(t.tone === 'warn' || t.tone === 'danger') && <AlertTriangle size={13} aria-hidden />}{t.label}
+    </span>
+  );
+}
+
 export function ReviewQueue() {
   const nav = useNavigate();
   const q = useQuery({ queryKey: ['admin', 'review'], queryFn: api.adminReviewQueue, refetchInterval: 10_000 });
+  const now = useNow();
   return (
     <>
-      <PageHeader eyebrow="Integrity" title="Review queue" subtitle="Rounds whose signed capture disagrees with the dealer or floor entry. They are never settled automatically." />
+      <PageHeader eyebrow="Integrity" title="Review queue" subtitle="Rounds whose signed capture disagrees with the dealer or floor entry. They are never settled automatically. Most urgent first." />
       <div className="mb-4"><Callout tone="info" icon={<Tablet size={16} />} title="Who settles a review">{FLOOR_NOTE}</Callout></div>
       <Section>
         <QueryView q={q} what="the review queue">
-          {(d) => (
-            <DataTable rows={d.rounds} rowKey={(r) => r.id} onRowClick={(r) => nav(`/admin/review/${encodeURIComponent(r.id)}`)} caption="Rounds in review"
-              empty="The review queue is empty. Every recent capture matched both entries."
-              initialSort={{ key: 'locked', dir: 'asc' }}
-              columns={[
-                { key: 'table', header: 'Table', sort: (r) => r.table_name, cell: (r) => <span className="font-medium">{r.table_name}</span> },
-                { key: 'hand', header: 'Hand', sort: (r) => r.hand_no, cell: (r) => `#${pad3(r.hand_no)}` },
-                { key: 'state', header: 'State', sort: (r) => r.state, cell: (r) => <RoundStateBadge state={r.state} /> },
-                { key: 'reasons', header: 'Reasons', cell: (r) => <span className="text-xs text-muted">{r.review_reasons?.join(' · ') || '—'}</span> },
-                { key: 'locked', header: 'Locked', sort: (r) => r.locked_at, cell: (r) => <span title={fmtDateTime(r.locked_at)}>{relTime(r.locked_at)}</span> },
-                { key: 'mode', header: 'Mode', sort: (r) => r.mode, cell: (r) => <span className="text-xs text-muted">{r.mode}</span> },
-              ]} />
-          )}
+          {(d) => {
+            const rows = byUrgency(d.rounds as QueueRound[]);
+            const urgent = rows.filter((r) => { const t = timeLeft(r.review_deadline, now); return t.tone === 'warn' || t.tone === 'danger'; }).length;
+            return (
+              <>
+                {urgent > 0 && <div className="mb-3"><Callout tone="warn" title={`${urgent} ${urgent === 1 ? 'round needs' : 'rounds need'} a decision now`}>Less than 2 minutes left, or past the review deadline.</Callout></div>}
+                <DataTable rows={rows} rowKey={(r) => r.id} onRowClick={(r) => nav(`/admin/review/${encodeURIComponent(r.id)}`)} caption="Rounds in review"
+                  empty="The review queue is empty. Every recent capture matched both entries."
+                  initialSort={{ key: 'left', dir: 'asc' }}
+                  rowClassName={(r) => { const t = timeLeft(r.review_deadline, now).tone; return t === 'warn' || t === 'danger' ? 'bg-warn/5' : undefined; }}
+                  columns={[
+                    { key: 'left', header: 'Time left', sort: urgencyKey, cell: (r) => <TimeLeftCell deadline={r.review_deadline} now={now} /> },
+                    { key: 'table', header: 'Table', sort: (r) => r.table_name, cell: (r) => <span className="font-medium">{r.table_name}</span> },
+                    { key: 'hand', header: 'Hand', sort: (r) => r.hand_no, cell: (r) => `#${pad3(r.hand_no)}` },
+                    { key: 'state', header: 'State', sort: (r) => r.state, cell: (r) => <RoundStateBadge state={r.state} /> },
+                    { key: 'reasons', header: 'Reasons', cell: (r) => <span className="text-xs text-muted">{r.review_reasons?.join(' · ') || '—'}</span> },
+                    { key: 'locked', header: 'Locked', sort: (r) => r.locked_at, cell: (r) => <span title={fmtDateTime(r.locked_at)}>{relTime(r.locked_at, now)}</span> },
+                    { key: 'mode', header: 'Mode', sort: (r) => r.mode, cell: (r) => <span className="text-xs text-muted">{r.mode}</span> },
+                  ]} />
+              </>
+            );
+          }}
         </QueryView>
       </Section>
     </>
@@ -44,6 +77,7 @@ export function ReviewDetail() {
   const nav = useNavigate();
   const q = useQuery({ queryKey: ['admin', 'evidence', roundId], queryFn: () => api.adminEvidence(roundId) });
   const [voiding, setVoiding] = useState(false);
+  const now = useNow();
   const voidRound = useAction((reason: string) => api.adminVoidRound(roundId, reason), {
     invalidate: [['admin', 'review'], ['admin', 'evidence', roundId]],
     success: 'Round voided. Every accepted bet is refunded.',
@@ -55,7 +89,7 @@ export function ReviewDetail() {
       <Link to="/admin/review" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"><ArrowLeft size={14} aria-hidden />Review queue</Link>
       <QueryView q={q} what="round evidence">
         {(ev) => {
-          const r = ev.round;
+          const r = ev.round as typeof ev.round & { review_deadline?: string | null };
           const terminal = r.state === 'SETTLED' || r.state === 'VOID';
           const captureCards = Array.isArray(ev.capture?.cards) ? (ev.capture.cards as string[]) : null;
           return (
@@ -81,7 +115,8 @@ export function ReviewDetail() {
                       </Card>
                       {(['dealer', 'floor'] as const).map((src) => {
                         const e = ev.entries.find((x) => x.source === src);
-                        const differs = !!(e && captureCards && e.cards.join() !== captureCards.join());
+                        // A flop is a set of cards: the same three cards keyed in another order are not a discrepancy.
+                        const differs = !!(e && captureCards && !sameCards(e.cards, captureCards));
                         return (
                           <Card key={src} className={cx('bg-surface-2 p-3', differs && 'border-warn/60')}>
                             <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-faint"><span>{src} entry</span>{differs && <span className="text-warn">differs</span>}</div>
@@ -97,6 +132,7 @@ export function ReviewDetail() {
                   <Section title="Round">
                     <KeyVal items={[
                       ['Table', <span className="font-mono">{r.table_id}</span>], ['Mode', `${r.mode} · ${r.currency}`], ['Step', <span className="font-mono">{r.step}</span>],
+                      ...(r.state === 'REVIEW' ? [['Time left', <TimeLeftCell deadline={r.review_deadline} now={now} />] as [string, ReactNode]] : []),
                       ['Opened', fmtDateTime(r.opened_at)], ['Locked', fmtDateTime(r.locked_at)], ['Settled', fmtDateTime(r.settled_at)],
                       ['Voided', r.voided_at ? `${fmtDateTime(r.voided_at)} — ${r.void_reason ?? ''}` : '—'],
                     ]} />

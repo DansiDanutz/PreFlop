@@ -6,7 +6,7 @@ import { Network } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { useCanWrite, usePortal } from '../../components/Shell.tsx';
 import { DataTable } from '../../components/DataTable.tsx';
-import { Callout, Field, Kpi, Modal, PageHeader, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
+import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 
 /** The PreFlop team's view of agents: applications, the two-level tree, rates and monthly statements (docs/16 §4). */
 
@@ -54,11 +54,13 @@ export function Agents() {
   const [editing, setEditing] = useState<AgentRow | null>(null);
   const [month, setMonth] = useState(lastMonth());
   const q = useQuery({ queryKey: ['agents'], queryFn: api.adminAgents });
+  // Reject, suspend and pay act on someone else's livelihood or money: each asks first.
+  const [confirm, setConfirm] = useState<{ kind: 'rejected' | 'suspended'; agent: AgentRow } | { kind: 'pay'; s: AgentStatement } | null>(null);
   const setStatus = useAction((a: { id: string; status: 'active' | 'suspended' | 'rejected' }) => api.adminUpdateAgent(a.id, { status: a.status }),
-    { invalidate: [['agents']], success: (_r, a) => `Agent ${a.status === 'active' ? 're-activated' : a.status}.` });
+    { invalidate: [['agents']], success: (_r, a) => `Agent ${a.status === 'active' ? 're-activated' : a.status}.`, onSuccess: () => setConfirm(null) });
   const close = useAction(() => api.adminCloseAgentMonth(month), { invalidate: [['agents']], success: (r) => (r.created ? `${r.created} statements created for ${month}.` : `${month} was already closed; nothing new.`) });
   const approve = useAction((s: AgentStatement) => api.adminApproveStatement(s.id), { invalidate: [['agents']], success: 'Statement approved.' });
-  const pay = useAction((s: AgentStatement) => api.adminPayStatement(s.id), { invalidate: [['agents']], success: 'Commission paid into the agent’s wallet.' });
+  const pay = useAction((s: AgentStatement) => api.adminPayStatement(s.id), { invalidate: [['agents']], success: 'Commission paid into the agent’s wallet.', onSuccess: () => setConfirm(null) });
   return (
     <>
       <PageHeader eyebrow="Growth" title="Agents" subtitle="A two-level affiliate on net gaming revenue. Commission is earned on real-money play only, never on free chips, chips or diamonds." />
@@ -86,7 +88,7 @@ export function Agents() {
                           <div className="font-semibold">{a.display_name} <span className="text-sm font-normal text-muted">· {a.email}</span></div>
                           {a.note && <p className="mt-1 text-sm text-ink/80">{a.note}</p>}
                         </div>
-                        {write && <div className="flex gap-2"><Button size="sm" onClick={() => setEditing(a)}>Review &amp; approve</Button><Button size="sm" variant="secondary" onClick={() => setStatus.mutate({ id: a.user_id, status: 'rejected' })}>Reject</Button></div>}
+                        {write && <div className="flex gap-2"><Button size="sm" onClick={() => setEditing(a)}>Review &amp; approve</Button><Button size="sm" variant="secondary" onClick={() => setConfirm({ kind: 'rejected', agent: a })}>Reject</Button></div>}
                       </li>
                     ))}
                   </ul>
@@ -105,7 +107,7 @@ export function Agents() {
                     { key: 'act', header: '', align: 'right', cell: (a) => write ? (
                       <div className="flex justify-end gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setEditing(a)}>Edit</Button>
-                        {a.status === 'active' && <Button size="sm" variant="ghost" onClick={() => setStatus.mutate({ id: a.user_id, status: 'suspended' })}>Suspend</Button>}
+                        {a.status === 'active' && <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: 'suspended', agent: a })}>Suspend</Button>}
                         {a.status === 'suspended' && <Button size="sm" variant="ghost" onClick={() => setStatus.mutate({ id: a.user_id, status: 'active' })}>Re-activate</Button>}
                       </div>
                     ) : null },
@@ -130,13 +132,27 @@ export function Agents() {
                     { key: 'amount', header: 'Commission', align: 'right', sort: (s) => s.amount_minor, cell: (s) => <span className="font-semibold tabular-nums">{formatMoney(s.amount_minor, s.currency)}</span> },
                     { key: 'status', header: 'Status', cell: (s) => <Badge tone={tone(s.status)}>{s.status}</Badge> },
                     { key: 'act', header: '', align: 'right', cell: (s) => !write ? null : s.status === 'draft' ? <Button size="sm" variant="secondary" onClick={() => approve.mutate(s)}>Approve</Button>
-                      : s.status === 'approved' && role === 'admin' ? <Button size="sm" onClick={() => pay.mutate(s)}>Pay</Button> : null },
+                      : s.status === 'approved' && role === 'admin' ? <Button size="sm" onClick={() => setConfirm({ kind: 'pay', s })}>Pay</Button> : null },
                   ]} />
               </Section>
             </div>
           );
         }}
       </QueryView>
+      <ConfirmDialog open={confirm !== null} onClose={() => setConfirm(null)} busy={setStatus.isPending || pay.isPending}
+        danger={confirm?.kind !== 'pay'}
+        title={confirm?.kind === 'pay' ? `Pay ${formatMoney(confirm.s.amount_minor, confirm.s.currency)} to ${confirm.s.display_name ?? confirm.s.agent_id}?`
+          : confirm?.kind === 'rejected' ? `Reject ${confirm.agent.display_name}’s application?` : confirm ? `Suspend ${confirm.agent.display_name}?` : ''}
+        confirmLabel={confirm?.kind === 'pay' ? 'Pay commission' : confirm?.kind === 'rejected' ? 'Reject application' : 'Suspend agent'}
+        onConfirm={() => {
+          if (!confirm) return;
+          if (confirm.kind === 'pay') pay.mutate(confirm.s);
+          else setStatus.mutate({ id: confirm.agent.user_id, status: confirm.kind });
+        }}>
+        {confirm?.kind === 'pay' ? <>The {confirm.s.month} level-{confirm.s.level} commission of <strong>{formatMoney(confirm.s.amount_minor, confirm.s.currency)}</strong> is credited to the agent’s wallet. A payment cannot be undone from the console.</>
+          : confirm?.kind === 'rejected' ? <>The application from <strong>{confirm.agent.email}</strong> is closed and their code is never activated. They would have to apply again.</>
+          : confirm ? <>The agent and their code <strong className="font-mono">{confirm.agent.code}</strong> are suspended at once. You can re-activate them later.</> : null}
+      </ConfirmDialog>
       <AgentEditor agent={editing} all={q.data?.agents ?? []} caps={q.data?.caps ?? { rate_l1_bps: 4000, rate_l2_bps: 1000 }} onClose={() => setEditing(null)} />
     </>
   );
