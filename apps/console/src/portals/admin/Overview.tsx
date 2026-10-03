@@ -70,7 +70,8 @@ export function Overview() {
                   hint={`${live} of ${d.tables.filter((t) => t.status === 'active').length} active tables dealing`} />
                 <Kpi label="Users" value={nf(d.users.n)} />
                 <Kpi label="Bets · 24h" value={nf(d.bets_24h.n)} />
-                <Kpi label="Stake · 24h" value={<MoneyByCurrency value={stakeField(d.bets_24h as unknown as Record<string, unknown>)} />} hint="Per currency, never added together" />
+                <Kpi label="Stake · 24h" value={<MoneyByCurrency value={stakeField(d.bets_24h as unknown as Record<string, unknown>)} />}
+                  hint={Array.isArray(stakeField(d.bets_24h as unknown as Record<string, unknown>)) ? 'Per currency, never added together' : undefined} />
                 <Kpi label="Settled · 24h" value={nf(d.rounds_24h.settled)} tone="accent" />
                 <Kpi label="Voided · 24h" value={nf(d.rounds_24h.voided)} tone={d.rounds_24h.voided ? 'warn' : undefined} />
                 <Kpi label="Open alerts" value={<Link to="/admin/alerts" className="hover:underline">{nf(d.open_alerts.n)}</Link>} tone={d.open_alerts.n ? 'danger' : undefined} />
