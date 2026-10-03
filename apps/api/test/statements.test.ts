@@ -143,10 +143,33 @@ describe('Statements cache', () => {
     } finally {
       (h.db as { query: unknown }).query = q;
     }
-    // a backdated correction: the counter moves, the next read recomputes
+    // a backdated correction: a committed change not visible to the cached snapshot, the next read recomputes
     await h.db.query(`update bets set payout_minor = 20_000, status = 'won' where id = $1`, [id]);
     const b = await orgStatements(h.db, c, '2023-06');
     expect(b).not.toEqual(a);
+  });
+});
+
+describe('Statements cache: a bet committing during a computation', () => {
+  it('a bet written before the computation but committed after it is in the next statement', async () => {
+    const c = await club('club-race', 'Race Club');
+    const at = '2023-08-10T12:00:00Z';
+    await settled({ clubId: c.id, user: 'u-q1', stake: 10_000, payout: 0, at });
+    const conn = await h.db.connect();
+    try {
+      await conn.query('begin');
+      // the bet transaction has written (and recorded its change) but not committed yet
+      await conn.query(
+        `insert into bets (id, idempotency_key, user_id, round_id, selection_id, stake_minor, odds_centi, mode, currency, status, payout_minor, placed_at, settled_at)
+         values ('stmt-race', 'stmt-race', 'u-q2', $1, 'colour:mixed', 30000, 200, 'real-fiat', 'EUR', 'lost', 0, $2, $2)`, [`${c.id}-r`, at]);
+      const [during] = await orgStatements(h.db, c, '2023-08'); // computed and cached without it
+      await conn.query('commit');
+      const [after] = await orgStatements(h.db, c, '2023-08');
+      expect(after).not.toEqual(during);
+      expect(line(after!, /club policy/).base_minor).toBe(40_000);
+    } finally {
+      conn.release();
+    }
   });
 });
 

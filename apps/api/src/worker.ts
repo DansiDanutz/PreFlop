@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { pruneNonces } from './auth/envelope.ts';
+import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
 import { deliverDue } from './routes/partner.ts';
@@ -102,6 +103,7 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
+        await pruneBetChanges(db);
       }
     } catch (e) {
       console.error('worker error', e);

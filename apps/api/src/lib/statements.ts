@@ -2,7 +2,7 @@ import {
   CLUB_POLICY, DEFAULT_COST_MODEL, type Entitlement, type EntitlementResult, type JointStatement, type Metrics, PARTNER_POLICY,
   PROVIDER_POLICY, type RevenueCell, type SharePolicy, carryForward, computeJointStatement, computeShare, tierTurnoverEurCents, turnoverCostRate,
 } from '@preflop/odds-engine';
-import type { Db } from './db.ts';
+import type { Db, Tx } from './db.ts';
 
 /**
  * Period statements from the bets table using the engine's dynamic sharing (docs/09).
@@ -38,7 +38,7 @@ const CLUB_COSTS = DEFAULT_COST_MODEL.channels.club;
 const PARTNER_COSTS = DEFAULT_COST_MODEL.channels.partner;
 
 /** Per-month PreFlop-house GGR and turnover by (currency, club, partner), up to and including `period`. */
-async function cellRows(db: Db, period: string): Promise<CellRow[]> {
+async function cellRows(db: Db | Tx, period: string): Promise<CellRow[]> {
   return (await db.query<CellRow>(
     `select to_char(b.placed_at, 'YYYY-MM') as month, b.currency, t.club_id as club, b.partner_id as partner,
             coalesce(sum(b.stake_minor - coalesce(b.payout_minor, 0)), 0)::bigint as ggr, coalesce(sum(b.stake_minor), 0)::bigint as turnover
@@ -73,25 +73,58 @@ export async function periodShares(db: Db, periodIn?: string): Promise<PeriodSha
   const period = validPeriod(periodIn);
   // The joint statement is platform-wide by design (one cap per pool across clubs and partners,
   // losses carried from every earlier month), so it is computed once per period and shared by
-  // every organization's statement. It is recomputed when bets change (bets_change_seq, migration
-  // 018) and at least every SHARES_TTL_MS (the counter is read before computing, so a change that
-  // commits during a computation is picked up by the TTL at worst).
-  const version = (await db.query<{ v: string }>('select last_value::text as v from bets_change_seq')).rows[0]!.v;
+  // every organization's statement. A cached result is reused only while no committed change to
+  // bets is invisible to the snapshot it was computed in (bets_changes, migration 018): exact for
+  // bets, including one committing during the computation. SHARES_TTL_MS bounds everything else
+  // (a table moved to another club).
   let perDb = sharesCache.get(db);
   if (!perDb) sharesCache.set(db, perDb = new Map());
   const hit = perDb.get(period);
-  if (hit && hit.version === version && Date.now() - hit.at < SHARES_TTL_MS) return hit.value;
-  const value = computePeriodShares(db, period);
-  perDb.set(period, { version, at: Date.now(), value });
+  if (hit && Date.now() - hit.at < SHARES_TTL_MS) {
+    const r = await hit.value.catch(() => null);
+    if (r && !(await changedSince(db, r.snapshot))) return r.shares;
+  }
+  const value = computeInSnapshot(db, period);
+  perDb.set(period, { at: Date.now(), value });
   value.catch(() => { if (perDb.get(period)?.value === value) perDb.delete(period); });
-  return value;
+  return (await value).shares;
 }
 
 /** Longest a cached period result is reused even without a recorded change to bets. */
 export const SHARES_TTL_MS = 60_000;
-const sharesCache = new WeakMap<Db, Map<string, { version: string; at: number; value: Promise<PeriodShares> }>>();
+const sharesCache = new WeakMap<Db, Map<string, { at: number; value: Promise<{ snapshot: string; shares: PeriodShares }> }>>();
 
-async function computePeriodShares(db: Db, period: string): Promise<PeriodShares> {
+/** True when a committed change to bets is not visible in `snapshot`. */
+async function changedSince(db: Db, snapshot: string): Promise<boolean> {
+  return (await db.query<{ stale: boolean }>(
+    `select exists (select 1 from bets_changes
+                     where xid >= pg_snapshot_xmin($1::pg_snapshot) and not pg_visible_in_snapshot(xid, $1::pg_snapshot)) as stale`,
+    [snapshot])).rows[0]!.stale;
+}
+
+/** Computes the period in ONE repeatable-read snapshot and returns that snapshot with the result. */
+async function computeInSnapshot(db: Db, period: string): Promise<{ snapshot: string; shares: PeriodShares }> {
+  const c = await db.connect();
+  try {
+    await c.query('begin isolation level repeatable read read only');
+    const snapshot = (await c.query<{ s: string }>('select pg_current_snapshot()::text as s')).rows[0]!.s;
+    const shares = await computePeriodShares(c, period);
+    await c.query('commit');
+    return { snapshot, shares };
+  } catch (e) {
+    await c.query('rollback').catch(() => {});
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/** Deletes change records no cached result can still need (every cache entry expires within the TTL). */
+export async function pruneBetChanges(db: Db): Promise<number> {
+  return (await db.query(`delete from bets_changes where at < now() - interval '10 minutes'`)).rowCount ?? 0;
+}
+
+async function computePeriodShares(db: Db | Tx, period: string): Promise<PeriodShares> {
   const rows = await cellRows(db, period);
   const current = rows.filter((r) => r.month === period);
   const history = rows.filter((r) => r.month < period);

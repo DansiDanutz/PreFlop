@@ -6,7 +6,7 @@ import { type InertNode, Sheet, applyModalStack } from '../src/components/ui.tsx
 import { ACTIVITY_PAGE, ALL_WALLETS, activityQuery, nextCursor, walletFilters } from '../src/lib/activity.ts';
 import {
   type BetIntent, type IntentInputs, intentBody, intentStore, isDefinitiveRefusal, newIntent, priceOfferFor,
-  reconcileIntent, submitIntent, withAcceptedPrice,
+  reconcileIntent, roundBets, submitIntent, withAcceptedPrice,
 } from '../src/lib/betIntent.ts';
 import { betQuote, quoteLines } from '../src/lib/quote.ts';
 import { groupByRound, summarizeRound, summarizeRounds } from '../src/lib/rounds.ts';
@@ -51,7 +51,13 @@ function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number
       if (u.pathname.startsWith('/v1/rounds/')) return new Response(JSON.stringify({ id: u.pathname.split('/').pop(), state: round.state }), { status: 200 });
       if (u.pathname === '/v1/me/bets') {
         const round = u.searchParams.get('round_id');
-        return new Response(JSON.stringify({ bets: bets.filter((b) => !round || b.body.round_id === round).map(myBet), next_before: null }), { status: 200 });
+        // newest first, paged like the API: `limit` per page, `before` = the last bet_id of the previous page
+        const list = bets.filter((b) => !round || b.body.round_id === round).slice().reverse();
+        const before = u.searchParams.get('before');
+        const from = before ? list.findIndex((b) => b.bet_id === before) + 1 : 0;
+        const limit = Number(u.searchParams.get('limit') ?? 50);
+        const page = list.slice(from, from + limit);
+        return new Response(JSON.stringify({ bets: page.map(myBet), next_before: page.length === limit ? page[page.length - 1]!.bet_id : null }), { status: 200 });
       }
     }
     return new Response('{}', { status: 404 });
@@ -186,6 +192,16 @@ describe('F07: a pending intent survives a reload and is reconciled before anoth
     await f.api.placeBet(intentBody(intent), intent.key);
     expect((await reconcileIntent(f.api, pending)).kind).toBe('placed');
     expect(f.bets).toHaveLength(1);
+  });
+
+  it('a committed bet older than a full page of the round is still found (the cursor is followed)', async () => {
+    const f = fakeApi();
+    const intent = newIntent(inputs);
+    await f.api.placeBet(intentBody(intent), intent.key);
+    for (let i = 0; i < 250; i++) await f.api.placeBet(intentBody(newIntent(inputs)), `k-${i}-${'x'.repeat(8)}`);
+    f.round.state = 'LOCKED';
+    expect((await reconcileIntent(f.api, { ...intent, sentAt: 1 })).kind).toBe('placed');
+    expect((await roundBets(f.api, inputs.roundId)).length).toBe(251);
   });
 
   it('missing after the round has stopped taking bets: definitively not placed', async () => {

@@ -464,6 +464,12 @@ describe('Email: per-message backoff and a bounded number of attempts', () => {
     await deliverMail(h.db, { name: 'fake', send: async (m) => { got.push(m.text); } }, 'x', 50);
     expect(got).toEqual([]);
     expect((await rows())[1]).toMatchObject({ body: '', status: 'cancelled', last_error: 'link expired before delivery' });
+    // without any transport (production before SMTP_URL is set) expired links are cleared too
+    const to2 = `nosmtp-${Date.now()}@sa.dev`;
+    await tx(h.db, (c) => queueMail(c, { to: to2, template: 'reset_password', subject: 's', text: 'link-x' }, { expiresInMs: 3_600_000 }));
+    await h.db.query(`update email_outbox set expires_at = now() - interval '1 second' where to_email = $1`, [to2]);
+    expect(await deliverMail(h.db, null, 'x')).toBe(0);
+    expect((await h.db.query('select body, status from email_outbox where to_email = $1', [to2])).rows[0]).toEqual({ body: '', status: 'cancelled' });
   });
 
 });

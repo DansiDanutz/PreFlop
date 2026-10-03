@@ -1,4 +1,4 @@
-import { ApiError, type BetView, type PlaceBet, type PreFlopClient, newIdempotencyKey } from '@preflop/client';
+import { ApiError, type BetView, type MyBet, type PlaceBet, type PreFlopClient, newIdempotencyKey } from '@preflop/client';
 import { KEYS, readJson, writeJson, writeString } from './storage.ts';
 
 /**
@@ -103,10 +103,25 @@ export type Outcome =
 
 type Api = Pick<PreFlopClient, 'placeBet' | 'myBets' | 'round'>;
 
-/** Finds the bet placed with this intent's key, if any (throws when the API cannot be reached). */
+/**
+ * Every bet of this player on one round, following the `before` cursor across pages: a lookup
+ * that stopped at the first page could miss an older bet of a busy round.
+ */
+export async function roundBets(api: Pick<PreFlopClient, 'myBets'>, roundId: string, stop?: (page: MyBet[]) => boolean): Promise<MyBet[]> {
+  const all: MyBet[] = [];
+  let before: string | undefined;
+  for (;;) {
+    const { bets, next_before } = await api.myBets({ round_id: roundId, limit: 200, ...(before ? { before } : {}) });
+    all.push(...bets);
+    if (!next_before || !bets.length || stop?.(bets)) return all;
+    before = next_before;
+  }
+}
+
+/** Finds the bet placed with this intent's key, if any, on any page (throws when the API cannot be reached). */
 export async function findPlaced(api: Api, i: BetIntent): Promise<BetView | null> {
-  const { bets } = await api.myBets({ round_id: i.roundId, limit: 200 });
-  return bets.find((b) => b.idempotency_key === i.key) ?? null;
+  const mine = (b: MyBet) => b.idempotency_key === i.key;
+  return (await roundBets(api, i.roundId, (page) => page.some(mine))).find(mine) ?? null;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

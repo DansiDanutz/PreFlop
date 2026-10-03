@@ -112,8 +112,10 @@ export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0, expired: 0 };
  * cannot delay settlement, refunds or the heartbeat.
  */
 export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20, sendTimeoutMs = MAIL_SEND_TIMEOUT_MS): Promise<number> {
-  if (!transport) return 0;
+  // Expired links are cancelled (and their bodies cleared) even when no transport is configured:
+  // queued mail must not keep dead links around waiting for SMTP to be set up.
   mailStats.expired += await expireMail(db);
+  if (!transport) return 0;
   let sent = 0;
   const tried: number[] = [];
   for (let i = 0; i < limit; i++) {

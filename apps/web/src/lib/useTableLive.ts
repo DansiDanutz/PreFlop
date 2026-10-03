@@ -2,6 +2,7 @@ import type { MyBet, StreamEvent, TableDetail } from '@preflop/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.ts';
+import { roundBets } from './betIntent.ts';
 import { useToken } from './auth.tsx';
 import { applyRoundEvent } from './live.ts';
 import { qk, useTableDetail } from './queries.ts';
@@ -43,7 +44,9 @@ export function useTableLive(tableId: string) {
     if (!pendingRounds.length || checking.current) return;
     checking.current = true;
     try {
-      const { bets } = await api.myBets({ limit: 100 });
+      // Every bet of each pending round, all pages: a summary from the newest page only could miss
+      // an older bet of the round and show the wrong totals.
+      const bets = (await Promise.all(pendingRounds.map((r) => roundBets(api, r)))).flat();
       const byId = new Map(bets.map((b) => [b.bet_id, b]));
       setPlaced((cur) => cur.map((p) => { const b = byId.get(p.betId); return b && b.status !== p.status ? { ...p, status: b.status } : p; }));
       for (const roundId of pendingRounds) {
