@@ -18,8 +18,8 @@ afterEach(() => { vi.unstubAllGlobals(); setSigningGate(() => true); });
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 const stale = () => json({ type: 'stale_request', title: 'timestamp outside the 30 s window', status: 401 }, 401);
-const tsOf = (init: RequestInit | undefined) => Number(/ts=(\d+)/.exec((init?.headers as Record<string, string>)['x-preflop-auth'])![1]);
-const nonceOf = (init: RequestInit | undefined) => /nonce=([^,]+)/.exec((init?.headers as Record<string, string>)['x-preflop-auth'])![1];
+const tsOf = (init: RequestInit | undefined) => Number(/ts=(\d+)/.exec((init?.headers as Record<string, string>)['x-preflop-auth']!)![1]);
+const nonceOf = (init: RequestInit | undefined) => /nonce=([^,]+)/.exec((init?.headers as Record<string, string>)['x-preflop-auth']!)![1];
 
 /** A fake server whose clock is AHEAD_MS ahead; it checks signed timestamps like the real one. */
 function server(o: { health?: (now: number) => Response } = {}) {

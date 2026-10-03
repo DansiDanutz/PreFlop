@@ -7,7 +7,11 @@
  *   PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node apps/table/scripts/e2e.mjs
  *
  * Hand A: dealer and floor agree with the camera → SETTLED.
- * Hand B: the floor enters a different card → REVIEW → the floor manager settles from the evidence.
+ * Hand B: the floor enters a different card → REVIEW → the floor manager is NOT switched to the
+ *   review (badge + banner only), opens it, sees the deadline countdown, confirms the camera check
+ *   and settles from the evidence.
+ * Clock: the dealer tablet's clock jumps 90 s ahead mid-session; the first stale_request re-syncs
+ *   the clock and retries, so no clock banner appears and hand A still runs.
  * Screenshots (1180×820) go to docs/screens/table/.
  */
 import { execFileSync, spawn } from 'node:child_process';
@@ -136,6 +140,24 @@ try {
   await dealer.getByTestId('role-badge').waitFor({ timeout: 10_000 });
   log('dealer: locked, refused a wrong PIN, unlocked with the PIN');
 
+  // ---------------------------------------------------------------- 4c. clock jump → stale_request → re-sync + retry
+  const staleSeen = { n: 0 };
+  dealer.on('response', async (r) => {
+    if (r.status() === 401 && r.url().includes('/v1/provider/')) {
+      const body = await r.text().catch(() => '');
+      if (body.includes('stale_request')) staleSeen.n++;
+    }
+  });
+  await dealer.evaluate(() => {
+    const real = Date.now.bind(Date);
+    Date.now = () => real() + 90_000;
+  });
+  await dealer.getByText(/Clock [−+]\d+ s/).waitFor({ timeout: 15_000 });
+  await sleep(3_000);
+  if (await dealer.getByText('refused as out of date').count()) throw new Error('clock banner shown although the re-sync fixed the clock');
+  if ((await dealer.getByTestId('connection').textContent()) !== 'Live') throw new Error('dealer tablet not live after the clock jump');
+  log(`dealer: clock jumped +90 s, ${staleSeen.n} stale_request answer(s), re-synced and retried; no clock banner`);
+
   async function playProcedure(first) {
     await dealer.getByTestId('dealer-open').waitFor({ timeout: 40_000 });
     const n = Number((await dealer.getByTestId('dealer-open').textContent()).match(/hand (\d+)/)[1]);
@@ -176,13 +198,50 @@ try {
   await sleep(400);
   await extra(floor, 'floor-portrait.png');
   await floor.setViewportSize({ width: 1180, height: 820 });
+  // The review deadline: shown from the server's review_deadline. Until the API sends it, this run
+  // adds one to the manager's /state answers (100 s away, so the < 2 min warning shows).
+  let fakeDeadline = null;
+  await manager.route('**/v1/provider/tables/*/state', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json().catch(() => null);
+    if (body?.rounds) {
+      for (const r of body.rounds) {
+        if (r.state !== 'REVIEW' || r.review_deadline !== undefined) continue;
+        fakeDeadline ??= new Date(Date.now() + 100_000).toISOString();
+        r.review_deadline = fakeDeadline;
+      }
+    }
+    await route.fulfill({ response: res, json: body });
+  });
   await enterFlop(floor, floorB);
-  await manager.getByTestId('review-panel').waitFor({ timeout: 40_000 });
-  log(`hand ${b}: REVIEW reached; manager tablet switched to the review queue`);
+  await manager.getByTestId('review-banner').waitFor({ timeout: 40_000 });
+  await manager.getByTestId('badge-review').filter({ hasText: 'new' }).waitFor();
+  await sleep(2_000);
+  if (await manager.getByTestId('review-panel').count()) throw new Error('manager tablet switched to the review by itself');
+  if ((await manager.getByTestId('tab-hand').getAttribute('aria-current')) !== 'page') throw new Error('manager tablet left the Floor entry tab by itself');
+  await extra(manager, 'manager-review-banner.png');
+  log(`hand ${b}: REVIEW reached; manager stays on Floor entry with a badge and banner`);
+  await manager.getByTestId('tab-review').click();
+  await manager.getByTestId('review-panel').waitFor({ timeout: 10_000 });
+  const cd = manager.getByTestId('review-countdown');
+  await cd.waitFor({ timeout: 10_000 });
+  log(`hand ${b}: countdown ${await cd.locator('.font-mono').textContent()} (${await cd.getAttribute('data-level')})`);
+  if ((await cd.getAttribute('data-level')) !== 'warn') throw new Error('countdown under 2 minutes is not a warning');
   await manager.locator('[data-testid=evidence-image], text=evidence viewer is not available').first().waitFor({ timeout: 10_000 }).catch(() => {});
   await sleep(800);
   await shot(manager, 'manager-review.png');
   await manager.getByTestId('btn-settle-cards').click();
+  await manager.getByTestId('camera-check').waitFor();
+  if (await manager.getByTestId('confirm-camera-checked').count()) {
+    await extra(manager, 'manager-camera-check.png');
+    await manager.getByTestId('confirm-camera-checked').click();
+    log(`hand ${b}: manager confirmed the board camera image`);
+  } else {
+    await manager.getByTestId('no-camera-image').waitFor({ timeout: 15_000 });
+    await extra(manager, 'manager-camera-check.png');
+    await hold(manager, manager.locator('button:has([data-testid=confirm-no-image])'), 1400);
+    log(`hand ${b}: no camera image; manager confirmed checking the stream (hold)`);
+  }
   await enterFlop(manager, flopB);
   await floor.getByTestId('floor-result').filter({ hasText: 'Settled by review' }).waitFor({ timeout: 30_000 });
   log(`hand ${b}: SETTLED by the floor manager with ${flopB.join(' ')}`);
