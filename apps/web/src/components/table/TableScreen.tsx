@@ -199,7 +199,9 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const tooMuch = balance !== null && stake > balance;
   // No bets while the live stream is down: the round may already be locked without us seeing it.
   const gate = streamGate(live.ws, live.resyncing);
-  const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !bet.busy && status?.open !== false && !roomMismatch && !(roomId && !room);
+  // The balance must be known: the large-stake confirmation (and the "more than you have" check)
+  // depend on it, so nothing is sent while it is still loading.
+  const canConfirm = balance !== null && !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !bet.busy && status?.open !== false && !roomMismatch && !(roomId && !room);
   const send = (i: BetIntent) => {
     setProblem(null); setPlacedMsg(null); setOffer(null); setDraft(null);
     void bet.submit(i);
@@ -355,6 +357,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               ))}
             </div>
             {tooMuch && <p className="mt-2 text-xs text-warn">More than your {amountLabel(balance!, currency)}.</p>}
+            {balance === null && <p className="mt-2 text-xs text-muted" aria-live="polite">Loading your balance…</p>}
             {stake > 0 && stake < minStake && <p className="mt-2 text-xs text-warn">The minimum here is {amountLabel(minStake, currency)}.</p>}
 
             <div className="mt-5 flex items-baseline justify-between text-[13px]">

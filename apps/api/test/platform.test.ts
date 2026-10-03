@@ -352,6 +352,20 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     expect(await wallet(p.token, 'real-fiat')).toBe(5_000);
     expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 2_000, method: 'bank' }, idemKey())).status).toBe(201);
     expect(await wallet(p.token, 'real-fiat')).toBe(3_000);
+    // a retry of a payment that committed replays its stored answer even after the account changed
+    const kd = idemKey();
+    const kw = idemKey();
+    const d1 = await h.api('POST', '/v1/me/deposits', p.token, { ...dep, amount_minor: 100 }, kd);
+    const w1 = await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 100, method: 'bank' }, kw);
+    expect([d1.status, w1.status]).toEqual([201, 201]);
+    await h.db.query(`update users set kyc_status = 'rejected' where id = $1`, [p.id]);
+    const d2 = await h.api('POST', '/v1/me/deposits', p.token, { ...dep, amount_minor: 100 }, kd);
+    const w2 = await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 100, method: 'bank' }, kw);
+    expect([d2.status, w2.status]).toEqual([201, 201]);
+    expect([d2.body, w2.body]).toEqual([d1.body, w1.body]);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, { ...dep, amount_minor: 100 }, idemKey())).body.type).toBe('kyc_required'); // a new payment is gated
+    await h.db.query(`update users set kyc_status = 'verified' where id = $1`, [p.id]);
+    expect(await wallet(p.token, 'real-fiat')).toBe(3_000);
     expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 9_000, method: 'bank' }, idemKey())).body.type).toBe('insufficient_funds');
     expect((await h.api('POST', '/v1/me/self-exclusion', p.token, { days: 30 })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(401); // sessions ended

@@ -5,7 +5,7 @@ import type { AppContext } from '../app.ts';
 import { roomOdds } from '../bets/rooms.ts';
 import { statsOf } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
-import { tx } from '../lib/db.ts';
+import { type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
@@ -189,9 +189,11 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ---------------------------------------------------------------- payments (sandbox rail)
-  const realGate = async (userId: string, mode: PlayMode) => {
+  // Run INSIDE idempotentMoneyWrite's callback: a retry of a payment that already committed must
+  // replay its stored response, even if the account, KYC, territory or mode changed since.
+  const realGate = async (c: Tx, userId: string, mode: PlayMode) => {
     if (!(await ctx.modeEnabled(mode))) throw conflict('mode_disabled', 'real money is not enabled in this territory');
-    const u = (await ctx.db.query<{ kyc_status: string; status: string }>('select kyc_status, status from users where id = $1', [userId])).rows[0]!;
+    const u = (await c.query<{ kyc_status: string; status: string }>('select kyc_status, status from users where id = $1', [userId])).rows[0]!;
     if (u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot transact');
     if (u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required');
   };
@@ -210,10 +212,10 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const u = await ctx.user(req);
     const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
-    await realGate(u.id, b.mode);
-    // Deposits only: a withdrawal returns the player's own money and is never held back by these.
-    await assertRealMoneyAccount(ctx.db, u.id); // age, verified email, territory
     const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+      await realGate(c, u.id, b.mode);
+      // Deposits only: a withdrawal returns the player's own money and is never held back by these.
+      await assertRealMoneyAccount(c, u.id); // age, verified email, territory
       // Serialise this user's deposits: the daily total and the new payment are read and written
       // under the user row lock, so concurrent deposits cannot both pass the limit.
       await c.query('select id from users where id = $1 for update', [u.id]);
@@ -240,9 +242,10 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const u = await ctx.user(req);
     const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
-    await realGate(u.id, b.mode);
-    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await withdraw(c, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination, ref) }));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+      await realGate(c, u.id, b.mode);
+      return { status: 201, body: await withdraw(c, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination, ref) };
+    });
     return reply.code(res.status).send(res.body);
   });
   app.post('/v1/me/chips/purchases', async (req, reply) => {
@@ -251,9 +254,10 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const key = requireIdempotencyKey(req);
     const b = z.object({ chips: z.number().int(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     assertPositive(b.chips, 'chips');
-    if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
-    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await buyChips(c, { userId: u.id }, b.chips, b.pay_with, ref) }));
+    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+      if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
+      return { status: 201, body: await buyChips(c, { userId: u.id }, b.chips, b.pay_with, ref) };
+    });
     return reply.code(res.status).send(res.body);
   });
 }

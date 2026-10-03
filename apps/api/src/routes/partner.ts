@@ -167,12 +167,16 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/webhooks/:hookId/test`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
     const { hookId } = req.params as { hookId: string };
-    const w = (await ctx.db.query<{ active: boolean }>('select id, active from webhooks where id = $1 and org_id = $2', [hookId, org.id])).rows[0];
-    if (!w) throw notFound('webhook');
-    if (!w.active) throw conflict('webhook_disabled', 'this webhook is disabled; enable it first');
     const id = newId('whd');
-    await ctx.db.query(`insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload) values ($1, $2, $3, 'test', $4)`,
-      [id, hookId, newId('evt'), JSON.stringify({ type: 'test', data: { hello: 'from PreFlop' } })]);
+    // The active check and the insert hold the hook row (FOR SHARE) until commit, as event fan-out
+    // does: a concurrent disable either waits and cancels this delivery, or wins and is seen here.
+    await tx(ctx.db, async (c) => {
+      const w = (await c.query<{ active: boolean }>('select id, active from webhooks where id = $1 and org_id = $2 for share', [hookId, org.id])).rows[0];
+      if (!w) throw notFound('webhook');
+      if (!w.active) throw conflict('webhook_disabled', 'this webhook is disabled; enable it first');
+      await c.query(`insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload) values ($1, $2, $3, 'test', $4)`,
+        [id, hookId, newId('evt'), JSON.stringify({ type: 'test', data: { hello: 'from PreFlop' } })]);
+    });
     await deliverDue(ctx.db, 5);
     return (await ctx.db.query('select id, webhook_id, event_type, status, attempts, last_error, created_at from webhook_deliveries where id = $1', [id])).rows[0];
   });

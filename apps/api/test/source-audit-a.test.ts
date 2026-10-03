@@ -400,6 +400,28 @@ describe('F14: a disable racing an event that is being queued', () => {
   });
 });
 
+describe('F14: the test endpoint and a concurrent disable', () => {
+  it('a test sent while a disable is in progress never leaves a pending delivery behind', async () => {
+    const owner = await user('wht');
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: `WHT ${n}` }, owner);
+    const hookId = (await h.api('POST', `/v1/org/${org}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events: ['round.voided'] })).body.id as string;
+    const c = await h.db.connect();
+    try {
+      await c.query('begin');
+      // the disable has updated the hook but not committed yet
+      await c.query('update webhooks set active = false where id = $1', [hookId]);
+      const test = h.api('POST', `/v1/org/${org}/webhooks/${hookId}/test`, owner.token);
+      await new Promise((r) => setTimeout(r, 300));
+      await c.query(`update webhook_deliveries set status = 'cancelled' where webhook_id = $1 and status = 'pending'`, [hookId]);
+      await c.query('commit');
+      expect((await test).body.type).toBe('webhook_disabled');
+    } finally {
+      c.release();
+    }
+    expect((await h.db.query(`select count(*)::int as n from webhook_deliveries where webhook_id = $1 and status = 'pending'`, [hookId])).rows[0].n).toBe(0);
+  });
+});
+
 describe('Email: per-message backoff and a bounded number of attempts', () => {
   it('a failing message is tried once per pass, backs off, and fails after the maximum attempts', async () => {
     await h.db.query(`update email_outbox set status = 'sent', sent_at = now(), body = '' where status = 'pending'`);
