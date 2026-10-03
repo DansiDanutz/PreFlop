@@ -37,10 +37,12 @@ function TableShell({ id, startLocked, onIdentity, onReset }: { id: Identity; st
   const [offset, setOffset] = useState(0);
   const [settings, setSettings] = useState(false);
   useEffect(() => {
-    const sync = () => api.syncClock().then(setOffset, () => {});
+    // Every sync updates the display, including the re-sync a `stale_request` triggers (lib/api.ts).
+    api.onClockSync = setOffset;
+    const sync = () => api.syncClock().catch(() => {});
     void sync();
     const h = setInterval(sync, 5 * 60_000);
-    return () => clearInterval(h);
+    return () => { clearInterval(h); api.onClockSync = null; };
   }, [api]);
   const live = useTableState(api);
   const { mem, remember } = useMyEntries();

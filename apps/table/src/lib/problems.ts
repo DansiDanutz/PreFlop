@@ -6,7 +6,7 @@ const MESSAGES: Record<string, string> = {
   forbidden_role: 'Your role is not allowed to do this.',
   forbidden_table: 'This tablet credential belongs to a different table.',
   replayed_request: 'Request was refused as a replay. Try again.',
-  stale_request: 'Tablet clock is wrong (more than 30 s off). Check the tablet date and time.',
+  stale_request: 'Signed requests are refused as out of date, even after re-syncing with the PreFlop clock. Check the tablet date, time and time zone, then retry.',
   table_not_ready: 'Table is not ready (paused, stream down or certification missing).',
   credential_revoked: 'This tablet credential has been revoked. Ask the club admin.',
   unknown_credential: 'Credential not found. Check the id the club admin gave you.',

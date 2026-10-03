@@ -45,18 +45,63 @@ export class TableApi {
     return encodeURIComponent(this.id.config.tableId);
   }
 
-  /** Measures the tablet clock against the server's (unsigned health endpoint). */
-  async syncClock(): Promise<number> {
-    const t0 = Date.now();
-    const res = await fetch(`${this.base}/v1/health`, { cache: 'no-store' });
-    const t1 = Date.now();
-    const body = (await res.json()) as { time?: string };
-    if (body.time) this.clockOffsetMs = Date.parse(body.time) - Math.round((t0 + t1) / 2);
-    return this.clockOffsetMs;
+  /** Called with the new offset after every successful clock sync (the header and settings show it). */
+  onClockSync: ((offsetMs: number) => void) | null = null;
+  private syncing: Promise<number> | null = null;
+  /** Bumped on every successful sync, so a request signed before it does not re-sync again. */
+  private clockGen = 0;
+
+  /**
+   * Measures the tablet clock against the server's: the `time` field of the unsigned GET
+   * /v1/health, or its HTTP `Date` header when the body has none (when CORS exposes it).
+   * Concurrent calls share one measurement. Rejects when no server time could be read.
+   */
+  syncClock(): Promise<number> {
+    this.syncing ??= (async () => {
+      try {
+        const t0 = Date.now();
+        const res = await fetch(`${this.base}/v1/health`, { cache: 'no-store', credentials: 'omit' });
+        const t1 = Date.now();
+        let time: string | null = null;
+        try { time = ((await res.json()) as { time?: string }).time ?? null; } catch { time = null; }
+        const server = Date.parse(time ?? res.headers.get('date') ?? '');
+        if (!Number.isFinite(server)) throw new Error('server time unavailable');
+        this.clockOffsetMs = server - Math.round((t0 + t1) / 2);
+        this.clockGen++;
+        this.onClockSync?.(this.clockOffsetMs);
+        return this.clockOffsetMs;
+      } finally {
+        this.syncing = null;
+      }
+    })();
+    return this.syncing;
   }
 
-  /** Signed request. Throws ApiProblem (type `network` / `timeout` when there was no answer). */
+  /**
+   * Signed request. Throws ApiProblem (type `network` / `timeout` when there was no answer).
+   *
+   * `stale_request` means the server refused the timestamp before doing anything, so the tablet
+   * re-measures the clock and sends the request once more: same Idempotency-Key and body, fresh
+   * timestamp and nonce. Only if that retry is refused too does the caller see the problem (and
+   * the clock banner).
+   */
   async request<T>(method: string, path: string, o: { body?: string; idempotencyKey?: string } = {}): Promise<T> {
+    const gen = this.clockGen;
+    try {
+      return await this.signedFetch<T>(method, path, o);
+    } catch (e) {
+      if (!(e instanceof ApiProblem) || e.type !== 'stale_request') throw e;
+      try {
+        // Another request may already have re-synced since this one was signed.
+        if (this.clockGen === gen) await this.syncClock();
+      } catch {
+        throw e;
+      }
+      return await this.signedFetch<T>(method, path, o);
+    }
+  }
+
+  private async signedFetch<T>(method: string, path: string, o: { body?: string; idempotencyKey?: string }): Promise<T> {
     // Nothing is signed while the tablet is locked (lib/lock.ts).
     if (!signingAllowed()) throw new ApiProblem(0, 'tablet_locked');
     const cred = this.id.config.credentialId;
