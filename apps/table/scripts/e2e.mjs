@@ -198,15 +198,15 @@ try {
   await sleep(400);
   await extra(floor, 'floor-portrait.png');
   await floor.setViewportSize({ width: 1180, height: 820 });
-  // The review deadline: shown from the server's review_deadline. Until the API sends it, this run
-  // adds one to the manager's /state answers (100 s away, so the < 2 min warning shows).
+  // The review deadline: shown from the server's review_deadline (30 min after REVIEW). To see the
+  // < 2 min warning without waiting, this run moves it to 100 s away in the manager's /state answers.
   let fakeDeadline = null;
   await manager.route('**/v1/provider/tables/*/state', async (route) => {
     const res = await route.fetch();
     const body = await res.json().catch(() => null);
     if (body?.rounds) {
       for (const r of body.rounds) {
-        if (r.state !== 'REVIEW' || r.review_deadline !== undefined) continue;
+        if (r.state !== 'REVIEW') continue;
         fakeDeadline ??= new Date(Date.now() + 100_000).toISOString();
         r.review_deadline = fakeDeadline;
       }
@@ -230,6 +230,23 @@ try {
   await manager.locator('[data-testid=evidence-image], text=evidence viewer is not available').first().waitFor({ timeout: 10_000 }).catch(() => {});
   await sleep(800);
   await shot(manager, 'manager-review.png');
+  // The camera check is a real modal dialog: labelled, background inert, Tab stays inside, Escape
+  // closes it and focus goes back to the button that opened it.
+  await manager.getByTestId('btn-settle-cards').focus();
+  await manager.getByTestId('btn-settle-cards').click();
+  const dialog = manager.getByRole('dialog', { name: /check the camera/ });
+  await dialog.waitFor();
+  if ((await dialog.getAttribute('aria-modal')) !== 'true') throw new Error('camera check is not aria-modal');
+  if (!(await manager.evaluate(() => document.getElementById('root').inert))) throw new Error('background is not inert under the dialog');
+  for (let i = 0; i < 6; i++) {
+    await manager.keyboard.press(i % 2 ? 'Shift+Tab' : 'Tab');
+    if (!(await dialog.evaluate((d) => d.contains(document.activeElement)))) throw new Error('focus left the dialog on Tab');
+  }
+  await manager.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached' });
+  if (await manager.evaluate(() => document.getElementById('root').inert)) throw new Error('background still inert after close');
+  if ((await manager.evaluate(() => document.activeElement?.getAttribute('data-testid'))) !== 'btn-settle-cards') throw new Error('focus not restored to the opener');
+  log(`hand ${b}: camera check dialog: modal, focus trapped, Escape closes, focus restored`);
   await manager.getByTestId('btn-settle-cards').click();
   await manager.getByTestId('camera-check').waitFor();
   if (await manager.getByTestId('confirm-camera-checked').count()) {
