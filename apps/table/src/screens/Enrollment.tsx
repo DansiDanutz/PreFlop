@@ -2,6 +2,7 @@ import { Wordmark } from '@preflop/ui';
 import { BadgeCheck, Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { BigButton } from '../components/controls.tsx';
+import { RevokeReminder } from '../components/RevokeReminder.tsx';
 import { ApiProblem, TableApi } from '../lib/api.ts';
 import { enrollmentMismatch } from '../lib/enrollment.ts';
 import { groupFingerprint } from '../lib/envelope.ts';
@@ -56,6 +57,7 @@ export function Enrollment({ id, onEnrolled, onReset }: { id: Identity; onEnroll
   return (
     <div className="grid min-h-full place-items-center p-6">
       <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-[1.25fr_1fr]">
+        <div className="lg:col-span-2"><RevokeReminder /></div>
         <section className="flex flex-col gap-5 rounded-[22px] border border-line bg-surface p-7">
           <div className="flex items-center justify-between gap-4">
             <Wordmark size="sm" />
@@ -64,7 +66,7 @@ export function Enrollment({ id, onEnrolled, onReset }: { id: Identity; onEnroll
           <div>
             <div className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">Step 1 of 2</div>
             <h1 className="mt-1 font-serif text-4xl">Give this public key to the club admin</h1>
-            <p className="mt-2 text-base text-muted">They enroll it in the club console (Staff → Add tablet credential). Read the fingerprint aloud to check it arrived intact. It is a public key — safe to share.</p>
+            <p className="mt-2 text-base text-muted">They enroll it in the club console (Staff & devices → Enroll staff). Read the fingerprint aloud to check it arrived intact. It is a public key — safe to share.</p>
           </div>
           <div className="rounded-[16px] border border-accent/40 bg-accent-soft px-5 py-4">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Fingerprint</div>
@@ -90,7 +92,7 @@ export function Enrollment({ id, onEnrolled, onReset }: { id: Identity; onEnroll
             </BigButton>
           </form>
           <div className="mt-auto border-t border-line pt-5">
-            <ResetTablet onReset={onReset} compact />
+            <ResetTablet config={c} onReset={onReset} compact />
           </div>
         </section>
       </div>

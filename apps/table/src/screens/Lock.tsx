@@ -66,8 +66,8 @@ export function LockScreen({ id, unlock, waitMs, onReset }: {
         {err && wait === 0 && <div role="alert" className="text-base font-semibold text-danger">{err}</div>}
         <details className="w-full text-sm text-muted">
           <summary className="cursor-pointer text-center">Forgot the PIN?</summary>
-          <p className="mt-3">The PIN cannot be recovered. Reset this tablet (the signing key is deleted), then ask the club admin to revoke the old credential and enroll a new key.</p>
-          <div className="mt-3"><ResetTablet onReset={onReset} compact /></div>
+          <p className="mt-3">The PIN cannot be recovered. Reset this tablet (the signing key is deleted), then ask the club admin to revoke credential <b className="font-mono text-ink">{c.credentialId}</b> and enroll a new key.</p>
+          <div className="mt-3"><ResetTablet config={c} onReset={onReset} compact /></div>
         </details>
       </div>
     </div>
