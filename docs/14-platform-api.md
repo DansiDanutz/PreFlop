@@ -32,7 +32,7 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `PATCH /v1/me` | Change the display name (1–60 characters). `date_of_birth` and `country` can be added once when missing (`409 already_set` afterwards; support corrects them). Email changes are not part of this route |
 | `POST /v1/auth/verify-email {token}` · `POST /v1/me/resend-verification` | Email verification (single-use links, 48 h). `400 invalid_token`, `409 already_verified` |
 | `POST /v1/auth/forgot-password {email}` · `POST /v1/auth/reset-password {token, password}` | Password reset by email (1 h link). `forgot-password` always answers `200 {ok: true}`. A reset signs the account out everywhere |
-| `POST /v1/me/password {current, new}` | Change the password; signs out every other session. A wrong `current` counts toward the login lockout (`401 invalid_credentials`) |
+| `POST /v1/me/password {current, new}` | Change the password; signs out every other session. A wrong `current` counts toward the login lockout (`403 wrong_password`; the session stays valid) |
 | `POST /v1/me/mfa/setup` · `mfa/enable {code}` · `mfa/disable {code}` | Two-factor authentication (TOTP). `setup` returns `{secret, otpauth_uri}`; nothing changes at sign-in until `enable` confirms a code |
 | `GET /v1/me/session` | The play session of this sign-in: `started_at`, `minutes_played`, `limit_minutes`, `ends_at`, `limit_reached`, `reality_check_minutes`, and `results` (bets, staked, returned, open stakes and `net_minor` per wallet) |
 | `POST /v1/bets` (+ `Idempotency-Key`) | Fixed odds against PreFlop, or with `room_id` against an organizer house or into a pool. Rate-limited per user |

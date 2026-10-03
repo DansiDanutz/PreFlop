@@ -411,3 +411,32 @@ describe('P1: the bet list shows what settlement would pay', () => {
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${hand}/void`, { reason: 'cleanup' });
   });
 });
+
+describe('partner bets get the same account checks as player bets', () => {
+  it('an under-18 or blocked-country player is refused on the partner channel too', async () => {
+    const owner = await user('pb-owner');
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: 'Checks Co' }, owner);
+    const c = (await h.api('POST', `/v1/org/${org}/api-clients`, owner.token, { name: 'c' })).body;
+    const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: c.id, client_secret: c.secret })).body.access_token;
+    const auth = { authorization: `Bearer ${tok}` };
+    const s = (await h.api('POST', '/v1/partner/players/pb-1/session', undefined, {}, auth)).body;
+    const hand = await openOn(h.sim);
+    let i = 0;
+    const partnerBet = async () => h.api('POST', '/v1/partner/bets', undefined,
+      { player_ref: 'pb-1', round_id: `sim-1:h${hand}`, selection_id: 'colour:mixed', stake_minor: 10, odds_centi: await odds('colour:mixed') },
+      { ...auth, 'idempotency-key': `pb-${++i}-${Date.now()}` });
+
+    await h.db.query(`update users set date_of_birth = (now() - interval '15 years')::date where id = $1`, [s.user_id]);
+    expect((await partnerBet()).body.type).toBe('underage');
+
+    await h.db.query(`update users set date_of_birth = '1990-01-01', country = 'US' where id = $1`, [s.user_id]);
+    const territories = (await h.db.query(`select value from settings where key = 'territories'`)).rows[0].value;
+    expect((await h.api('PUT', '/v1/admin/settings/territories', admin, { value: { ...territories, blocked: ['US'] } })).status).toBe(200);
+    try {
+      expect((await partnerBet()).body.type).toBe('territory_blocked');
+    } finally {
+      await h.api('PUT', '/v1/admin/settings/territories', admin, { value: territories });
+    }
+    expect((await partnerBet()).status).toBe(201);
+  });
+});

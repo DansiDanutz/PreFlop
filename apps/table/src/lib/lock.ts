@@ -38,7 +38,7 @@ export class TabletLock {
 
   get idleMs() { return this.o.idleMs; }
   setIdleMs(ms: number) { this.o.idleMs = ms; }
-  get failures() { return this.lockout.failures; }
+  get failures() { return this.current().failures; }
 
   /** A touch or key press while unlocked keeps the tablet awake. */
   activity(now: number) {
@@ -55,23 +55,43 @@ export class TabletLock {
   lock() { this.locked = true; }
 
   /** Milliseconds until the next PIN try is allowed (0 = now). */
-  waitMs(now: number) { return Math.max(0, this.lockout.until - now); }
+  waitMs(now: number) { return Math.max(0, this.current().until - now); }
 
   async unlock(pin: string, rec: PinRecord, now: number): Promise<UnlockResult> {
-    const wait = this.waitMs(now);
-    if (wait > 0) return { ok: false, reason: 'wait', waitMs: wait, failures: this.lockout.failures };
-    const ok = await (this.o.verify ?? verifyPin)(pin, rec);
-    if (ok) {
-      this.lockout = { failures: 0, until: 0 };
-      this.o.store?.set(null);
+    const r = await this.verify(pin, rec, now);
+    if (r.ok) {
       this.locked = false;
       this.lastActivity = now;
+    }
+    return r;
+  }
+
+  /**
+   * One PIN try, counted against the same stored attempts and backoff whatever asks for it: the
+   * lock screen, or the current-PIN step of a PIN change on an unlocked tablet.
+   */
+  async verify(pin: string, rec: PinRecord, now: number): Promise<UnlockResult> {
+    const wait = this.waitMs(now);
+    if (wait > 0) return { ok: false, reason: 'wait', waitMs: wait, failures: this.current().failures };
+    const ok = await (this.o.verify ?? verifyPin)(pin, rec);
+    if (ok) {
+      this.save({ failures: 0, until: 0 });
       return { ok: true };
     }
-    const failures = this.lockout.failures + 1;
-    this.lockout = { failures, until: now + backoffMs(failures) };
-    this.o.store?.set(this.lockout);
+    const failures = this.current().failures + 1;
+    this.save({ failures, until: now + backoffMs(failures) });
     return { ok: false, reason: 'wrong', waitMs: backoffMs(failures), failures };
+  }
+
+  /** The stored count is re-read each time, so every TabletLock on this device shares it. */
+  private current(): Lockout {
+    if (this.o.store) this.lockout = this.o.store.get() ?? { failures: 0, until: 0 };
+    return this.lockout;
+  }
+
+  private save(v: Lockout) {
+    this.lockout = v;
+    this.o.store?.set(v.failures === 0 ? null : v);
   }
 }
 

@@ -113,6 +113,21 @@ describe('tablet lock', () => {
     expect(await reloaded.unlock('402817', rec, 30_100)).toEqual({ ok: true });
     expect(store.v).toBeNull();
   });
+
+  it('a PIN change on an unlocked tablet counts against the same attempts and backoff', async () => {
+    rec ??= await hashPin('402817', FAST);
+    const store = memoryStore();
+    const screen = lockAt(0, { locked: false, store }); // the live lock, unlocked
+    const change = lockAt(0, { locked: false, store }); // the change-PIN form's check
+    for (let i = 1; i < FREE_TRIES; i++) expect((await change.verify('000000', rec, i)).ok).toBe(false);
+    expect(await change.verify('000000', rec, 100)).toMatchObject({ ok: false, reason: 'wrong', waitMs: 30_000 });
+    expect(await change.verify('402817', rec, 101)).toMatchObject({ ok: false, reason: 'wait' });
+    // The lock screen sees the same count at once, without a reload.
+    expect(screen.waitMs(101)).toBe(29_999);
+    expect(screen.locked).toBe(false); // verify never unlocks or locks by itself
+    expect(await change.verify('402817', rec, 30_100)).toEqual({ ok: true });
+    expect(screen.failures).toBe(0);
+  });
 });
 
 describe('signing gate', () => {

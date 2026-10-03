@@ -10,7 +10,7 @@ import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { REAL_MODES, maxStakeMinor } from '../lib/limits.ts';
 import { assertLossLimit, toEurCents } from '../lib/rg.ts';
-import { assertRealMoneyAccount } from '../lib/accounts.ts';
+import { assertMayBet, assertRealMoneyAccount } from '../lib/accounts.ts';
 
 /**
  * Bet placement where PreFlop is the house (docs/13 §5).
@@ -181,9 +181,12 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
     if (!ready.ok) throw conflict('table_not_ready', ready.problems.join('; '));
     if (!(await modesEnabled(r.mode))) throw conflict('mode_disabled', `mode ${r.mode} is not enabled`);
     if (real && !table.real_money_approved_at) throw tableNotApproved();
-    const u = (await db.query<{ status: string; kyc_status: string; partner_id: string | null; partner_status: string | null }>(
-      'select u.status, u.kyc_status, u.partner_id, o.status as partner_status from users u left join organizations o on o.id = u.partner_id where u.id = $1', [i.userId])).rows[0];
+    const u = (await db.query<{ status: string; kyc_status: string; partner_id: string | null; partner_status: string | null; country: string | null; date_of_birth: string | null }>(
+      `select u.status, u.kyc_status, u.partner_id, o.status as partner_status, u.country, to_char(u.date_of_birth, 'YYYY-MM-DD') as date_of_birth
+         from users u left join organizations o on o.id = u.partner_id where u.id = $1`, [i.userId])).rows[0];
     if (!u || u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot bet');
+    // Every mode and every channel (player app, partner API): no bets under 18 or from a blocked country.
+    await assertMayBet(db, u);
     if (u.partner_id && u.partner_status !== 'active') throw partnerSuspended();
     if (real && u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required for real money');
     if (real) await assertRealMoneyAccount(db, i.userId); // age, verified email, territory

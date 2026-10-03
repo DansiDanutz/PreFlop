@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { BigButton } from '../components/controls.tsx';
 import { useNow } from '../lib/hooks.ts';
 import { type Identity, ROLE_LABEL, saveIdentity } from '../lib/keystore.ts';
-import type { UnlockResult } from '../lib/lock.ts';
-import { PIN_MAX, PIN_MIN, hashPin, pinProblem, verifyPin } from '../lib/pin.ts';
+import { TabletLock, type UnlockResult, localLockoutStore } from '../lib/lock.ts';
+import { PIN_MAX, PIN_MIN, hashPin, pinProblem } from '../lib/pin.ts';
 import { ResetTablet } from './Settings.tsx';
 
 /** Masked PIN field with a large on-screen keypad (a hardware keyboard works too). */
@@ -87,10 +87,16 @@ export function PinSetup({ id, onDone, onCancel, change = false }: { id: Identit
   const next = async () => {
     if (busy) return;
     if (step === 'current') {
+      if (!id.pin) return;
       setBusy(true);
-      const ok = !!id.pin && await verifyPin(current, id.pin);
+      // Same attempt count and backoff as the lock screen: an unlocked tablet is no way round them.
+      const r = await new TabletLock({ now: Date.now(), idleMs: 0, locked: false, store: localLockoutStore() }).verify(current, id.pin, Date.now());
       setBusy(false);
-      if (!ok) { setErr('Wrong PIN.'); setCurrent(''); return; }
+      if (!r.ok) {
+        setErr(r.reason === 'wait' ? `Too many wrong PINs. Try again in ${Math.ceil(r.waitMs / 1000)} s.` : 'Wrong PIN.');
+        setCurrent('');
+        return;
+      }
       setStep('new');
       return;
     }

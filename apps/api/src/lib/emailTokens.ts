@@ -17,6 +17,8 @@ const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 
 /** Issues a fresh token, replacing every earlier unused one of the same purpose for this user. */
 export async function issueEmailToken(c: Tx, userId: string, email: string, purpose: EmailPurpose): Promise<string> {
+  // The account row lock serialises issuance: two requests at once can't both keep a live link.
+  await c.query('select 1 from users where id = $1 for update', [userId]);
   await c.query('delete from email_tokens where user_id = $1 and purpose = $2 and used_at is null', [userId, purpose]);
   const token = randomBytes(32).toString('base64url');
   await c.query(`insert into email_tokens (token_hash, user_id, purpose, email, expires_at) values ($1, $2, $3, $4, now() + ($5 || ' milliseconds')::interval)`,

@@ -9,10 +9,9 @@ import { type Tx, tx } from '../lib/db.ts';
 import { ApiError, badRequest, notFound } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent, type StoredResponse } from '../lib/idempotency.ts';
-import { REAL_MODES } from '../lib/limits.ts';
 import { tableReadiness } from '../rounds/readiness.ts';
 import {
-  cut, dealStart, ensureOpenRound, flopEntry, getTable, lockRound, receiveCapture, receiveImage, resolveReview,
+  carriesRealMoney, cut, dealStart, ensureOpenRound, flopEntry, getTable, lockRound, receiveCapture, receiveImage, resolveReview,
   type RoundState, roundId, shuffleCommand, shuffleComplete, startHand, voidRound,
 } from '../rounds/service.ts';
 
@@ -165,7 +164,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     const r = await lockRound(c, hand(req).rid);
     // Once cards are on the felt, voiding a real-money round would let the club cancel results it
     // has seen; from then on only the PreFlop team decides (POST /v1/admin/rounds/:id/review).
-    const from: RoundState[] | undefined = REAL_MODES.has(r.mode) ? ['OPEN', 'LOCKED'] : undefined;
+    const from: RoundState[] | undefined = (await carriesRealMoney(c, r)) ? ['OPEN', 'LOCKED'] : undefined;
     if (from && !from.includes(r.state)) {
       throw new ApiError(403, 'platform_review_required', 'after the deal, a real-money round is voided by the PreFlop team');
     }

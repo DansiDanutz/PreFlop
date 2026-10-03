@@ -333,3 +333,34 @@ describe('tournament lifecycle', () => {
     expect((await h.api('POST', '/v1/admin/tournaments', player.token, running())).status).toBe(403);
   });
 });
+
+describe('real-money tournament bets on a play table', () => {
+  it('make the round a PreFlop decision: the club can neither settle its review nor void it after the deal', async () => {
+    const modes = (on: boolean) => h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': on, 'real-crypto': false } });
+    await modes(true);
+    try {
+      const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Real review', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 0, added_minor: 1_000, bets_allowed: 3 }))).body;
+      const [a, b] = [await user('Rev'), await user('Iew')];
+      await h.db.query(`update users set kyc_status = 'verified' where id = any($1)`, [[a.id, b.id]]);
+      await realMoneyReady(h, a.id, b.id);
+      for (const p of [a, b]) expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, p.token)).status).toBe(200);
+      expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: true })).status).toBe(200);
+      const r = await openRound();
+      const placed = await bet(t.id, a.token, r.id, 'paired-board:no', 1_000);
+      expect(placed.status, JSON.stringify(placed.body)).toBe(201);
+      await h.db.query(`update rounds set state = 'REVIEW', review_started_at = clock_timestamp(), review_reasons = '["test"]' where id = $1`, [r.id]);
+
+      const fm = await h.sim.call('floor_manager', 'POST', `/v1/provider/rounds/${r.id}/review`, { action: 'settle', cards: ['Ah', 'Kd', '2s'] });
+      expect([fm.status, fm.body.type]).toEqual([403, 'platform_review_required']);
+      const v = await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${r.n}/void`, { reason: 'misdeal' });
+      expect([v.status, v.body.type]).toEqual([403, 'platform_review_required']);
+
+      const ok = await h.api('POST', `/v1/admin/rounds/${r.id}/review`, admin, { action: 'void', reason: 'team decision' });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect((await h.db.query('select status from tournament_bets where round_id = $1', [r.id])).rows.map((x) => x.status)).toEqual(['void']);
+    } finally {
+      await h.api('PUT', '/v1/admin/tables/sim-1/real-money', admin, { approved: false });
+      await modes(false);
+    }
+  });
+});

@@ -7,7 +7,7 @@ import { playSession } from '../lib/accounts.ts';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
 import { consumeEmailToken, sendPasswordReset, sendVerification } from '../lib/emailTokens.ts';
-import { ApiError, conflict, unauthorized, unprocessable } from '../lib/errors.ts';
+import { ApiError, conflict, unprocessable } from '../lib/errors.ts';
 import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.ts';
@@ -122,7 +122,8 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       return true;
     }).catch((e: unknown) => {
       // Same lockout as sign-in, but a clearer message than "wrong email or password".
-      if (e instanceof ApiError && e.type === 'invalid_credentials') throw unauthorized('invalid_credentials', 'the current password is wrong');
+      // 403, not 401: the session is still valid, and clients treat 401 as "signed out".
+      if (e instanceof ApiError && e.type === 'invalid_credentials') throw new ApiError(403, 'wrong_password', 'the current password is wrong');
       throw e;
     });
     return { ok: true };
@@ -135,6 +136,11 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     if (u.mfa_enabled) throw conflict('mfa_already_enabled', 'two-factor authentication is already on; disable it first to start over');
     const secret = generateSecret();
     await tx(ctx.db, async (c) => {
+      // Recheck under the account lock (enable and disable take the same lock): a setup that overlaps
+      // an enable must not reset 2FA that has just been turned on.
+      await c.query('select 1 from users where id = $1 for update', [u.id]);
+      const on = (await c.query('select 1 from user_mfa where user_id = $1 and enabled_at is not null', [u.id])).rowCount;
+      if (on) throw conflict('mfa_already_enabled', 'two-factor authentication is already on; disable it first to start over');
       await c.query(`insert into user_mfa (user_id, secret) values ($1, $2)
                      on conflict (user_id) do update set secret = excluded.secret, created_at = now(), enabled_at = null, last_step = null`, [u.id, secret]);
       await audit(c, { type: 'mfa.setup_started', userId: u.id });
@@ -147,6 +153,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     ctx.limits.otp.consume(`user:${u.id}`);
     const { code } = Code.parse(req.body);
     return tx(ctx.db, async (c) => {
+      await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and disable
       const m = (await c.query<{ secret: string; enabled_at: Date | null }>('select secret, enabled_at from user_mfa where user_id = $1 for update', [u.id])).rows[0];
       if (!m) throw conflict('mfa_not_set_up', 'start with POST /v1/me/mfa/setup');
       if (m.enabled_at) throw conflict('mfa_already_enabled', 'two-factor authentication is already on');
@@ -164,6 +171,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     const { code } = Code.parse(req.body);
     if (!u.mfa_enabled) throw conflict('mfa_not_enabled', 'two-factor authentication is off');
     return tx(ctx.db, async (c) => {
+      await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and enable
       if (!(await checkOtp(c, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
       await c.query('delete from user_mfa where user_id = $1', [u.id]);
       await audit(c, { type: 'mfa.disabled', userId: u.id });

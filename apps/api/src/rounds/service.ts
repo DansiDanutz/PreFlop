@@ -522,17 +522,29 @@ export async function voidRound(c: Tx, r: RoundRow, reason: string, by: string, 
   return true;
 }
 
+/**
+ * Real money rides on this round: its table deals in a real mode, or a real-money tournament has
+ * bets on it (those may sit on an approved play table). Such a round's outcome is never left to the
+ * club that runs the table. Called with the round locked, after betting closed, so the set is fixed.
+ */
+export async function carriesRealMoney(c: Tx, r: RoundRow): Promise<boolean> {
+  if (REAL_MODES.has(r.mode)) return true;
+  return ((await c.query(
+    `select 1 from tournament_bets b join tournaments t on t.id = b.tournament_id
+      where b.round_id = $1 and t.mode = any($2::text[]) limit 1`, [r.id, [...REAL_MODES]])).rowCount ?? 0) > 0;
+}
+
 export type ReviewDecision = { action: 'settle'; cards: unknown } | { action: 'void'; reason: string };
 type ReviewOutcome = { status: 200 | 409; body: Record<string, unknown> };
 
 /**
- * A floor manager's decision on a REVIEW round (docs/13 §4). Play, chips and diamond tables only:
- * a real-money round is never settled by the club that runs the table, so its review goes to the
+ * A floor manager's decision on a REVIEW round (docs/13 §4). Play, chips and diamond rounds only:
+ * a round carrying real money (carriesRealMoney) is never settled by the club that runs the table, so its review goes to the
  * PreFlop team (resolveReviewByPlatform, the console review path).
  */
 export async function resolveReview(c: Tx, r: RoundRow, p: Extract<Principal, { kind: 'staff' }>, decision: ReviewDecision, t: Timing, ev: EventBatch): Promise<ReviewOutcome> {
   if (p.role !== 'floor_manager') throw new ApiError(403, 'forbidden_role', 'floor manager only');
-  if (REAL_MODES.has(r.mode)) throw new ApiError(403, 'platform_review_required', 'a real-money round is reviewed by the PreFlop team');
+  if (await carriesRealMoney(c, r)) throw new ApiError(403, 'platform_review_required', 'a real-money round is reviewed by the PreFlop team');
   assertReviewable(r);
   const entered = (await c.query('select 1 from flop_entries where round_id = $1 and person_id = $2', [r.id, p.personId])).rowCount;
   if (entered) throw new ApiError(403, 'forbidden_role', 'a person who entered the flop cannot resolve its review');
@@ -540,11 +552,11 @@ export async function resolveReview(c: Tx, r: RoundRow, p: Extract<Principal, { 
 }
 
 /**
- * The PreFlop team's decision on a REVIEW round of a real-money table, from the console. Other
+ * The PreFlop team's decision on a REVIEW round carrying real money, from the console. Other
  * modes stay with the club's floor manager: the team may void any round, but settles only these.
  */
 export async function resolveReviewByPlatform(c: Tx, r: RoundRow, userId: string, decision: ReviewDecision, t: Timing, ev: EventBatch): Promise<ReviewOutcome> {
-  if (!REAL_MODES.has(r.mode)) throw new ApiError(403, 'club_review_required', 'the club floor manager reviews rounds at this table');
+  if (!(await carriesRealMoney(c, r))) throw new ApiError(403, 'club_review_required', 'the club floor manager reviews rounds at this table');
   assertReviewable(r);
   return decideReview(c, r, `user:${userId}`, decision, t, ev);
 }

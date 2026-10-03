@@ -9,7 +9,7 @@ import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { Country, DateOfBirth, MIN_AGE, assertMayBet, assertSessionTime, isAdult, loadTerritories } from '../lib/accounts.ts';
 import { sendVerification } from '../lib/emailTokens.ts';
-import { ApiError, badRequest, conflict } from '../lib/errors.ts';
+import { ApiError, badRequest, conflict, unauthorized } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { LOGIN_LOCKOUT, LoginRefusal, guardedLogin } from '../lib/loginLockout.ts';
@@ -111,10 +111,17 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!(await checkOtp(c, row.id, b.otp))) return new LoginRefusal(new ApiError(401, 'invalid_otp', 'that code is not valid'), true);
       return row;
     });
-    // A self-exclusion lifts itself only once its period has ended.
-    await ctx.db.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
-    if (u.status === 'closed' || u.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${u.status}`);
-    return { token: await createSession(ctx.db, u.id) };
+    return tx(ctx.db, async (c) => {
+      // Issue the session under the account row lock, and only if the password is still the one just
+      // checked: a reset or change (same lock) that lands in between makes this sign-in fail instead of
+      // leaving a session its sessions purge never saw.
+      const now = (await c.query<{ password_hash: string; status: string }>('select password_hash, status from users where id = $1 for update', [u.id])).rows[0];
+      if (!now || now.password_hash !== u.password_hash) throw unauthorized('invalid_credentials', 'wrong email or password');
+      // A self-exclusion lifts itself only once its period has ended.
+      await c.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
+      if (now.status === 'closed' || now.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${now.status}`);
+      return { token: await createSession(c, u.id) };
+    });
   });
 
   app.post('/v1/auth/logout', async (req) => {

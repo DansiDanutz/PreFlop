@@ -34,13 +34,18 @@ export function signWebhook(secret: string, body: string, t = Math.floor(Date.no
   return `t=${t}, v1=${createHmac('sha256', secret).update(`${t}.${body}`).digest('hex')}`;
 }
 
-async function partnerFromToken(db: Db, req: FastifyRequest): Promise<{ orgId: string; clientId: string }> {
+/**
+ * The partner behind a bearer token. With `lock`, the token's client and organization rows are held
+ * FOR SHARE until the transaction ends: a client revoke or a suspension (which update those rows and
+ * then end the partner's player sessions) waits, so it can't miss a session issued meanwhile.
+ */
+async function partnerFromToken(db: Db | Tx, req: FastifyRequest, lock = false): Promise<{ orgId: string; clientId: string }> {
   const h = req.headers.authorization;
   const token = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
   if (!token) throw unauthorized('unauthorized', 'partner bearer token required');
   const r = (await db.query<{ org_id: string; client_id: string }>(
     `select p.org_id, p.client_id from partner_tokens p join api_clients c on c.id = p.client_id join organizations o on o.id = p.org_id
-      where p.token_sha256 = $1 and p.expires_at > now() and not c.revoked and o.status = 'active'`, [sha(token)])).rows[0];
+      where p.token_sha256 = $1 and p.expires_at > now() and not c.revoked and o.status = 'active'${lock ? ' for share of c, o' : ''}`, [sha(token)])).rows[0];
   if (!r) throw unauthorized('unauthorized', 'token expired or revoked');
   return { orgId: r.org_id, clientId: r.client_id };
 }
@@ -198,7 +203,12 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const { date_of_birth: dob } = z.object({ date_of_birth: DateOfBirth.optional() }).parse(req.body ?? {});
     if (dob && !isAdult(dob)) throw new ApiError(403, 'underage', 'players must be 18 or over');
     const id = await partnerPlayer(ctx.db, p.orgId, ref, undefined, dob);
-    return { token: await createSession(ctx.db, id), user_id: id };
+    // Recheck the token with its client and partner locked, then issue in the same transaction.
+    return tx(ctx.db, async (c) => {
+      const locked = await partnerFromToken(c, req, true);
+      if (locked.orgId !== p.orgId) throw unauthorized('unauthorized', 'token expired or revoked');
+      return { token: await createSession(c, id), user_id: id };
+    });
   });
   /**
    * Transfer wallet mode: move value into the partner's player's PreFlop wallet. Free chips are

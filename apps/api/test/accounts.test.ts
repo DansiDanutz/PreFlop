@@ -221,7 +221,7 @@ describe('passwords', () => {
   it('change password needs the current one and signs out the other sessions', async () => {
     const p = await register('change');
     const other = (await h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' })).body.token;
-    expect((await h.api('POST', '/v1/me/password', p.token, { current: 'wrong one!', new: 'brand new pass' })).body.type).toBe('invalid_credentials');
+    expect((await h.api('POST', '/v1/me/password', p.token, { current: 'wrong one!', new: 'brand new pass' })).body.type).toBe('wrong_password');
     expect((await h.db.query('select 1 from login_failures where email = $1', [p.email])).rowCount).toBe(1);
     expect((await h.api('POST', '/v1/me/password', p.token, { current: 'correct horse', new: 'brand new pass' })).body).toEqual({ ok: true });
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
