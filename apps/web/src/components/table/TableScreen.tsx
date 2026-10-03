@@ -357,7 +357,13 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               ))}
             </div>
             {tooMuch && <p className="mt-2 text-xs text-warn">More than your {amountLabel(balance!, currency)}.</p>}
-            {balance === null && <p className="mt-2 text-xs text-muted" aria-live="polite">Loading your balance…</p>}
+            {balance === null && (play.isError && !play.isFetching ? (
+              // the room and free-chip balances come from the same wallets query
+              <p className="mt-2 text-xs text-warn" role="alert">
+                Your balance could not be loaded, so predictions are paused.{' '}
+                <button type="button" className="font-semibold text-accent underline" onClick={() => void play.refetch()}>Retry</button>
+              </p>
+            ) : <p className="mt-2 text-xs text-muted" aria-live="polite">Loading your balance…</p>)}
             {stake > 0 && stake < minStake && <p className="mt-2 text-xs text-warn">The minimum here is {amountLabel(minStake, currency)}.</p>}
 
             <div className="mt-5 flex items-baseline justify-between text-[13px]">
