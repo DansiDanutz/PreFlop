@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, ownedOrg } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, idemKey } from './helpers.ts';
 
 /** Regressions for the authorization and accounting review of ca1fc5f (one test per finding). */
 let h: Harness;
@@ -72,7 +72,7 @@ describe('authorization review', () => {
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
     const auth = { authorization: `Bearer ${tok}` };
     expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1_000_000 }, { ...auth, 'idempotency-key': 'dep-key-0001' })).body.type).toBe('insufficient_treasury');
-    expect((await h.api('POST', `/v1/org/${id}/chips/purchases`, owner.token, { chips: 500, pay_with: 'EUR' })).status).toBe(201);
+    expect((await h.api('POST', `/v1/org/${id}/chips/purchases`, owner.token, { chips: 500, pay_with: 'EUR' }, idemKey())).status).toBe(201);
     expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 500 }, { ...auth, 'idempotency-key': 'dep-key-0002' })).status).toBe(201);
     expect((await h.api('POST', '/v1/partner/players/p1/deposits', undefined, { amount_minor: 1 }, { ...auth, 'idempotency-key': 'dep-key-0003' })).body.type).toBe('insufficient_treasury');
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
@@ -96,8 +96,8 @@ describe('authorization review', () => {
     try {
       const r = await prod.api('POST', '/v1/auth/register', undefined, { email: 'p@prod.dev', password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'P' });
       expect((await prod.api('POST', '/v1/me/kyc', r.body.token, {})).body.type).toBe('provider_not_configured');
-      expect((await prod.api('POST', '/v1/me/deposits', r.body.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 1000, method: 'card' })).body.type).toBe('provider_not_configured');
-      expect((await prod.api('POST', '/v1/me/chips/purchases', r.body.token, { chips: 100, pay_with: 'EUR' })).body.type).toBe('provider_not_configured');
+      expect((await prod.api('POST', '/v1/me/deposits', r.body.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 1000, method: 'card' }, idemKey())).body.type).toBe('provider_not_configured');
+      expect((await prod.api('POST', '/v1/me/chips/purchases', r.body.token, { chips: 100, pay_with: 'EUR' }, idemKey())).body.type).toBe('provider_not_configured');
     } finally { await prod.close(); }
   });
 });

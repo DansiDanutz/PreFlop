@@ -12,7 +12,7 @@ import { defaultRoundLossMinor, maxStakeMinor, minorDigits } from '../src/lib/li
 import { deliverDue } from '../src/routes/partner.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady, idemKey } from './helpers.ts';
 
 /**
  * Money and integrity fixes from the external audit (migration 012): per-table real-money approval,
@@ -68,7 +68,7 @@ describe('B1/B1b: real money only at PreFlop-approved tables, reviewed by PreFlo
     sim = new SimTable(h.send, keysToFile(await tx(h.db, (c) => seedSimTable(c, { clubId: club, tableId: T, name: 'Real Table', mode: 'real-fiat', currency: 'EUR' }))));
     player = await user('rm-player');
     await h.api('POST', '/v1/me/kyc', player.token, {});
-    expect((await h.api('POST', '/v1/me/deposits', player.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 50_000, method: 'card' })).status).toBe(201);
+    expect((await h.api('POST', '/v1/me/deposits', player.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 50_000, method: 'card' }, idemKey())).status).toBe(201);
   });
   afterAll(async () => { await modes(false); });
 
@@ -234,7 +234,7 @@ describe('B4: partner deposits are idempotent', () => {
     const org = await ownedOrg(h, admin, { kind: 'partner', name: 'Deposit Co' }, owner);
     const c = (await h.api('POST', `/v1/org/${org}/api-clients`, owner.token, { name: 'c' })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: c.id, client_secret: c.secret })).body.access_token;
-    expect((await h.api('POST', `/v1/org/${org}/chips/purchases`, owner.token, { chips: 1_000, pay_with: 'EUR' })).status).toBe(201);
+    expect((await h.api('POST', `/v1/org/${org}/chips/purchases`, owner.token, { chips: 1_000, pay_with: 'EUR' }, idemKey())).status).toBe(201);
     const dep = (body: unknown, key?: string) => h.api('POST', '/v1/partner/players/pd-1/deposits', undefined, body,
       { authorization: `Bearer ${tok}`, ...(key ? { 'idempotency-key': key } : {}) });
 
@@ -387,8 +387,8 @@ describe('P1: the bet list shows what settlement would pay', () => {
     const owner = await user('p1-owner');
     const p = await user('p1-player');
     const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'P1 Pools' }, owner);
-    expect((await h.api('POST', `/v1/org/${org}/chips/purchases`, owner.token, { chips: 5_000, pay_with: 'EUR' })).status).toBe(201);
-    await h.api('POST', `/v1/org/${org}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1_000 });
+    expect((await h.api('POST', `/v1/org/${org}/chips/purchases`, owner.token, { chips: 5_000, pay_with: 'EUR' }, idemKey())).status).toBe(201);
+    await h.api('POST', `/v1/org/${org}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1_000 }, idemKey());
     const room = (await h.api('POST', `/v1/org/${org}/rooms`, owner.token, { name: 'P1 pool', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' })).body;
     const hand = await openOn(h.sim);
     const rid = `sim-1:h${hand}`;

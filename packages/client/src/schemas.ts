@@ -41,9 +41,14 @@ export const myBetSchema = betViewSchema.extend({
 
 export const myBetsSchema = z.object({ bets: z.array(myBetSchema) }).passthrough();
 
-export const myStatsSchema = z.object({
+const statsFields = {
   bets: z.number().int().nonnegative(), won: z.number().int().nonnegative(), lost: z.number().int().nonnegative(),
   staked_minor: nonNegMinor, returned_minor: nonNegMinor,
+};
+/** Top level: play money. by_currency (optional, newer APIs): one row per (mode, currency). */
+export const myStatsSchema = z.object({
+  ...statsFields,
+  by_currency: z.array(z.object({ mode, currency, ...statsFields }).passthrough()).optional(),
 }).passthrough();
 
 export const paymentSchema = z.object({

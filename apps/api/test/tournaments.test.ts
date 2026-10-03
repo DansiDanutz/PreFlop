@@ -6,7 +6,7 @@ import { verifyAuditChain } from '../src/lib/audit.ts';
 import { tx } from '../src/lib/db.ts';
 import { balance } from '../src/lib/ledger.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, realMoneyReady, walletOf } from './helpers.ts';
+import { type Harness, harness, ledgerSums, realMoneyReady, walletOf, idemKey } from './helpers.ts';
 
 /** Tournaments (docs/17). */
 
@@ -231,7 +231,7 @@ describe('tournament lifecycle', () => {
       const p = await user(name);
       await h.api('POST', '/v1/me/kyc', p.token, {});
       await realMoneyReady(h, p.id);
-      expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' })).status).toBe(201);
+      expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' }, idemKey())).status).toBe(201);
       return p;
     };
     const eur = (id: string) => balance(h.db as never, `${id}:wallet:real-fiat:EUR`);
@@ -267,7 +267,7 @@ describe('tournament lifecycle', () => {
       const p = await user('Limits');
       await h.api('POST', '/v1/me/kyc', p.token, {});
       await realMoneyReady(h, p.id);
-      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
+      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' }, idemKey());
       expect((await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 })).status).toBe(200);
       const mk = async (name: string) => (await h.api('POST', '/v1/admin/tournaments', admin, running({ name, mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body.id as string;
       const [t1, t2] = [await mk('Limit one'), await mk('Limit two')];
@@ -299,7 +299,7 @@ describe('tournament lifecycle', () => {
       const p = await user('Racer');
       await h.api('POST', '/v1/me/kyc', p.token, {});
       await realMoneyReady(h, p.id);
-      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' });
+      await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' }, idemKey());
       await h.api('PUT', '/v1/me/limits', p.token, { loss_day_minor: 1_500 });
       const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Race', mode: 'real-fiat', currency: 'EUR', buy_in_minor: 1_000 }))).body;
       const r = await openRound();

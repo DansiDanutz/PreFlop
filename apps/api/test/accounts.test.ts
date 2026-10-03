@@ -7,7 +7,7 @@ import { type MailTransport, deliverMail } from '../src/lib/mailer.ts';
 import { base32Decode, base32Encode, hotp, otpauthUri, stepAt, totpAt, verifyTotp } from '../src/lib/totp.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
 import { SimTable, keysToFile } from '../src/sim/tableSim.ts';
-import { type Harness, bet, harness, realMoneyReady } from './helpers.ts';
+import { type Harness, bet, harness, realMoneyReady, idemKey } from './helpers.ts';
 
 /** Account security and responsible gaming before real money (docs/14 "Accounts and security"). */
 let h: Harness;
@@ -75,14 +75,14 @@ describe('age', () => {
       await h.db.query(`update users set date_of_birth = null, kyc_status = 'verified' where id = $1`, [p.id]);
       await realMoneyReady(h, p.id);
       const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 1_000, method: 'card' };
-      expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('dob_required');
+      expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('dob_required');
       expect((await h.api('GET', '/v1/me', p.token)).body.date_of_birth).toBeNull();
       expect((await h.api('PATCH', '/v1/me', p.token, { date_of_birth: '1991-04-30' })).body.date_of_birth).toBe('1991-04-30');
       expect((await h.api('PATCH', '/v1/me', p.token, { date_of_birth: '1980-01-01' })).body.type).toBe('already_set');
-      expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).status).toBe(201);
+      expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).status).toBe(201);
       // A recorded age under 18 refuses real money and every bet.
       await h.db.query('update users set date_of_birth = $2 where id = $1', [p.id, isoDaysAgo(17)]);
-      expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('underage');
+      expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('underage');
       const round = await openRound();
       expect((await bet(h, p.token, round, 'colour:mixed', 10)).body.type).toBe('underage');
     } finally { await modes(false); }
@@ -126,12 +126,12 @@ describe('territories', () => {
     try {
       await h.db.query(`update users set kyc_status = 'verified', email_verified_at = now() where id = $1`, [de.id]);
       const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 1_000, method: 'card' };
-      expect((await h.api('POST', '/v1/me/deposits', de.token, dep)).body.type).toBe('territory_not_licensed');
+      expect((await h.api('POST', '/v1/me/deposits', de.token, dep, idemKey())).body.type).toBe('territory_not_licensed');
       await setTerritories({ blocked: [], real_money_allowed: ['DE'] });
-      expect((await h.api('POST', '/v1/me/deposits', de.token, dep)).status).toBe(201);
+      expect((await h.api('POST', '/v1/me/deposits', de.token, dep, idemKey())).status).toBe(201);
       // Withdrawals return the player's own money whatever the territory.
       await setTerritories({ blocked: [], real_money_allowed: [] });
-      expect((await h.api('POST', '/v1/me/withdrawals', de.token, { ...dep, method: 'bank' })).status).toBe(201);
+      expect((await h.api('POST', '/v1/me/withdrawals', de.token, { ...dep, method: 'bank' }, idemKey())).status).toBe(201);
     } finally { await modes(false); }
   });
 });

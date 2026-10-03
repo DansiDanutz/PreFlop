@@ -3,7 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { RateLimiter } from '../src/lib/rateLimit.ts';
 import { ApiError } from '../src/lib/errors.ts';
-import { type Harness, bet, harness } from './helpers.ts';
+import { tx } from '../src/lib/db.ts';
+import { seedAdmin } from '../src/seed.ts';
+import { type Harness, bet, harness, ownedOrg } from './helpers.ts';
 
 let h: Harness;
 let other: FastifyInstance; // a second API instance on the same database, rate limits off
@@ -81,6 +83,27 @@ describe('rate limits (problem+json, 429, Retry-After)', () => {
     const limited = await bet(h, a, rid, 'colour:mixed', 10);
     expect(limited.body).toMatchObject({ type: 'rate_limited', status: 429 });
     expect((await bet(h, b, rid, 'colour:mixed', 10)).status).toBe(201);
+  });
+
+  it('POST /v1/partner/bets is limited per partner player, like the player app', async () => {
+    await tx(h.db, (c) => seedAdmin(c, 'rl-admin@test.dev', 'admin-pass-1'));
+    const admin = (await call(h.app, '/v1/auth/login', { email: 'rl-admin@test.dev', password: 'admin-pass-1' }, '203.0.113.50')).json().token as string;
+    const ownerEmail = email();
+    const owner = (await call(h.app, '/v1/auth/register', { email: ownerEmail, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'P' }, '203.0.113.51')).json().token as string;
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: 'RL Partner' }, { token: owner, email: ownerEmail });
+    const client = (await h.api('POST', `/v1/org/${org}/api-clients`, owner, { name: 'c' })).body;
+    const token = (await call(h.app, '/v1/partner/oauth/token', { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret }, '203.0.113.52')).json().access_token as string;
+    await h.sim.heartbeat();
+    await h.work();
+    const rid = `sim-1:h${await h.sim.openHand()}`;
+    const odds = (await h.api('GET', '/v1/book?channel=partner')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
+    let k = 0;
+    const pbet = (ref: string) => call(h.app, '/v1/partner/bets', { player_ref: ref, round_id: rid, selection_id: 'colour:mixed', stake_minor: 10, odds_centi: odds },
+      '203.0.113.53', { authorization: `Bearer ${token}`, 'idempotency-key': `rl-partner-${++k}-${Date.now()}` });
+    const codes = [];
+    for (let i = 0; i < 4; i++) codes.push((await pbet('alice')).statusCode);
+    expect(codes).toEqual([201, 201, 201, 429]);
+    expect((await pbet('bob')).statusCode).toBe(201); // another player of the same partner is not affected
   });
 });
 

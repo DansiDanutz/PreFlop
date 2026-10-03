@@ -1,8 +1,10 @@
 import { type Channel, FAMILY_NAMES, FIXED_ODDS_CHANNELS, buildBook } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
+import { reviewDeadline, withReviewDeadline } from '../rounds/service.ts';
 
 const BOOK = buildBook();
 
@@ -31,8 +33,8 @@ export async function tableSummaries(ctx: AppContext, where = 'true', params: un
       where t.status <> 'retired' and ${where} order by c.name, t.name`, params)).rows;
   const out = [];
   for (const t of tables) {
-    const rounds = (await ctx.db.query<{ id: string; hand_no: number; state: string; flop: string[] | null; procedure_step: string }>(
-      'select id, hand_no, state, flop, procedure_step from rounds where table_id = $1 order by hand_no desc limit 6', [t.id])).rows;
+    const rounds = (await ctx.db.query<{ id: string; hand_no: number; state: string; flop: string[] | null; procedure_step: string; review_started_at: Date | null }>(
+      'select id, hand_no, state, flop, procedure_step, review_started_at from rounds where table_id = $1 order by hand_no desc limit 6', [t.id])).rows;
     const open = rounds.find((r) => r.state === 'OPEN');
     const lastFlop = rounds.find((r) => r.state === 'SETTLED');
     const ready = await tableReadiness(ctx.db, t);
@@ -40,7 +42,10 @@ export async function tableSummaries(ctx: AppContext, where = 'true', params: un
       id: t.id, name: t.name, club_id: t.club_id, club_name: t.club_name, city: t.city, kind: t.kind, mode: t.mode, currency: t.currency,
       status: t.status, ready: ready.ok, problems: ready.problems,
       stream_live: !!t.link?.streamLive,
-      current_round: rounds[0] ? { id: rounds[0].id, hand_no: rounds[0].hand_no, state: rounds[0].state, step: rounds[0].procedure_step } : null,
+      current_round: rounds[0] ? {
+        id: rounds[0].id, hand_no: rounds[0].hand_no, state: rounds[0].state, step: rounds[0].procedure_step,
+        review_deadline: reviewDeadline(rounds[0], ctx.config.reviewSlaMs),
+      } : null,
       open_round_id: open?.id ?? null,
       last_flop: lastFlop ? { round_id: lastFlop.id, hand_no: lastFlop.hand_no, cards: lastFlop.flop } : null,
     });
@@ -82,8 +87,9 @@ export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   app.get('/v1/book', async (req) => {
-    const ch = ((req.query as { channel?: string }).channel ?? 'direct') as Channel;
-    return BOOKS[ch] ?? BOOKS.direct;
+    // An unknown channel is a 400, not silently the direct book (a typo must not show other prices).
+    const { channel } = z.object({ channel: z.enum(FIXED_ODDS_CHANNELS as unknown as [Channel, ...Channel[]]).default('direct') }).parse(req.query);
+    return BOOKS[channel]!;
   });
 
   app.get('/v1/modes', async () => {
@@ -118,19 +124,19 @@ export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/tables/:t/rounds/current', async (req) => {
     const { t } = req.params as { t: string };
     const r = (await ctx.db.query(
-      `select id, table_id, hand_no, state, procedure_step as step, mode, currency, channel, opened_at, locked_at, flop
+      `select id, table_id, hand_no, state, procedure_step as step, mode, currency, channel, opened_at, locked_at, flop, review_started_at
          from rounds where table_id = $1 order by hand_no desc limit 1`, [t])).rows[0];
     if (!r) throw notFound('round');
     const open = (await ctx.db.query(`select id, hand_no, opened_at from rounds where table_id = $1 and state = 'OPEN'`, [t])).rows[0] ?? null;
-    return { latest: r, open };
+    return { latest: withReviewDeadline(r, ctx.config.reviewSlaMs), open };
   });
 
   app.get('/v1/rounds/:id', async (req) => {
     const { id } = req.params as { id: string };
     const r = (await ctx.db.query(
-      `select id, table_id, hand_no, state, procedure_step as step, mode, currency, opened_at, locked_at, settled_at, voided_at, void_reason, flop
+      `select id, table_id, hand_no, state, procedure_step as step, mode, currency, opened_at, locked_at, settled_at, voided_at, void_reason, flop, review_started_at
          from rounds where id = $1`, [id])).rows[0];
     if (!r) throw notFound('round');
-    return r;
+    return withReviewDeadline(r, ctx.config.reviewSlaMs);
   });
 }

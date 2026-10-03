@@ -7,7 +7,7 @@ import { EventBatch } from '../src/lib/events.ts';
 import { signWebhook, deliverDue } from '../src/routes/partner.ts';
 import { resolve } from '../src/rounds/service.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady } from './helpers.ts';
+import { type Harness, harness, ledgerSums, ownedOrg, realMoneyReady, idemKey } from './helpers.ts';
 
 let h: Harness;
 let admin: string;
@@ -54,10 +54,10 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
 
     const packs = (await h.api('GET', `/v1/org/${orgId}/diamonds/packs`, owner.token)).body.packs;
     expect(packs[0]).toMatchObject({ diamonds: 1000, price_minor: 1000 });
-    const buy = await h.api('POST', `/v1/org/${orgId}/diamonds/purchases`, owner.token, { diamonds: 10_000, pay_with: 'USDT' });
+    const buy = await h.api('POST', `/v1/org/${orgId}/diamonds/purchases`, owner.token, { diamonds: 10_000, pay_with: 'USDT' }, idemKey());
     expect(buy.status).toBe(201);
     expect(buy.body.currency).toBe('USDT');
-    expect((await h.api('POST', `/v1/org/${orgId}/collateral/deposits`, owner.token, { mode: 'diamonds', currency: 'DIAMOND', amount_minor: 6_000 })).status).toBe(200);
+    expect((await h.api('POST', `/v1/org/${orgId}/collateral/deposits`, owner.token, { mode: 'diamonds', currency: 'DIAMOND', amount_minor: 6_000 }, idemKey())).status).toBe(200);
 
     const bad = await h.api('POST', `/v1/org/${orgId}/rooms/validate`, owner.token, { mode: 'diamonds', house: 'organizer', rules: { margin_bps: 100, min_stake_minor: 5, rake_bps: 5000 } });
     expect(bad.body.ok).toBe(false);
@@ -67,7 +67,7 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
     roomId = room.body.id;
     expect(room.body.invite_code).toMatch(/^[A-Z0-9]{7}$/);
 
-    const t = await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: player.email, mode: 'diamonds', amount_minor: 1_000 });
+    const t = await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: player.email, mode: 'diamonds', amount_minor: 1_000 }, idemKey());
     expect(t.status).toBe(201);
     expect(await wallet(player.token, 'diamonds', orgId)).toBe(1_000);
   });
@@ -127,8 +127,8 @@ describe('pool room in virtual chips', () => {
     const a = await userWithEmail('alice');
     const b = await userWithEmail('bob');
     const orgId = await createOrg('organizer', owner, 'Pool Party');
-    expect((await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5_000, pay_with: 'EUR' })).status).toBe(201);
-    for (const p of [a, b]) await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1_000 });
+    expect((await h.api('POST', `/v1/org/${orgId}/chips/purchases`, owner.token, { chips: 5_000, pay_with: 'EUR' }, idemKey())).status).toBe(201);
+    for (const p of [a, b]) await h.api('POST', `/v1/org/${orgId}/transfers`, owner.token, { email: p.email, mode: 'virtual-chips', amount_minor: 1_000 }, idemKey());
     const room = (await h.api('POST', `/v1/org/${orgId}/rooms`, owner.token, { name: 'Friday pool', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' })).body;
     const n = await open();
     const rid = `sim-1:h${n}`;
@@ -329,30 +329,30 @@ describe('applications, real-money sandbox and responsible gaming', () => {
   it('real money requires the mode, KYC and limits; withdrawals return funds; self-exclusion blocks play', async () => {
     const p = await userWithEmail('real');
     const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' };
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('mode_disabled');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('mode_disabled');
     await h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': true, 'real-crypto': true } });
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('kyc_required');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('kyc_required');
     expect((await h.api('POST', '/v1/me/kyc', p.token, {})).body.kyc_status).toBe('verified');
     // verified email, then a licensed territory (docs/14 "Accounts and security")
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('email_unverified');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('email_unverified');
     await h.db.query('update users set email_verified_at = now() where id = $1', [p.id]);
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('territory_not_licensed');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('territory_not_licensed');
     await realMoneyReady(h, p.id);
     expect((await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 8_000 })).body.deposit_day_minor).toBe(8_000);
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).status).toBe(201);
-    expect((await h.api('POST', '/v1/me/deposits', p.token, dep)).body.type).toBe('limit_reached');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).status).toBe(201);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, idemKey())).body.type).toBe('limit_reached');
     // raising a limit waits 24 h
     const raised = (await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 50_000 })).body;
     expect(raised.deposit_day_minor).toBe(8_000);
     expect(raised.pending.deposit_day_minor).toBe(50_000);
     // 3,000 cents of headroom left: 20 USDT (2,000 cents) fits, then another 20 does not
-    const usdt = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 20_000_000, method: 'crypto' });
-    expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 20_000_000, method: 'crypto' })).body.type).toBe('limit_reached');
+    const usdt = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 20_000_000, method: 'crypto' }, idemKey());
+    expect((await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 20_000_000, method: 'crypto' }, idemKey())).body.type).toBe('limit_reached');
     expect(usdt.body.address).toMatch(/^0x[0-9a-f]{40}$/);
     expect(await wallet(p.token, 'real-fiat')).toBe(5_000);
-    expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 2_000, method: 'bank' })).status).toBe(201);
+    expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 2_000, method: 'bank' }, idemKey())).status).toBe(201);
     expect(await wallet(p.token, 'real-fiat')).toBe(3_000);
-    expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 9_000, method: 'bank' })).body.type).toBe('insufficient_funds');
+    expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 9_000, method: 'bank' }, idemKey())).body.type).toBe('insufficient_funds');
     expect((await h.api('POST', '/v1/me/self-exclusion', p.token, { days: 30 })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(401); // sessions ended
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);

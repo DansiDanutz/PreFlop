@@ -141,3 +141,32 @@ describe('stream', () => {
     });
   });
 });
+
+describe('money in and out sends an Idempotency-Key', () => {
+  const payment = { id: 'pay_1', kind: 'deposit', method: 'card', currency: 'EUR', amount_minor: 100, status: 'completed', created_at: '2026-01-01T00:00:00Z' };
+  const keyOf = (f: ReturnType<typeof respond>, i = 0) => new Headers((f.mock.calls[i] as unknown as [string, RequestInit])[1].headers).get('idempotency-key');
+
+  it("a fresh key per call, or the caller's key to retry", async () => {
+    const f = respond(201, JSON.stringify(payment));
+    const c = createClient({ baseUrl: 'https://api.test' });
+    await c.deposit({ mode: 'real-fiat', currency: 'EUR', amount_minor: 100, method: 'card' });
+    await c.deposit({ mode: 'real-fiat', currency: 'EUR', amount_minor: 100, method: 'card' }, 'retry-key-0001');
+    expect(keyOf(f, 0)).toMatch(/^.{8,200}$/);
+    expect(keyOf(f, 1)).toBe('retry-key-0001');
+    for (const call of [() => c.withdraw({ mode: 'real-fiat', currency: 'EUR', amount_minor: 1, method: 'bank' }), () => c.buyChips({ chips: 100, pay_with: 'EUR' }),
+      () => c.buyDiamonds('o', { diamonds: 1000, pay_with: 'EUR' }), () => c.buyOrgChips('o', { chips: 100, pay_with: 'EUR' }),
+      () => c.orgFundCollateral('o', { mode: 'diamonds', currency: 'DIAMOND', amount_minor: 1 }), () => c.orgTransfer('o', { email: 'a@b.c', mode: 'diamonds', amount_minor: 1 })]) {
+      const g = respond(201, JSON.stringify(payment));
+      await call();
+      expect(keyOf(g)).toMatch(/^.{8,200}$/);
+    }
+  });
+
+  it('my stats accept the per-currency rows', async () => {
+    const row = { bets: 1, won: 0, lost: 1, staked_minor: 100, returned_minor: 0 };
+    respond(200, JSON.stringify({ ...row, by_currency: [{ mode: 'play', currency: 'PLAY', ...row }] }));
+    expect((await createClient({ baseUrl: 'https://api.test' }).myStats()).by_currency?.[0]?.currency).toBe('PLAY');
+    respond(200, JSON.stringify({ ...row, by_currency: [{ mode: 'play', currency: 'PLAY', ...row, staked_minor: '100' }] }));
+    expect((await apiError(createClient({ baseUrl: 'https://api.test' }).myStats())).type).toBe('invalid_response');
+  });
+});

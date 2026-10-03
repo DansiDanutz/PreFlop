@@ -26,6 +26,8 @@ export interface TableRow {
   kind: 'physical' | 'simulated';
   status: 'active' | 'paused' | 'retired';
   pause_reason: string | null;
+  /** Machine-readable cause of a pause (migration 014): monitor | evidence | floor | platform; null while active. */
+  pause_kind: 'monitor' | 'evidence' | 'floor' | 'platform' | null;
   max_round_loss_minor: number;
   max_user_round_payout_minor: number | null;
   /** Set by the PreFlop team; real-money bets need it (migration 012). */
