@@ -1,5 +1,5 @@
 import type { Limits, Wallet } from '@preflop/client';
-import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney } from '@preflop/ui';
+import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney, formatMoneyShort } from '@preflop/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Briefcase, Check, ChevronDown, Copy, KeyRound, Network, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
 import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
@@ -83,11 +83,11 @@ export function ProfilePage() {
         <Card className="flex flex-col items-center justify-center p-7 text-center">
           <span className="grid h-14 w-14 place-items-center rounded-full border border-accent/40 bg-accent-deep"><ChipIcon size={36} /></span>
           <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.16em] text-ink/85">Your practice balance</p>
-          <div className="mt-3 font-serif text-[46px] leading-none tracking-[-0.03em]">{play ? formatMoney(play.balance_minor, 'PLAY') : <Skeleton className="mx-auto h-11 w-36" />}</div>
+          <div className="mt-3 font-serif text-[46px] leading-none tracking-[-0.03em]">{play ? formatMoneyShort(play.balance_minor, 'PLAY') : <Skeleton className="mx-auto h-11 w-36" />}</div>
           <p className="mt-3 text-[13px] text-ink/80">Free chips · No cash value</p>
           <Button className="mt-5" onClick={() => setConfirmReset(true)}><RotateCcw className="h-4 w-4" aria-hidden /> Reset free chips</Button>
           <p className="mt-3 text-[11px] text-ink/70">Always free. Your history stays.</p>
-          {reset.isSuccess && <Notice tone="accent" className="mt-3">Free chips reset to {formatMoney(reset.data.balance_minor, 'PLAY')}.</Notice>}
+          {reset.isSuccess && <Notice tone="accent" className="mt-3">Free chips reset to {formatMoneyShort(reset.data.balance_minor, 'PLAY')}.</Notice>}
           {reset.isError && <Notice tone="warn" className="mt-3">{errorText(reset.error)}</Notice>}
         </Card>
 

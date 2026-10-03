@@ -1,5 +1,5 @@
 import { ApiError } from '@preflop/client';
-import { Badge, Button, type RoundPhase, cx, formatMoney, formatOdds } from '@preflop/ui';
+import { Badge, Button, type RoundPhase, cx, formatMoneyShort, formatOdds } from '@preflop/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Info, LayoutGrid, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,7 +11,7 @@ import { openHandNo, phaseOf, streamGate, tableStatus } from '../../lib/live.ts'
 import { marketAllowed } from '../../lib/embed.ts';
 import { type BetProblem, betProblem } from '../../lib/problems.ts';
 import { useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
-import { amountLabel, balanceLabel, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
+import { amountLabel, amountRange, balanceLabel, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
 import { KEYS, readJson, writeJson, writeString } from '../../lib/storage.ts';
 import { useTableLive } from '../../lib/useTableLive.ts';
 import { HowToPlay, PracticePill } from '../AppShell.tsx';
@@ -179,7 +179,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
   const tooMuch = balance !== null && stake > balance;
   // No bets while the live stream is down: the round may already be locked without us seeing it.
-  const gate = streamGate(live.ws);
+  const gate = streamGate(live.ws, live.resyncing);
   const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !place.isPending && status?.open !== false && !roomMismatch && !(roomId && !room);
   const favCount = favIds.length;
   const unavailable = !!t && (t.status !== 'active' || status?.label === 'Stream unavailable');
@@ -188,7 +188,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
   return (
     <div className={cx('@container', embed && 'px-4 pb-8 pt-4')}>
-      <LiveBanner ws={live.ws} className="mb-4" />
+      <LiveBanner ws={live.ws} resyncing={live.resyncing} className="mb-4" />
       {/* heading */}
       {!embed && t && (
         <Link to={`/app/clubs/${t.club_id}`} className="inline-flex items-center gap-1.5 text-[14px] text-ink/85 hover:text-ink">
@@ -251,7 +251,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
                   <ul className="mt-2 flex flex-wrap gap-2">
                     {[...inFlight, ...thisRound].map((b) => (
                       <li key={b.betId} className={cx('rounded-[6px] border px-3 py-1.5 text-[13px]', b.roundId === openId ? 'border-accent/60 bg-accent-deep/30' : 'border-info/50')}>
-                        {nameOf(b.selectionId)} · {formatMoney(b.stakeMinor, 'PLAY')}
+                        {nameOf(b.selectionId)} · {amountLabel(b.stakeMinor, currency)}
                         {b.roundId !== openId && <span className="ml-1 text-muted">· awaiting flop</span>}
                       </li>
                     ))}
@@ -299,7 +299,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
             <div className="mt-5 flex items-center justify-between text-[12px]">
               <span className="text-[14px]">Amount</span>
-              <span className="text-ink/85">{balance === null ? balanceLabel(currency) : `${formatMoney(minStake, 'PLAY')}–${formatMoney(Math.max(minStake, balance), 'PLAY')} ${balanceLabel(currency).toLowerCase()}`}</span>
+              <span className="text-ink/85">{balance === null ? balanceLabel(currency) : amountRange(minStake, Math.max(minStake, balance), currency)}</span>
             </div>
             <div className="mt-2 flex h-12 overflow-hidden rounded-[8px] border border-line-strong/70 bg-bg">
               <button type="button" aria-label="Decrease amount" onClick={() => setStake((s) => Math.max(minStake, s - step))} className="grid w-12 place-items-center bg-surface-3 hover:text-accent"><Minus className="h-4 w-4" /></button>
@@ -313,7 +313,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               {presets.map((p) => (
                 <button key={p} type="button" aria-pressed={stake === p} onClick={() => setStake(p)}
                   className={cx('h-10 rounded-[6px] border text-[13px] transition-colors', stake === p ? 'border-accent/60 bg-accent-deep text-accent' : 'border-line-strong/70 text-ink/90 hover:border-accent/50')}>
-                  {formatMoney(p, 'PLAY')}
+                  {formatMoneyShort(p, currency)}
                 </button>
               ))}
             </div>
@@ -337,7 +337,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
             {placedMsg && !problem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
 
             <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => place.mutate({})}>
-              {place.isPending ? 'Placing…' : gate.paused ? 'Bets paused · reconnecting' : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
+              {place.isPending ? 'Placing…' : gate.paused ? (live.ws === 'open' ? 'Bets paused · updating' : 'Bets paused · reconnecting') : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
             </Button>
             <p className="mt-4 text-center text-[12px] text-ink/80">{currency === 'PLAY' ? 'Free chips. No purchases, prizes or cash-out.' : noCashValueLine(currency)}</p>
           </div>

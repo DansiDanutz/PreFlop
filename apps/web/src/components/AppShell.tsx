@@ -1,8 +1,9 @@
-import { ChipIcon, Wordmark, cx, formatMoney } from '@preflop/ui';
+import { ChipIcon, Wordmark, cx, formatMoneyShort } from '@preflop/ui';
 import { Building2, CircleHelp, FileText, Gift, House, Info, Swords, Trophy, User } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useSearchParams } from 'react-router';
-import { useBalance, useMe, useRealMoney } from '../lib/queries.ts';
+import { useBalance, useMe, useRealMoney, useRoom } from '../lib/queries.ts';
+import { balanceLabel } from '../lib/rooms.ts';
 import { RealityCheck, SessionClock, VerifyEmailBanner } from './PlaySession.tsx';
 import { Sheet, Skeleton } from './ui.tsx';
 
@@ -59,8 +60,25 @@ export function ChipBalance({ className }: { className?: string }) {
     <span className={cx('flex items-center gap-2.5', className)}>
       <span className="grid h-10 w-10 place-items-center rounded-full border border-accent/40 bg-accent-deep"><ChipIcon size={26} /></span>
       <span className="leading-tight">
-        <span className="block text-[16px] font-bold">{b.balance === null ? <Skeleton className="h-4 w-14" /> : formatMoney(b.balance, 'PLAY')}</span>
+        <span className="block text-[16px] font-bold">{b.balance === null ? <Skeleton className="h-4 w-14" /> : formatMoneyShort(b.balance, 'PLAY')}</span>
         <span className="block text-[12px] text-muted">free chips</span>
+      </span>
+    </span>
+  );
+}
+
+/** The closed-loop wallet balance inside an organizer's room (chips or diamonds), in place of free chips. */
+export function RoomBalance({ roomId, className }: { roomId: string; className?: string }) {
+  const rm = useRoom(roomId);
+  if (rm.isError) return null;
+  const currency = rm.room?.currency ?? null;
+  const amount = !rm.room || !rm.walletsLoaded ? null : rm.wallet?.balance_minor ?? 0;
+  return (
+    <span className={cx('flex items-center gap-2.5', className)} data-testid="room-balance">
+      <span className="grid h-10 w-10 place-items-center rounded-full border border-accent/40 bg-accent-deep"><ChipIcon size={26} /></span>
+      <span className="leading-tight">
+        <span className="block text-[16px] font-bold">{amount === null || !currency ? <Skeleton className="h-4 w-14" /> : formatMoneyShort(amount, currency)}</span>
+        <span className="block max-w-[160px] truncate text-[12px] text-muted">{currency ? balanceLabel(currency, rm.room?.org_name) : 'Room balance'}</span>
       </span>
     </span>
   );
@@ -72,7 +90,8 @@ export function TopBar({ embed = false }: { embed?: boolean }) {
   const loc = useLocation();
   // Inside an organizer's room the player uses chips or diamonds, not practice chips.
   const [params] = useSearchParams();
-  const practice = !real && !params.get('room');
+  const roomId = params.get('room');
+  const practice = !real && !roomId;
   return (
     <header className="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-line bg-bg/92 px-5 backdrop-blur lg:h-[92px] lg:px-10">
       {embed ? <Wordmark size="sm" /> : (
@@ -83,6 +102,7 @@ export function TopBar({ embed = false }: { embed?: boolean }) {
       <div className="flex-1" />
       <SessionClock />
       {practice && <ChipBalance />}
+      {roomId && <RoomBalance roomId={roomId} />}
       {embed ? <Avatar /> : <Link to="/app/profile" aria-label="Your profile" className="hidden rounded-full lg:block"><Avatar /></Link>}
     </header>
   );

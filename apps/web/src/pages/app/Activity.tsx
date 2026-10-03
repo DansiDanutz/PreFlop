@@ -10,6 +10,7 @@ import { resolveOption } from '../../lib/bets.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
 import { qk, useBook } from '../../lib/queries.ts';
 import { groupByRound, summarizeRound } from '../../lib/rounds.ts';
+import { type StatsResponse, statsBlocks } from '../../lib/stats.ts';
 
 type Tab = 'all' | 'won' | 'lost' | 'ledger';
 
@@ -33,7 +34,7 @@ const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'nume
 
 export function ActivityPage() {
   const [tab, setTab] = useState<Tab>('all');
-  const stats = useQuery({ queryKey: qk.stats, queryFn: () => api.myStats() });
+  const stats = useQuery({ queryKey: qk.stats, queryFn: (): Promise<StatsResponse> => api.myStats() });
   return (
     <div>
       <PageHeader eyebrow="Every round, in the open" title="Your activity." subtitle="A clear record of your predictions, with the locked odds and every chip movement." />
@@ -46,26 +47,24 @@ export function ActivityPage() {
   );
 }
 
-function StatsStrip({ stats, loading }: { stats: { bets: number; won: number; lost: number; staked_minor: number; returned_minor: number } | undefined; loading: boolean }) {
+function StatsStrip({ stats, loading }: { stats: StatsResponse | undefined; loading: boolean }) {
   if (loading) return <Skeleton className="mt-8 h-[120px]" />;
-  if (!stats) return null;
-  const staked = Number(stats.staked_minor);
-  const returned = Number(stats.returned_minor);
-  const net = returned - staked;
-  const settled = stats.won + stats.lost;
-  const cells: [string, string, boolean?][] = [
-    ['Predictions', String(stats.bets)],
-    ['Correct predictions', String(stats.won)],
-    ['Hit rate', settled ? `${Math.round((stats.won / settled) * 100)}%` : '—'],
-    ['Net chips', `${net > 0 ? '+' : ''}${formatMoney(net, 'PLAY')}`, net > 0],
-  ];
+  const blocks = statsBlocks(stats);
+  if (!blocks.length) return null;
   return (
-    <div className="mt-8 grid grid-cols-2 overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface lg:grid-cols-4">
-      {cells.map(([label, value, accent], i) => (
-        <div key={label} className={cx('px-6 py-6', i % 2 === 1 && 'border-l border-line', i >= 2 && 'border-t border-line lg:border-t-0', i === 2 && 'lg:border-l')}>
-          <div className="text-[13px] text-ink/85">{label}</div>
-          <div className={cx('mt-3 font-serif text-[32px] leading-none', accent && 'text-accent')}>{value}</div>
-        </div>
+    <div className="mt-8 space-y-5">
+      {blocks.map((b) => (
+        <section key={b.key} aria-label={`${b.title} totals`}>
+          <h2 className="mb-2 text-[12px] font-bold uppercase tracking-[0.16em] text-ink/85">{b.title}</h2>
+          <div className="grid grid-cols-2 overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface lg:grid-cols-4">
+            {b.cells.map(({ label, value, accent }, i) => (
+              <div key={label} className={cx('min-w-0 px-6 py-6', i % 2 === 1 && 'border-l border-line', i >= 2 && 'border-t border-line lg:border-t-0', i === 2 && 'lg:border-l')}>
+                <div className="text-[13px] text-ink/85">{label}</div>
+                <div className={cx('mt-3 break-words font-serif text-[clamp(22px,6vw,32px)] leading-none', accent && 'text-accent')}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </section>
       ))}
     </div>
   );

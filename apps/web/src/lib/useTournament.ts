@@ -37,7 +37,8 @@ export function useTournament(id: string) {
     const tid = typeof e.data?.tournament_id === 'string' ? e.data.tournament_id : id;
     if (tid === id) void qc.invalidateQueries({ queryKey: tournamentKey(id) });
   }, [qc, id]);
-  const ws = useStream([`tournament:${id}`], onEvent, token);
+  // Standings events missed while the socket was down: refetch on reconnect.
+  const ws = useStream([`tournament:${id}`], onEvent, token, () => void qc.invalidateQueries({ queryKey: tournamentKey(id) }));
   return { ...q, ws };
 }
 
