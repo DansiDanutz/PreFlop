@@ -141,12 +141,46 @@ export function trapFocus<T>(items: readonly T[], current: T | null, shift: bool
   return null;
 }
 
+/** The part of an Element that inertOutside needs (a real DOM element, or a test double). */
+export interface InertNode {
+  readonly tagName: string;
+  readonly parentElement: InertNode | null;
+  readonly children: ArrayLike<InertNode>;
+  hasAttribute(name: string): boolean;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+}
+
+/**
+ * Makes everything outside `el` inert (no focus, no clicks, hidden from assistive technology):
+ * every sibling of `el` and of each of its ancestors up to <body>. Returns the undo, which only
+ * clears what this call set, so stacked sheets restore in order.
+ */
+export function inertOutside(el: InertNode): () => void {
+  const changed: InertNode[] = [];
+  let node: InertNode = el;
+  while (node.parentElement) {
+    const parent: InertNode = node.parentElement;
+    for (const sib of Array.from(parent.children)) {
+      if (sib === node || sib.hasAttribute('inert') || sib.tagName === 'SCRIPT' || sib.tagName === 'STYLE') continue;
+      sib.setAttribute('inert', '');
+      changed.push(sib);
+    }
+    if (parent.tagName === 'BODY' || parent.tagName === 'HTML') break;
+    node = parent;
+  }
+  return () => { for (const e of changed) e.removeAttribute('inert'); };
+}
+
 /**
  * Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. Focus
  * moves into it on open, Tab and Shift+Tab cycle inside it, and focus returns to the opener on close.
+ * It is aria-modal, and the rest of the page is inert while it is open (inertOutside), so neither the
+ * keyboard, the pointer nor a screen reader's virtual cursor can reach the page behind it.
  */
 export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
   // The latest onClose, so a parent passing a new function each render does not re-run the
   // open effect (which would pull focus out of an input on every keystroke).
   const closeRef = useRef(onClose);
@@ -154,14 +188,15 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
+    const restoreInert = backdrop.current ? inertOutside(backdrop.current) : () => {};
     // Focus the dialog itself once on open; Tab then moves into its controls.
     ref.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { closeRef.current(); return; }
-      if (e.key !== 'Tab' || !ref.current) return;
-      // With sheets stacked, only the top one (last in the document) traps focus.
+      if ((e.key !== 'Escape' && e.key !== 'Tab') || !ref.current) return;
+      // With sheets stacked, only the top one (last in the document) handles Escape and traps focus.
       const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
       if (dialogs[dialogs.length - 1] !== ref.current) return;
+      if (e.key === 'Escape') { closeRef.current(); return; }
       const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
       const active = document.activeElement as HTMLElement | null;
       const inside = !!active && ref.current.contains(active);
@@ -172,12 +207,13 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
+      restoreInert();
       prev?.focus?.();
     };
   }, [open]);
   if (!open) return null;
   return (
-    <div className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div ref={backdrop} className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={labelledBy ? undefined : title} aria-labelledby={labelledBy}
         className={cx('pf-sheet-in max-h-[92dvh] w-full overflow-y-auto outline-none rounded-t-[16px] border border-line-strong/70 bg-surface p-5 pb-[max(20px,env(safe-area-inset-bottom))] sm:rounded-[14px] sm:p-7', wide ? 'max-w-[640px]' : 'max-w-[460px]')}>
         {children}
