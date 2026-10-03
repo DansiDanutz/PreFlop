@@ -565,22 +565,30 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
   let ws: WebSocket | null = null;
   let closed = false;
   let retry = 500;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let topics = [...o.topics];
   const open = () => {
-    ws = new WebSocket(o.url);
-    ws.onopen = () => {
+    timer = null;
+    // A reconnect scheduled before close() (logout, token change, unmount) never opens a socket.
+    if (closed) return;
+    const sock = new WebSocket(o.url);
+    ws = sock;
+    sock.onopen = () => {
+      if (closed || ws !== sock) { sock.close(); return; }
       retry = 500;
       o.onStatus?.('open');
-      if (o.token) ws?.send(JSON.stringify({ type: 'auth', token: o.token }));
-      ws?.send(JSON.stringify({ subscribe: topics }));
+      if (o.token) sock.send(JSON.stringify({ type: 'auth', token: o.token }));
+      sock.send(JSON.stringify({ subscribe: topics }));
     };
-    ws.onmessage = (m) => {
+    sock.onmessage = (m) => {
+      if (closed || ws !== sock) return;
       const e = parseStreamFrame(m.data);
       if (e) o.onEvent(e);
     };
-    ws.onclose = () => {
+    sock.onclose = () => {
+      if (closed || ws !== sock) return;
       o.onStatus?.('closed');
-      if (!closed) setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
+      timer = setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
     };
   };
   open();
@@ -590,9 +598,13 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
       topics = [...next];
       if (ws?.readyState === 1) ws.send(JSON.stringify({ subscribe: topics, unsubscribe: un }));
     },
+    /** Disposes the stream for good: cancels a pending reconnect and closes the socket. */
     close() {
       closed = true;
-      ws?.close();
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      const s = ws;
+      ws = null;
+      s?.close();
     },
   };
 }
