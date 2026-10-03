@@ -183,10 +183,10 @@ describe('email verification', () => {
     const sent: string[] = [];
     const fake: MailTransport = { name: 'fake', send: async (m) => { sent.push(m.to); } };
     expect(await deliverMail(h.db, null, 'x@y')).toBe(0);
-    const before = Number((await h.db.query<{ n: string }>('select count(*) as n from email_outbox where sent_at is null')).rows[0]!.n);
+    const before = Number((await h.db.query<{ n: string }>(`select count(*) as n from email_outbox where status = 'pending'`)).rows[0]!.n);
     expect(await deliverMail(h.db, fake, 'PreFlop <no-reply@test.dev>', 1000)).toBe(before);
     expect(sent).toHaveLength(before);
-    expect((await h.db.query(`select 1 from email_outbox where sent_at is null or body <> ''`)).rowCount).toBe(0);
+    expect((await h.db.query(`select 1 from email_outbox where status = 'pending' or body <> ''`)).rowCount).toBe(0);
   });
 });
 

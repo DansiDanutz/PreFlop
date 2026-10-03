@@ -309,14 +309,16 @@ function ResponsiblePlay() {
   const unavailable = limits.isError && isNotImplemented(limits.error);
   // Prefilled with the saved limits: emptying a field removes that limit (sent as an explicit null).
   const [form, setForm] = useState<LimitsForm>(() => limitsForm(undefined));
-  const [dirty, setDirty] = useState(false);
+  // The fields the player edited: only these are sent, so a queued change of another field survives.
+  const [edited, setEdited] = useState<ReadonlySet<keyof LimitsForm>>(() => new Set());
+  const dirty = edited.size > 0;
   const [touched, setTouched] = useState(false);
   useEffect(() => { if (limits.data && !dirty) setForm(limitsForm(limits.data)); }, [limits.data, dirty]);
-  const edit = (k: keyof LimitsForm, v: string) => { setDirty(true); setForm((f) => ({ ...f, [k]: v })); };
+  const edit = (k: keyof LimitsForm, v: string) => { setEdited((s) => new Set(s).add(k)); setForm((f) => ({ ...f, [k]: v })); };
   const errs = limitsErrors(form);
   const save = useMutation({
     mutationFn: (l: Limits) => api.setLimits(l),
-    onSuccess: (l) => { qc.setQueryData(qk.limits, l); setDirty(false); setTouched(false); },
+    onSuccess: (l) => { qc.setQueryData(qk.limits, l); setEdited(new Set()); setTouched(false); },
   });
   const [days, setDays] = useState('7');
   const [confirm, setConfirm] = useState(false);
@@ -331,7 +333,7 @@ function ResponsiblePlay() {
       <form className="space-y-3" noValidate onSubmit={(e) => {
         e.preventDefault();
         setTouched(true);
-        if (!Object.keys(errs).length) save.mutate(limitsPayload(form));
+        if (!Object.keys(errs).length && dirty) save.mutate(limitsPayload(form, edited));
       }}>
         <Field label="Daily loss limit (€)" inputMode="decimal" disabled={unavailable} placeholder="No limit" value={form.loss} onChange={(e) => edit('loss', e.target.value.replace(/[^\d.]/g, ''))}
           error={touched ? errs.loss ?? null : null} hint={`Real-money losses over 24 hours; free chips are never limited. Now: ${cur?.loss_day_minor != null ? formatMoney(cur.loss_day_minor, 'EUR') : 'no limit'}. Empty the field to remove it.`} />

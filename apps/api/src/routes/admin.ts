@@ -104,7 +104,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         uptime_s: Math.round((Date.now() - ctx.stats.startedAt.getTime()) / 1000),
         db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
         ws_clients: ctx.stats.wsClients,
-        mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp },
+        mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp, expired: mailStats.expired },
       },
     };
   });

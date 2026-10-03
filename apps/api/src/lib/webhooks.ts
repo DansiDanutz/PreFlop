@@ -24,9 +24,13 @@ export async function enqueueWebhooks(c: Tx, e: DomainEvent): Promise<number> {
   const broadcast = e.type === 'round.voided';
   const partnerId = (e.data as { partnerId?: string | null }).partnerId ?? null;
   if (!broadcast && !partnerId) return 0; // a direct player's bet: no partner to tell
+  // FOR SHARE on each hook until this transaction commits: disabling a hook (an UPDATE of that row)
+  // waits for us, then cancels the delivery we queued; or it committed first, and the re-checked
+  // `w.active` drops the hook. A delivery is never queued behind a disable's back.
   const hooks = (await c.query<{ id: string }>(
     `select w.id from webhooks w join organizations o on o.id = w.org_id
-      where w.active and o.kind = 'partner' and $1 = any(w.events) and ($2::text is null or w.org_id = $2)`,
+      where w.active and o.kind = 'partner' and $1 = any(w.events) and ($2::text is null or w.org_id = $2)
+      for share of w`,
     [e.type, broadcast ? null : partnerId])).rows;
   if (!hooks.length) return 0;
   const eventId = `${e.type}:${e.roundId ?? ''}:${(e.data as { betId?: string }).betId ?? ''}`;

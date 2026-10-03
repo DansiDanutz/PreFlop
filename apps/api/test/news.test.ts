@@ -108,6 +108,17 @@ describe('news administration', () => {
     expect(list.find((p: any) => p.id === a.body.id)).toMatchObject({ status: 'draft', body: 'Hello **clubs**.' });
   });
 
+  it('numbers repeated long titles past -2 (the numbered slug shortens the base)', async () => {
+    const title = 'l'.repeat(80);
+    const slugs: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await h.api('POST', '/v1/admin/news', admin, { title });
+      expect(r.status).toBe(201);
+      slugs.push(r.body.slug);
+    }
+    expect(slugs).toEqual(['l'.repeat(80), `${'l'.repeat(78)}-2`, `${'l'.repeat(78)}-3`]);
+  });
+
   it('validates input', async () => {
     const bad = [
       { title: 'ab' },

@@ -2,6 +2,7 @@ import { Button, Card, cx } from '@preflop/ui';
 import { ArrowLeft, CircleAlert, Search, X } from 'lucide-react';
 import { type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useEffect, useId, useRef } from 'react';
 import { useNavigate } from 'react-router';
+import { createPortal } from 'react-dom';
 
 /** Small app-level building blocks shared by the player app and the website. */
 
@@ -151,32 +152,34 @@ export interface InertNode {
   removeAttribute(name: string): void;
 }
 
+const MODAL_MARK = 'data-pf-inert';
+
 /**
- * Makes everything outside `el` inert (no focus, no clicks, hidden from assistive technology):
- * every sibling of `el` and of each of its ancestors up to <body>. Returns the undo, which only
- * clears what this call set, so stacked sheets restore in order.
+ * Open sheets in opening order. Every sheet is portalled straight into <body>, so the page and the
+ * sheets are siblings there and modality is one rule over <body>'s children: everything except the
+ * top sheet is inert, earlier sheets included. A sheet that opens while another is open (a bet
+ * settling behind the reality check) is never itself inside an inert subtree, and closing either
+ * one, in any order, leaves the right one active.
  */
-export function inertOutside(el: InertNode): () => void {
-  const changed: InertNode[] = [];
-  let node: InertNode = el;
-  while (node.parentElement) {
-    const parent: InertNode = node.parentElement;
-    for (const sib of Array.from(parent.children)) {
-      if (sib === node || sib.hasAttribute('inert') || sib.tagName === 'SCRIPT' || sib.tagName === 'STYLE') continue;
-      sib.setAttribute('inert', '');
-      changed.push(sib);
-    }
-    if (parent.tagName === 'BODY' || parent.tagName === 'HTML') break;
-    node = parent;
+export function applyModalStack(body: InertNode, stack: readonly InertNode[]): void {
+  const top = stack[stack.length - 1] ?? null;
+  for (const el of Array.from(body.children)) {
+    if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+    const want = top !== null && el !== top;
+    // Only touch what this rule set (MODAL_MARK): an element inert for another reason stays so.
+    if (want && !el.hasAttribute('inert')) { el.setAttribute('inert', ''); el.setAttribute(MODAL_MARK, ''); }
+    else if (!want && el.hasAttribute(MODAL_MARK)) { el.removeAttribute('inert'); el.removeAttribute(MODAL_MARK); }
   }
-  return () => { for (const e of changed) e.removeAttribute('inert'); };
 }
+
+const openSheets: HTMLElement[] = [];
 
 /**
  * Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. Focus
  * moves into it on open, Tab and Shift+Tab cycle inside it, and focus returns to the opener on close.
- * It is aria-modal, and the rest of the page is inert while it is open (inertOutside), so neither the
- * keyboard, the pointer nor a screen reader's virtual cursor can reach the page behind it.
+ * It is aria-modal and portalled into <body>; while it is the top sheet, the page and any earlier
+ * sheet are inert (applyModalStack), so neither the keyboard, the pointer nor a screen reader's
+ * virtual cursor can reach what is behind it.
  */
 export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -188,14 +191,14 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
-    const restoreInert = backdrop.current ? inertOutside(backdrop.current) : () => {};
+    const me = backdrop.current;
+    if (me) { openSheets.push(me); applyModalStack(document.body, openSheets); }
     // Focus the dialog itself once on open; Tab then moves into its controls.
     ref.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if ((e.key !== 'Escape' && e.key !== 'Tab') || !ref.current) return;
-      // With sheets stacked, only the top one (last in the document) handles Escape and traps focus.
-      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
-      if (dialogs[dialogs.length - 1] !== ref.current) return;
+      // With sheets stacked, only the top one (the last opened) handles Escape and traps focus.
+      if (openSheets[openSheets.length - 1] !== me) return;
       if (e.key === 'Escape') { closeRef.current(); return; }
       const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
       const active = document.activeElement as HTMLElement | null;
@@ -207,12 +210,13 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
-      restoreInert();
+      const at = me ? openSheets.indexOf(me) : -1;
+      if (at !== -1) { openSheets.splice(at, 1); applyModalStack(document.body, openSheets); }
       prev?.focus?.();
     };
   }, [open]);
   if (!open) return null;
-  return (
+  const sheet = (
     <div ref={backdrop} className="pf-fade-in fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={labelledBy ? undefined : title} aria-labelledby={labelledBy}
         className={cx('pf-sheet-in max-h-[92dvh] w-full overflow-y-auto outline-none rounded-t-[16px] border border-line-strong/70 bg-surface p-5 pb-[max(20px,env(safe-area-inset-bottom))] sm:rounded-[14px] sm:p-7', wide ? 'max-w-[640px]' : 'max-w-[460px]')}>
@@ -220,4 +224,6 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
       </div>
     </div>
   );
+  // On the server (and in tests without a DOM) there is no <body> to portal into.
+  return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
 }

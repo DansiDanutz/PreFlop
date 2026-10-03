@@ -2,10 +2,10 @@ import { type MyBet, createClient } from '@preflop/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StakeConfirmSheet } from '../src/components/table/StakeConfirmSheet.tsx';
-import { type InertNode, Sheet, inertOutside } from '../src/components/ui.tsx';
+import { type InertNode, Sheet, applyModalStack } from '../src/components/ui.tsx';
 import { ACTIVITY_PAGE, ALL_WALLETS, activityQuery, nextCursor, walletFilters } from '../src/lib/activity.ts';
 import {
-  type BetIntent, IN_FLIGHT_GRACE_MS, type IntentInputs, intentBody, intentStore, isDefinitiveRefusal, newIntent, priceOfferFor,
+  type BetIntent, type IntentInputs, intentBody, intentStore, isDefinitiveRefusal, newIntent, priceOfferFor,
   reconcileIntent, submitIntent, withAcceptedPrice,
 } from '../src/lib/betIntent.ts';
 import { betQuote, quoteLines } from '../src/lib/quote.ts';
@@ -22,6 +22,7 @@ interface FakeBet { bet_id: string; key: string; body: Record<string, unknown> }
  */
 function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number } = {}) {
   const bets: FakeBet[] = [];
+  const round = { state: 'OPEN' };
   let drops = o.drop ?? 0;
   let fails = o.fail5xxAfterCommit ?? 0;
   const posts: { key: string; body: Record<string, unknown> }[] = [];
@@ -45,6 +46,7 @@ function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number
       return new Response(JSON.stringify(view(bet)), { status: 201 });
     }
     if (init?.method === 'GET' || !init?.method) {
+      if (u.pathname.startsWith('/v1/rounds/')) return new Response(JSON.stringify({ id: u.pathname.split('/').pop(), state: round.state }), { status: 200 });
       if (u.pathname === '/v1/me/bets') {
         const round = u.searchParams.get('round_id');
         return new Response(JSON.stringify({ bets: bets.filter((b) => !round || b.body.round_id === round).map(myBet), next_before: null }), { status: 200 });
@@ -53,7 +55,7 @@ function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number
     return new Response('{}', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { bets, posts, fetchMock, api: createClient({ baseUrl: 'https://api.test' }) };
+  return { bets, posts, round, fetchMock, api: createClient({ baseUrl: 'https://api.test' }) };
 }
 const view = (b: FakeBet) => ({
   bet_id: b.bet_id, round_id: b.body.round_id, selection_id: b.body.selection_id, stake_minor: b.body.stake_minor, odds_centi: b.body.odds_centi,
@@ -150,21 +152,31 @@ describe('F07: a pending intent survives a reload and is reconciled before anoth
     expect(f.bets).toHaveLength(1);
   });
 
-  it('reload with a pending intent that never reached the API: unknown while it may be in flight, then not placed', async () => {
+  it('a missing bet stays unknown however long ago it was sent, until the round stops taking bets', async () => {
     const f = fakeApi();
-    const t0 = 1_000_000;
-    const intent: BetIntent = { ...newIntent(inputs, t0), sentAt: t0 };
+    const intent: BetIntent = { ...newIntent(inputs, 1_000), sentAt: 1_000 };
     intentStore.save(intent);
     const pending = intentStore.load()!;
-    expect((await reconcileIntent(f.api, pending, t0 + 1_000)).kind).toBe('unknown');
-    expect((await reconcileIntent(f.api, pending, t0 + IN_FLIGHT_GRACE_MS)).kind).toBe('not_placed');
+    // Minutes later and still missing: the original request may be waiting on a lock, so no verdict.
+    expect((await reconcileIntent(f.api, pending)).kind).toBe('unknown');
+    // That request commits late, while the round is still open: found, not reported as failed.
+    await f.api.placeBet(intentBody(intent), intent.key);
+    expect((await reconcileIntent(f.api, pending)).kind).toBe('placed');
+    expect(f.bets).toHaveLength(1);
+  });
+
+  it('missing after the round has stopped taking bets: definitively not placed', async () => {
+    const f = fakeApi();
+    const pending: BetIntent = { ...newIntent(inputs), sentAt: Date.now() };
+    f.round.state = 'LOCKED';
+    expect((await reconcileIntent(f.api, pending)).kind).toBe('not_placed');
     expect(f.posts).toHaveLength(0);
   });
 
   it('the API unreachable during reconciliation keeps the intent pending', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     const api = createClient({ baseUrl: 'https://api.test' });
-    expect((await reconcileIntent(api, { ...newIntent(inputs), sentAt: 0 }, 10 ** 12)).kind).toBe('unknown');
+    expect((await reconcileIntent(api, { ...newIntent(inputs), sentAt: 0 })).kind).toBe('unknown');
   });
 
   it('stores in sessionStorage, ignores junk, and never throws when storage is blocked', () => {
@@ -336,51 +348,62 @@ describe('F18: dialogs are modal for every input method', () => {
     setAttribute(n: string, v: string) { this.attrs.set(n, v); }
     removeAttribute(n: string) { this.attrs.delete(n); }
   }
+  // Sheets are portalled into <body>: the app root and every open sheet are siblings there.
   const page = () => {
-    const html = new Node('HTML');
     const body = new Node('BODY');
     const root = new Node('DIV', 'root');
-    const header = new Node('HEADER');
-    const main = new Node('MAIN');
-    const slip = new Node('SECTION', 'slip');
-    const confirmSheet = new Node('DIV', 'sheet');
     const toast = new Node('DIV', 'toast');
     const script = new Node('SCRIPT');
-    html.add(body.add(root.add(header, main.add(slip, confirmSheet)), toast, script));
-    return { body, root, header, main, slip, confirmSheet, toast, script };
+    const reality = new Node('DIV', 'reality-check');
+    const roundDone = new Node('DIV', 'round-complete');
+    body.add(root, toast, script);
+    return { body, root, toast, script, reality, roundDone };
   };
   const inert = (n: Node) => n.hasAttribute('inert');
 
   it('makes everything outside the open sheet inert, and restores it on close', () => {
     const p = page();
-    const undo = inertOutside(p.confirmSheet);
-    expect([p.header, p.slip, p.toast].every(inert)).toBe(true);
-    expect([p.confirmSheet, p.main, p.root, p.script].some(inert)).toBe(false);
-    undo();
-    expect([p.header, p.slip, p.toast].some(inert)).toBe(false);
+    p.body.add(p.reality);
+    applyModalStack(p.body, [p.reality]);
+    expect([p.root, p.toast].every(inert)).toBe(true);
+    expect([p.reality, p.script].some(inert)).toBe(false);
+    applyModalStack(p.body, []);
+    expect([p.root, p.toast].some(inert)).toBe(false);
   });
 
-  it('stacked sheets: closing the top one leaves the first one modal', () => {
+  it('a sheet opening over another (a bet settles behind the reality check) is the active one, in any closing order', () => {
     const p = page();
-    const second = new Node('DIV', 'second');
-    p.main.add(second);
-    const undoFirst = inertOutside(p.confirmSheet);
-    expect(inert(second)).toBe(true); // not open yet in this model; the first sheet made it inert
-    second.removeAttribute('inert');
-    const undoSecond = inertOutside(second);
-    expect(inert(p.confirmSheet)).toBe(true);
-    undoSecond();
-    expect(inert(p.confirmSheet)).toBe(false);
-    expect(inert(p.header)).toBe(true); // still behind the first sheet
-    undoFirst();
-    expect(inert(p.header)).toBe(false);
+    p.body.add(p.reality);
+    applyModalStack(p.body, [p.reality]);
+    p.body.add(p.roundDone);
+    applyModalStack(p.body, [p.reality, p.roundDone]);
+    expect(inert(p.roundDone)).toBe(false); // the newer sheet is never inside an inert subtree
+    expect([p.root, p.reality].every(inert)).toBe(true);
+    // the earlier sheet closes first: the newer one stays modal over the page
+    applyModalStack(p.body, [p.roundDone]);
+    expect(inert(p.root)).toBe(true);
+    expect(inert(p.roundDone)).toBe(false);
+    applyModalStack(p.body, []);
+    expect(inert(p.root)).toBe(false);
+  });
+
+  it('closing the top sheet makes the one below it active again', () => {
+    const p = page();
+    p.body.add(p.reality, p.roundDone);
+    applyModalStack(p.body, [p.reality, p.roundDone]);
+    applyModalStack(p.body, [p.reality]);
+    expect(inert(p.reality)).toBe(false);
+    expect(inert(p.root)).toBe(true);
   });
 
   it('keeps an element that was already inert inert after close', () => {
     const p = page();
-    p.header.setAttribute('inert', '');
-    inertOutside(p.confirmSheet)();
-    expect(inert(p.header)).toBe(true);
+    p.toast.setAttribute('inert', '');
+    p.body.add(p.reality);
+    applyModalStack(p.body, [p.reality]);
+    applyModalStack(p.body, []);
+    expect(inert(p.toast)).toBe(true);
+    expect(inert(p.root)).toBe(false);
   });
 
   it('confirmation, self-exclusion and reality-check dialogs render as labelled modal dialogs', () => {

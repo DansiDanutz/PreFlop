@@ -127,6 +127,9 @@ describe('play limits form', () => {
     expect(limitsPayload(f)).toEqual({ loss_day_minor: 5000, deposit_day_minor: 1250, session_minutes: 30 });
     // Emptying a field removes the limit: null, never "keep the old value".
     expect(limitsPayload({ ...f, loss: '', session: '' })).toEqual({ loss_day_minor: null, deposit_day_minor: 1250, session_minutes: null });
+    // Only edited fields are sent: an untouched deposit field never cancels its queued raise.
+    expect(limitsPayload({ ...f, session: '45' }, new Set(['session'] as const))).toEqual({ session_minutes: 45 });
+    expect(limitsPayload({ ...f, loss: '' }, new Set(['loss'] as const))).toEqual({ loss_day_minor: null });
     expect(limitsForm(undefined)).toEqual({ loss: '', deposit: '', session: '' });
   });
 
@@ -232,6 +235,8 @@ describe('production builds need the API origin', () => {
     expect(missingBuildEnv('production', {})).toEqual(['VITE_API_URL']);
     expect(missingBuildEnv('production', { VITE_API_URL: '  ' })).toEqual(['VITE_API_URL']);
     expect(missingBuildEnv('production', { VITE_API_URL: 'https://api.preflop.example' })).toEqual([]);
+    expect(missingBuildEnv('staging', {})).toEqual(['VITE_API_URL']); // any deployable mode name
+    expect(missingBuildEnv('preview', { VITE_API_URL: 'https://api.preflop.example' })).toEqual([]);
     expect(missingBuildEnv('development', {})).toEqual([]);
   });
 

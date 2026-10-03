@@ -25,7 +25,7 @@ export interface BetIntent {
   /** True once the player accepted a changed price: oddsCenti is exactly the new price they were shown. */
   acceptedPrice: boolean;
   createdAt: number;
-  /** When a request for this intent was last sent (reload reconciliation waits a little after it). */
+  /** When a request for this intent was last sent. */
   sentAt: number;
 }
 
@@ -95,7 +95,7 @@ export type Outcome =
   /** Reconciled: the API has no bet with this key, and nothing is in flight any more. */
   | { kind: 'not_placed' };
 
-type Api = Pick<PreFlopClient, 'placeBet' | 'myBets'>;
+type Api = Pick<PreFlopClient, 'placeBet' | 'myBets' | 'round'>;
 
 /** Finds the bet placed with this intent's key, if any (throws when the API cannot be reached). */
 export async function findPlaced(api: Api, i: BetIntent): Promise<BetView | null> {
@@ -130,18 +130,20 @@ export async function submitIntent(api: Api, i: BetIntent, o: { attempts?: numbe
   return { kind: 'unknown', error: last };
 }
 
-/** How long after the last send a missing bet may still be in flight on the server. */
-export const IN_FLIGHT_GRACE_MS = 15_000;
-
 /**
  * A pending intent found after a reload or a failed submit: looks the key up without sending the
- * bet again. Found → placed. Missing and nothing sent recently → not_placed. Otherwise unknown.
+ * bet again. Found → placed. Missing → not_placed ONLY once the round has stopped taking bets:
+ * the API commits a bet under the round row lock and only while the round is OPEN, so after the
+ * round has left OPEN no request still in flight (say, one waiting on a lock) can commit any more.
+ * Elapsed time proves nothing. The round is read BEFORE the bets, so a bet that committed just
+ * before the round closed is already visible to the lookup. Anything else stays unknown.
  */
-export async function reconcileIntent(api: Api, i: BetIntent, now = Date.now()): Promise<Outcome> {
+export async function reconcileIntent(api: Api, i: BetIntent): Promise<Outcome> {
   try {
+    const round = await api.round(i.roundId);
     const bet = await findPlaced(api, i);
     if (bet) return { kind: 'placed', bet };
-    return now - i.sentAt >= IN_FLIGHT_GRACE_MS ? { kind: 'not_placed' } : { kind: 'unknown', error: null };
+    return round.state !== 'OPEN' ? { kind: 'not_placed' } : { kind: 'unknown', error: null };
   } catch (e) {
     return { kind: 'unknown', error: e };
   }

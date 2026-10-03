@@ -39,8 +39,23 @@ export function limitsErrors(f: LimitsForm): LimitsErrors {
   return e;
 }
 
-/** PUT /v1/me/limits body: every field explicit, null where the player emptied it. */
-export function limitsPayload(f: LimitsForm): Limits {
+/**
+ * PUT /v1/me/limits body: null where the player emptied a field. With `edited`, ONLY the fields the
+ * player edited are sent: the API treats every field present as an explicit edit that replaces that
+ * field's queued change, so resending an untouched field would silently cancel a queued raise.
+ */
+export function limitsPayload(f: LimitsForm, edited?: ReadonlySet<keyof LimitsForm>): Limits {
   const s = f.session.trim();
-  return { loss_day_minor: eurosToCents(f.loss), deposit_day_minor: eurosToCents(f.deposit), session_minutes: s === '' ? null : Number(s) };
+  const all: Record<keyof LimitsForm, [keyof Limits, number | null]> = {
+    loss: ['loss_day_minor', eurosToCents(f.loss)],
+    deposit: ['deposit_day_minor', eurosToCents(f.deposit)],
+    session: ['session_minutes', s === '' ? null : Number(s)],
+  };
+  const out: Limits = {};
+  for (const k of Object.keys(all) as (keyof LimitsForm)[]) {
+    if (edited && !edited.has(k)) continue;
+    const [field, v] = all[k];
+    out[field] = v;
+  }
+  return out;
 }

@@ -55,15 +55,17 @@ export function slugify(title: string): string {
   return cut || 'post';
 }
 
-/** The first free slug: base, base-2, base-3… (checked inside the writing transaction). */
+/**
+ * The first free slug: base, base-2, base-3… (checked inside the writing transaction). Each
+ * candidate is checked as generated: near 80 characters a numbered one shortens the base, so a
+ * lookup by the full base would miss it.
+ */
 async function freeSlug(c: Tx, base: string, exceptId: string | null): Promise<string> {
-  const taken = new Set((await c.query<{ slug: string }>(
-    `select slug from news_posts where (slug = $1 or slug like $1 || '-%') and id is distinct from $2`, [base, exceptId])).rows.map((r) => r.slug));
-  if (!taken.has(base)) return base;
+  if (!(await slugTaken(c, base, exceptId))) return base;
   for (let n = 2; ; n++) {
     const suffix = `-${n}`;
     const s = base.slice(0, 80 - suffix.length).replace(/-+$/, '') + suffix;
-    if (!taken.has(s)) return s;
+    if (!(await slugTaken(c, s, exceptId))) return s;
   }
 }
 

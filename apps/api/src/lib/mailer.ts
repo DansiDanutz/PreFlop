@@ -16,6 +16,9 @@ import type { Db, Tx } from './db.ts';
 
 export interface Mail { to: string; subject: string; text: string; template: 'verify_email' | 'reset_password' }
 
+/** Queue options: when the message's link stops working (it is then never sent). */
+export interface QueueOptions { expiresInMs?: number }
+
 export interface MailTransport {
   readonly name: string;
   send(m: Mail & { from: string }): Promise<void>;
@@ -58,9 +61,26 @@ export function mailWarning(config: Config): string | null {
   return 'SMTP_URL is not set: verification and password-reset emails stay queued in email_outbox until it is';
 }
 
-/** Queues one message in the caller's transaction. */
-export async function queueMail(c: Tx, m: Mail): Promise<void> {
-  await c.query('insert into email_outbox (to_email, template, subject, body) values ($1, $2, $3, $4)', [m.to, m.template, m.subject, m.text]);
+/**
+ * Queues one message in the caller's transaction. A message of the same template to the same
+ * address that is still queued is cancelled: its link was just replaced (issueEmailToken), so only
+ * the newest message is ever sent.
+ */
+export async function queueMail(c: Tx, m: Mail, o: QueueOptions = {}): Promise<void> {
+  await c.query(
+    `update email_outbox set status = 'cancelled', body = '', last_error = 'replaced by a newer message'
+      where to_email = $1 and template = $2 and status = 'pending'`, [m.to, m.template]);
+  await c.query(
+    `insert into email_outbox (to_email, template, subject, body, expires_at)
+     values ($1, $2, $3, $4, case when $5::bigint is null then null else now() + ($5::bigint || ' milliseconds')::interval end)`,
+    [m.to, m.template, m.subject, m.text, o.expiresInMs ?? null]);
+}
+
+/** Cancels queued messages whose link has expired; they are never sent late. */
+export async function expireMail(db: Db | Tx): Promise<number> {
+  return (await db.query(
+    `update email_outbox set status = 'cancelled', body = '', last_error = 'link expired before delivery'
+      where status = 'pending' and expires_at is not null and expires_at <= now()`)).rowCount ?? 0;
 }
 
 /** Attempts per message before it is marked failed. */
@@ -69,7 +89,7 @@ export const MAIL_MAX_ATTEMPTS = 8;
 export const mailBackoffMs = (failures: number): number => Math.min(6 * 3_600_000, 60_000 * 2 ** Math.max(0, failures - 1));
 
 /** Counters of this process, for GET /v1/admin/metrics. */
-export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0 };
+export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0, expired: 0 };
 
 /**
  * Sends up to `limit` due messages. Each row is claimed with SKIP LOCKED, so several workers
@@ -77,10 +97,14 @@ export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0 };
  * which may hold a live link. A failure counts one attempt and schedules the next one with
  * exponential backoff (next_attempt_at); a message is tried at most once per call, so one worker
  * pass never burns through its retries. After MAIL_MAX_ATTEMPTS it is marked failed (logged and
- * counted in the metrics).
+ * counted in the metrics). A message whose link has expired is cancelled, never sent.
+ *
+ * It runs on its own loop (startWorker), never inside the game tick: a slow provider or a backlog
+ * cannot delay settlement, refunds or the heartbeat.
  */
 export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20): Promise<number> {
   if (!transport) return 0;
+  mailStats.expired += await expireMail(db);
   let sent = 0;
   const tried: number[] = [];
   for (let i = 0; i < limit; i++) {
@@ -89,7 +113,8 @@ export async function deliverMail(db: Db, transport: MailTransport | null, from:
       await c.query('begin');
       const m = (await c.query<{ id: number; to_email: string; template: Mail['template']; subject: string; body: string; attempts: number }>(
         `select id, to_email, template, subject, body, attempts from email_outbox
-          where status = 'pending' and next_attempt_at <= now() and not (id = any($1::bigint[]))
+          where status = 'pending' and next_attempt_at <= now() and (expires_at is null or expires_at > now())
+            and not (id = any($1::bigint[]))
           order by next_attempt_at, id limit 1 for update skip locked`, [tried])).rows[0];
       if (!m) {
         await c.query('commit');
@@ -108,6 +133,7 @@ export async function deliverMail(db: Db, transport: MailTransport | null, from:
         await c.query(
           `update email_outbox set attempts = $2, last_error = $3,
                   status = case when $4 then 'failed' else 'pending' end,
+                  body = case when $4 then '' else body end,
                   failed_at = case when $4 then now() end,
                   next_attempt_at = now() + ($5 || ' milliseconds')::interval
             where id = $1`, [m.id, attempts, error, gaveUp, String(mailBackoffMs(attempts))]);

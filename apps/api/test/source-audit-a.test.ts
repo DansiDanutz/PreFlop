@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { audit, verifyAuditChain } from '../src/lib/audit.ts';
 import { tx } from '../src/lib/db.ts';
-import { type MailTransport, deliverMail, mailStats, MAIL_MAX_ATTEMPTS } from '../src/lib/mailer.ts';
+import { type MailTransport, deliverMail, mailStats, MAIL_MAX_ATTEMPTS, queueMail } from '../src/lib/mailer.ts';
 import { enqueueWebhooks } from '../src/lib/webhooks.ts';
 import { deliverDue } from '../src/routes/partner.ts';
 import { seedAdmin, seedSimTable } from '../src/seed.ts';
@@ -375,6 +375,31 @@ describe('F14: a disabled webhook delivers nothing more', () => {
   });
 });
 
+describe('F14: a disable racing an event that is being queued', () => {
+  it('a settlement that read the hook before the disable still has its delivery cancelled', async () => {
+    const owner = await user('whr');
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: `WHR ${n}` }, owner);
+    const wh = await h.api('POST', `/v1/org/${org}/webhooks`, owner.token, { url: 'http://127.0.0.1:9/hook', events: ['round.voided'] });
+    const hookId = wh.body.id as string;
+    const c = await h.db.connect();
+    try {
+      await c.query('begin');
+      // the "settlement" queues its webhook and has not committed yet
+      expect(await enqueueWebhooks(c as never, { type: 'round.voided', roundId: `r-race-${n}`, tableId: 't', data: {} })).toBeGreaterThanOrEqual(1);
+      let disabled = false;
+      const del = h.api('DELETE', `/v1/org/${org}/webhooks/${hookId}`, owner.token).then((r) => { disabled = true; return r; });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(disabled).toBe(false); // the disable waits for the queuing transaction
+      await c.query('commit');
+      expect((await del).body.cancelled).toBe(1);
+    } finally {
+      c.release();
+    }
+    const st = (await h.db.query('select status from webhook_deliveries where webhook_id = $1', [hookId])).rows.map((r) => r.status);
+    expect(st).toEqual(['cancelled']);
+  });
+});
+
 describe('Email: per-message backoff and a bounded number of attempts', () => {
   it('a failing message is tried once per pass, backs off, and fails after the maximum attempts', async () => {
     await h.db.query(`update email_outbox set status = 'sent', sent_at = now(), body = '' where status = 'pending'`);
@@ -406,11 +431,27 @@ describe('Email: per-message backoff and a bounded number of attempts', () => {
     expect(tries).toBe(MAIL_MAX_ATTEMPTS);
     for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThan(gaps[i - 1]!);
     expect(b).toMatchObject({ status: 'failed', attempts: MAIL_MAX_ATTEMPTS });
+    expect((await h.db.query('select body from email_outbox where to_email = $1', ['bad@sa.dev'])).rows[0].body).toBe(''); // its link is not kept
     await h.db.query(`update email_outbox set next_attempt_at = now() - interval '1 second' where to_email = 'bad@sa.dev'`);
     await deliverMail(h.db, flaky, 'x', 50);
     expect(tries).toBe(MAIL_MAX_ATTEMPTS); // a failed message is never picked again
     const m = (await h.api('GET', '/v1/admin/metrics', admin)).body;
     expect(m.email_outbox.failed).toBeGreaterThanOrEqual(1);
+  });
+
+  it('an expired link is never sent late, a replaced one is never sent at all, and dead messages lose their link', async () => {
+    await h.db.query(`update email_outbox set status = 'sent', sent_at = now(), body = '' where status = 'pending'`);
+    const to = `late-${Date.now()}@sa.dev`;
+    await tx(h.db, (c) => queueMail(c, { to, template: 'reset_password', subject: 's', text: 'link-1' }, { expiresInMs: 3_600_000 }));
+    await tx(h.db, (c) => queueMail(c, { to, template: 'reset_password', subject: 's', text: 'link-2' }, { expiresInMs: 3_600_000 }));
+    const rows = async () => (await h.db.query('select body, status, last_error from email_outbox where to_email = $1 order by id', [to])).rows;
+    expect((await rows()).map((r) => [r.body, r.status])).toEqual([['', 'cancelled'], ['link-2', 'pending']]);
+    // the provider is down for longer than the link lives
+    await h.db.query(`update email_outbox set attempts = 6, next_attempt_at = now() - interval '1 second', expires_at = now() - interval '1 second' where to_email = $1 and status = 'pending'`, [to]);
+    const got: string[] = [];
+    await deliverMail(h.db, { name: 'fake', send: async (m) => { got.push(m.text); } }, 'x', 50);
+    expect(got).toEqual([]);
+    expect((await rows())[1]).toMatchObject({ body: '', status: 'cancelled', last_error: 'link expired before delivery' });
   });
 
 });

@@ -94,7 +94,7 @@ export function PrivacyPage() {
       <h2>What we collect</h2>
       <ul>
         <li><strong>Account details (required to register):</strong> your email address, a display name, your date of birth, your country of residence and your password, which we store only as a salted hash.</li>
-        <li><strong>Email verification and password resets:</strong> the address each link was sent to, when it was sent and whether it was used. We keep a hash of each link, never the link itself.</li>
+        <li><strong>Email verification and password resets:</strong> the address each link was sent to, when it was sent and whether it was used. To check a link we keep only a hash of it. The full link is also in the email waiting to be sent: it is kept only until that email is sent, expires, is replaced by a newer one or fails for good, and is then deleted (we keep the date, subject and outcome of the email).</li>
         <li><strong>Sign-in and sessions:</strong> when each session starts and expires and how long you have played in it (for session limits and reality checks), and failed sign-in attempts with the email address and IP address they came from (to stop password guessing).</li>
         <li><strong>Two-factor authentication:</strong> if you turn it on, the secret your authenticator app uses. It is required for PreFlop team accounts.</li>
         <li><strong>Play activity:</strong> your predictions, balances, ledger entries, rooms and tournaments you joined, favorites, and leaderboard results.</li>
