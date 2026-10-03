@@ -1,9 +1,10 @@
 import { ChipIcon, Wordmark, cx, formatMoneyShort } from '@preflop/ui';
 import { Building2, CircleHelp, FileText, Gift, House, Info, Swords, Trophy, User } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useSearchParams } from 'react-router';
 import { useBalance, useMe, useRealMoney, useRoom } from '../lib/queries.ts';
 import { balanceLabel } from '../lib/rooms.ts';
+import { takeFirstRunHelp } from '../lib/storage.ts';
 import { RealityCheck, SessionClock, VerifyEmailBanner } from './PlaySession.tsx';
 import { Sheet, Skeleton } from './ui.tsx';
 
@@ -202,6 +203,8 @@ export function AppFooter() {
 
 export function AppLayout() {
   const [help, setHelp] = useState(false);
+  // A new player sees How to play once, on their first visit to the app.
+  useEffect(() => { if (takeFirstRunHelp()) setHelp(true); }, []);
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[222px_minmax(0,1fr)]">
       <Rail onHelp={() => setHelp(true)} />
@@ -209,7 +212,7 @@ export function AppLayout() {
         <TopBar />
         <VerifyEmailBanner />
         <main id="main" className="mx-auto max-w-[1240px] px-5 pb-28 pt-8 lg:px-10 lg:pb-10 lg:pt-10">
-          <Outlet context={{ openHelp: () => setHelp(true) }} />
+          <Suspense fallback={<Skeleton className="h-[60vh]" />}><Outlet context={{ openHelp: () => setHelp(true) }} /></Suspense>
           <AppFooter />
         </main>
       </div>

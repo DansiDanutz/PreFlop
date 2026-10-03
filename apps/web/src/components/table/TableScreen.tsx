@@ -11,7 +11,7 @@ import { openHandNo, phaseOf, streamGate, tableStatus } from '../../lib/live.ts'
 import { marketAllowed } from '../../lib/embed.ts';
 import { type BetProblem, betProblem } from '../../lib/problems.ts';
 import { useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
-import { amountLabel, amountRange, balanceLabel, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
+import { amountLabel, amountRange, balanceLabel, isLargeStake, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
 import { KEYS, readJson, writeJson, writeString } from '../../lib/storage.ts';
 import { useTableLive } from '../../lib/useTableLive.ts';
 import { HowToPlay, PracticePill } from '../AppShell.tsx';
@@ -21,6 +21,7 @@ import { ErrorState, Notice, Sheet, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from './Catalogue.tsx';
 import { LiveBanner } from './LiveBanner.tsx';
 import { RoundCompleteSheet } from './RoundCompleteSheet.tsx';
+import { StakeConfirmSheet } from './StakeConfirmSheet.tsx';
 import { EmptyFavoriteSlot, FavoriteTile } from './Tiles.tsx';
 
 const PRESET_COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5' };
@@ -56,8 +57,10 @@ const PROMPT: Record<RoundPhase, { eyebrow: string; title: string }> = {
  * Used by /app/table/:id (and …/bets, which opens the catalogue) and by /embed/table/:id, where
  * the partner's `embedOptions` limit the markets shown and set the stake pills.
  */
-export function TableScreen({ tableId, embed = false, catalogue = false, embedOptions }: {
+export function TableScreen({ tableId, embed = false, catalogue = false, embedOptions, guest = false }: {
   tableId: string; embed?: boolean; catalogue?: boolean; embedOptions?: { markets: string[] | null; stakes: number[] | null } | undefined;
+  /** Signed-out demo (/demo): the live table is read-only and the bet panel becomes a "Play free" call to action. */
+  guest?: boolean;
 }) {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -83,8 +86,9 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const [confirmReset, setConfirmReset] = useState(false);
   const [help, setHelp] = useState(false);
   const [catalogueOpen, setCatalogueOpen] = useState(catalogue);
+  const [bigStake, setBigStake] = useState(false);
 
-  useEffect(() => { if (!embed) writeString(KEYS.lastTable, tableId); }, [tableId, embed]);
+  useEffect(() => { if (!embed && !guest) writeString(KEYS.lastTable, tableId); }, [tableId, embed, guest]);
   useEffect(() => writeJson(KEYS.stake, stake), [stake]);
   useEffect(() => setCatalogueOpen(catalogue), [catalogue]);
   // A bet chosen elsewhere arrives as ?sel=…
@@ -152,7 +156,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         ...(room ? { room_id: room.id } : {}),
       });
     },
-    onMutate: () => { setProblem(null); setPlacedMsg(null); },
+    onMutate: () => { setProblem(null); setPlacedMsg(null); setBigStake(false); },
     onSuccess: (bet) => {
       live.addPlaced({ betId: bet.bet_id, roundId: bet.round_id, selectionId: bet.selection_id, stakeMinor: bet.stake_minor, oddsCenti: bet.odds_centi, status: bet.status });
       const price = pool ? 'in the pool' : `at ${formatOdds(bet.odds_centi)}`;
@@ -188,9 +192,9 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
   return (
     <div className={cx('@container', embed && 'px-4 pb-8 pt-4')}>
-      <LiveBanner ws={live.ws} resyncing={live.resyncing} className="mb-4" />
+      {!guest && <LiveBanner ws={live.ws} resyncing={live.resyncing} className="mb-4" />}
       {/* heading */}
-      {!embed && t && (
+      {!embed && !guest && t && (
         <Link to={`/app/clubs/${t.club_id}`} className="inline-flex items-center gap-1.5 text-[14px] text-ink/85 hover:text-ink">
           <ChevronLeft className="h-4 w-4" aria-hidden /> {t.club_name}
         </Link>
@@ -263,6 +267,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         </div>
 
         {/* right: favorites, amount, confirm (second on phones, beside the table on wide screens) */}
+        {guest ? <GuestPanel tableId={tableId} /> : (
         <section aria-labelledby="favs" className="rounded-[12px] border border-line-strong/60 bg-surface p-5 @min-[640px]:p-6 @min-[880px]:col-start-2 @min-[880px]:row-span-2 @min-[880px]:row-start-1">
           <div className="flex items-center gap-2.5">
             <h2 id="favs" className="text-[20px] font-bold">Favorite bets</h2>
@@ -336,17 +341,18 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
             )}
             {placedMsg && !problem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
 
-            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => place.mutate({})}>
+            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => (isLargeStake(stake, balance) ? setBigStake(true) : place.mutate({}))}>
               {place.isPending ? 'Placing…' : gate.paused ? (live.ws === 'open' ? 'Bets paused · updating' : 'Bets paused · reconnecting') : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
             </Button>
             <p className="mt-4 text-center text-[12px] text-ink/80">{currency === 'PLAY' ? 'Free chips. No purchases, prizes or cash-out.' : noCashValueLine(currency)}</p>
           </div>
         </section>
+        )}
 
         <section aria-label="Recent flops" className="rounded-[12px] border border-line-strong/60 bg-surface px-6 py-6 @min-[640px]:px-8 @min-[880px]:col-start-1 @min-[880px]:row-start-2">
           <div className="flex items-center justify-between">
             <h2 className="text-[16px] font-bold">Recent flops at this table</h2>
-            {!embed && <Link to="/app/activity" className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline">Activity <ChevronRight className="h-4 w-4" aria-hidden /></Link>}
+            {!embed && !guest && <Link to="/app/activity" className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline">Activity <ChevronRight className="h-4 w-4" aria-hidden /></Link>}
           </div>
           {history.length === 0 ? (
             <p className="mt-4 text-[13px] text-ink/75">Completed rounds will appear here.</p>
@@ -392,8 +398,33 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         </div>
       </Sheet>
 
+      <StakeConfirmSheet open={bigStake && canConfirm} onClose={() => setBigStake(false)} onConfirm={() => place.mutate({})} busy={place.isPending}
+        selection={option ? nameOf(selectedId) : ''} stake={amountLabel(stake, currency)} allIn={balance !== null && stake >= balance} share={balance ? stake / balance : 0}
+        potential={pool ? 'A share of the pool' : returns !== null ? amountLabel(returns, currency) : '—'} />
+
       <HowToPlay open={help} onClose={() => setHelp(false)} />
     </div>
+  );
+}
+
+/** The demo's right-hand panel: what playing is, and the way in. */
+export function GuestPanel({ tableId }: { tableId: string }) {
+  const next = encodeURIComponent(`/app/table/${tableId}`);
+  return (
+    <section aria-labelledby="guest-h" className="rounded-[12px] border border-accent/40 bg-surface p-6 @min-[880px]:col-start-2 @min-[880px]:row-span-2 @min-[880px]:row-start-1">
+      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">Watching as a guest</p>
+      <h2 id="guest-h" className="mt-3 font-serif text-[28px] leading-[1.2] tracking-[-0.04em]">Call the next flop yourself.</h2>
+      <p className="mt-3 text-[14px] leading-relaxed text-ink/85">
+        This practice table is dealing now. Create a free account to predict each flop with 10,000 free chips: pick a bet, lock it in, watch the reveal.
+      </p>
+      <ul className="mt-4 space-y-2 text-[13px] text-ink/85">
+        <li>· Every bet priced exactly over all 22,100 possible flops</li>
+        <li>· Free chips only: no purchases, no cash value</li>
+        <li>· 18+ only</li>
+      </ul>
+      <Link to={`/register?next=${next}`} className="mt-6 flex h-[50px] w-full items-center justify-center rounded-[8px] bg-accent text-[15px] font-bold text-accent-ink hover:bg-accent-strong">Play free</Link>
+      <p className="mt-3 text-center text-[13px] text-ink/80">Have an account? <Link to={`/login?next=${next}`} className="text-accent underline">Sign in</Link></p>
+    </section>
   );
 }
 

@@ -42,6 +42,18 @@ export function balanceLabel(currency: string, orgName?: string | null): string 
   return orgName ? `${base} · ${orgName}` : base;
 }
 
+/** A stake above this share of the balance asks for confirmation first. */
+export const LARGE_STAKE_SHARE = 0.25;
+
+/**
+ * Large-stake guard: true when the stake is more than 25% of the balance (or all of it). Unknown
+ * or empty balances never ask: the server refuses what cannot be covered.
+ */
+export function isLargeStake(stake: number, balance: number | null | undefined): boolean {
+  if (balance === null || balance === undefined || balance <= 0 || stake <= 0) return false;
+  return stake >= balance || stake > balance * LARGE_STAKE_SHARE;
+}
+
 /** Microcopy under Confirm: never suggest cash value outside real-money modes. */
 export function noCashValueLine(currency: string): string {
   if (currency === 'PLAY') return 'Free chips. No cash value.';

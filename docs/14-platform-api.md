@@ -228,7 +228,7 @@ Database counters are global; `instance` describes only the API process that ans
 
 ## Run it
 ```bash
-pnpm install && pnpm -r build
+pnpm install && VITE_API_URL=http://localhost:4000 pnpm -r build   # web/console production builds require VITE_API_URL
 DATABASE_URL=postgres://postgres@localhost:5432/preflop pnpm --filter @preflop/api dev   # API + worker on :4000
 pnpm --filter @preflop/api sim     # 5 simulated tables
 ADMIN_PASSWORD=… pnpm --filter @preflop/api demo   # demo orgs; passwords from env or generated and printed

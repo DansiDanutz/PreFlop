@@ -1,6 +1,8 @@
 import { createClient } from '@preflop/client';
 import { KEYS, readString, writeString } from './storage.ts';
 
+// The localhost fallback only ever applies in development: production builds fail without
+// VITE_API_URL (deploy/require-env.mjs).
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4000';
 export const WS_URL = `${API_URL.replace(/^http/, 'ws')}/v1/stream`;
 

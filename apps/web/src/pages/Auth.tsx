@@ -4,7 +4,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { Field, Notice, Select } from '../components/ui.tsx';
-import { countryOptions, dobProblem } from '../lib/account.ts';
+import { countryOptions } from '../lib/account.ts';
+import { type RegisterField, loginErrors, registerErrors } from '../lib/authForms.ts';
 import { api, setToken } from '../lib/api.ts';
 import { safeNext, useToken } from '../lib/auth.tsx';
 import { qk } from '../lib/queries.ts';
@@ -12,6 +13,11 @@ import { errorText } from '../lib/problems.ts';
 
 /** Today as YYYY-MM-DD (the latest date a date input should offer). */
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** After a failed submit, move focus to the first field that needs attention (once the errors render). */
+function focusInvalid(form: HTMLFormElement) {
+  requestAnimationFrame(() => form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+}
 
 function AuthFrame({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer: ReactNode }) {
   return (
@@ -44,6 +50,7 @@ export function LoginPage() {
   // Accounts with two-factor authentication: the API asks for the code after the password.
   const [otp, setOtp] = useState('');
   const [needOtp, setNeedOtp] = useState(false);
+  const [touched, setTouched] = useState(false);
   const login = useMutation({
     mutationFn: () => api.login({ email: email.trim(), password, ...(needOtp && otp ? { otp: otp.trim() } : {}) }),
     onSuccess: ({ token: t }) => {
@@ -54,20 +61,26 @@ export function LoginPage() {
     onError: (e) => { if (e instanceof ApiError && e.type === 'mfa_required') setNeedOtp(true); },
   });
   if (token && !login.isPending) return <Navigate to={next} replace />;
-  const submit = (e: FormEvent) => { e.preventDefault(); login.mutate(); };
+  const errs = loginErrors({ email, password });
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setTouched(true);
+    if (Object.keys(errs).length) return focusInvalid(e.currentTarget);
+    login.mutate();
+  };
   const askingForCode = login.error instanceof ApiError && login.error.type === 'mfa_required';
   return (
     <AuthFrame title="Welcome back" subtitle="Sign in to predict the next flop."
       footer={<>New to PreFlop? <Link to={`/register${params.get('next') ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-semibold text-accent">Play free</Link></>}>
       <form onSubmit={submit} className="space-y-4" noValidate>
-        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-        <Field label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} error={touched ? errs.email ?? null : null} />
+        <Field label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} error={touched ? errs.password ?? null : null} />
         {needOtp && (
           <Field label="Authentication code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={otp}
             onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} hint="The 6-digit code from your authenticator app." />
         )}
         {login.isError && !askingForCode && <Notice tone="danger">{errorText(login.error)}</Notice>}
-        <Button type="submit" size="lg" className="w-full" disabled={login.isPending || !email || !password || (needOtp && otp.length !== 6)}>{login.isPending ? 'Signing in…' : 'Sign in'}</Button>
+        <Button type="submit" size="lg" className="w-full" disabled={login.isPending || (needOtp && otp.length !== 6)}>{login.isPending ? 'Signing in…' : 'Sign in'}</Button>
         <p className="text-center text-sm"><Link to="/forgot-password" className="text-muted underline hover:text-ink">Forgot your password?</Link></p>
       </form>
     </AuthFrame>
@@ -100,29 +113,36 @@ export function RegisterPage() {
   });
   if (token && !reg.isPending) return <Navigate to={next} replace />;
   const pwShort = password.length > 0 && password.length < 8;
-  const dobErr = dobProblem(dob);
-  const submit = (e: FormEvent) => { e.preventDefault(); setTouched(true); if (!pwShort && adult && !dobErr && country) reg.mutate(); };
+  const errs = registerErrors({ name, email, password, dob, country, adult });
+  const shown = (k: RegisterField) => (touched ? errs[k] ?? null : null);
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setTouched(true);
+    if (Object.keys(errs).length) return focusInvalid(e.currentTarget);
+    reg.mutate();
+  };
   return (
     <AuthFrame title="Play free" subtitle="Create an account and get 10,000 free chips to practice with."
       footer={<>Already have an account? <Link to={`/login${params.get('next') ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-semibold text-accent">Sign in</Link></>}>
       <form onSubmit={submit} className="space-y-4" noValidate>
         {ref && <p className="rounded-[8px] border border-accent/40 bg-accent-deep/40 px-3 py-2 text-[13px] text-ink/85">Invited with code <span className="font-mono text-accent">{ref}</span>.</p>}
-        <Field label="Display name" autoComplete="nickname" required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />
-        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Field label="Display name" autoComplete="nickname" required maxLength={60} value={name} onChange={(e) => setName(e.target.value)} error={shown('name')} />
+        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} error={shown('email')} />
         <Field label="Password" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
-          hint="At least 8 characters." error={pwShort ? 'Use at least 8 characters.' : null} />
+          hint="At least 8 characters." error={pwShort || touched ? errs.password ?? null : null} />
         <Field label="Date of birth" type="date" autoComplete="bday" required max={today()} value={dob} onChange={(e) => setDob(e.target.value)}
-          onBlur={() => setTouched(true)} error={(touched || dob) && dobErr ? dobErr : null} hint="You must be 18 or over to play." />
-        <Select label="Country of residence" required value={country} onChange={(e) => setCountry(e.target.value)}>
+          error={touched || dob ? errs.dob ?? null : null} hint="You must be 18 or over to play." />
+        <Select label="Country of residence" required value={country} onChange={(e) => setCountry(e.target.value)} error={shown('country')}>
           <option value="" disabled>Choose your country</option>
           {countries.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
         </Select>
         <label className="flex items-start gap-3 text-sm">
-          <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} className="mt-0.5 h-5 w-5 accent-[var(--color-accent)]" />
+          <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} aria-invalid={!!shown('adult')} aria-describedby={shown('adult') ? 'adult-err' : undefined} className="mt-0.5 h-5 w-5 accent-[var(--color-accent)]" />
           <span>I am 18 or older and accept the <Link to="/terms" className="text-accent underline">terms</Link> and <Link to="/privacy" className="text-accent underline">privacy notice</Link>.</span>
         </label>
+        {shown('adult') && <p id="adult-err" className="-mt-2 text-xs text-danger">{shown('adult')}</p>}
         {reg.isError && <Notice tone="danger">{errorText(reg.error)}</Notice>}
-        <Button type="submit" size="lg" className="w-full" disabled={reg.isPending || !name.trim() || !email || password.length < 8 || !adult || !!dobErr || !country}>
+        <Button type="submit" size="lg" className="w-full" disabled={reg.isPending}>
           {reg.isPending ? 'Creating account…' : 'Create account'}
         </Button>
       </form>

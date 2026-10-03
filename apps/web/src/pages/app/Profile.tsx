@@ -2,12 +2,13 @@ import type { Limits, Wallet } from '@preflop/client';
 import { Badge, Button, Card, ChipIcon, cx, currencyLabel, formatMoney, formatMoneyShort } from '@preflop/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Briefcase, Check, ChevronDown, Copy, KeyRound, Network, ChevronRight, HeartHandshake, LogOut, RotateCcw, ShieldCheck, Ticket, Wallet as WalletIcon } from 'lucide-react';
-import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { PageHeader, initials } from '../../components/AppShell.tsx';
 import { Field, Notice, Select, Sheet, Skeleton, TextArea } from '../../components/ui.tsx';
 import { api, setToken } from '../../lib/api.ts';
 import { countryOptions, dobProblem } from '../../lib/account.ts';
+import { type LimitsForm, limitsErrors, limitsForm, limitsPayload } from '../../lib/limits.ts';
 import { errorText, isNotImplemented } from '../../lib/problems.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { qk, useBook, useFavorites, useMe, useRealMoney, useResetPlay } from '../../lib/queries.ts';
@@ -291,18 +292,31 @@ function OrganizerForm({ email, name }: { email: string; name: string }) {
   );
 }
 
-const toMinor = (s: string) => (s.trim() === '' ? null : Math.max(0, Math.round(Number(s))));
+/** "Raised or removed limits apply from …" when the server holds a pending change. */
+function pendingText(l: (Limits & { pending?: Record<string, number | null> | null; pending_effective_at?: string | null }) | undefined): string | null {
+  if (!l?.pending || !l.pending_effective_at || !Object.keys(l.pending).length) return null;
+  const when = new Date(l.pending_effective_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const what = Object.entries(l.pending).map(([k, v]) => {
+    const name = k === 'loss_day_minor' ? 'loss limit' : k === 'deposit_day_minor' ? 'deposit limit' : 'session limit';
+    return v === null ? `${name} removed` : `${name} ${k === 'session_minutes' ? `${v} min` : formatMoney(v, 'EUR')}`;
+  }).join(', ');
+  return `Waiting 24 hours: ${what} from ${when}.`;
+}
 
 function ResponsiblePlay() {
   const qc = useQueryClient();
   const limits = useQuery({ queryKey: qk.limits, queryFn: () => api.limits() });
   const unavailable = limits.isError && isNotImplemented(limits.error);
-  const [loss, setLoss] = useState('');
-  const [deposit, setDeposit] = useState('');
-  const [session, setSession] = useState('');
+  // Prefilled with the saved limits: emptying a field removes that limit (sent as an explicit null).
+  const [form, setForm] = useState<LimitsForm>(() => limitsForm(undefined));
+  const [dirty, setDirty] = useState(false);
+  const [touched, setTouched] = useState(false);
+  useEffect(() => { if (limits.data && !dirty) setForm(limitsForm(limits.data)); }, [limits.data, dirty]);
+  const edit = (k: keyof LimitsForm, v: string) => { setDirty(true); setForm((f) => ({ ...f, [k]: v })); };
+  const errs = limitsErrors(form);
   const save = useMutation({
     mutationFn: (l: Limits) => api.setLimits(l),
-    onSuccess: (l) => qc.setQueryData(qk.limits, l),
+    onSuccess: (l) => { qc.setQueryData(qk.limits, l); setDirty(false); setTouched(false); },
   });
   const [days, setDays] = useState('7');
   const [confirm, setConfirm] = useState(false);
@@ -314,13 +328,18 @@ function ResponsiblePlay() {
     <div className="space-y-5">
       <p className="text-sm text-muted">Set limits that suit you. Lowering a limit takes effect at once; raising one waits 24 hours.</p>
       {unavailable && <Notice tone="info">Limits are coming soon. Until then, you can reset or stop at any time, and support can help.</Notice>}
-      <form className="space-y-3" onSubmit={(e) => {
+      <form className="space-y-3" noValidate onSubmit={(e) => {
         e.preventDefault();
-        save.mutate({ loss_day_minor: toMinor(loss) ?? cur?.loss_day_minor ?? null, deposit_day_minor: toMinor(deposit) ?? cur?.deposit_day_minor ?? null, session_minutes: toMinor(session) ?? cur?.session_minutes ?? null });
+        setTouched(true);
+        if (!Object.keys(errs).length) save.mutate(limitsPayload(form));
       }}>
-        <Field label="Daily loss limit (free chips)" inputMode="numeric" disabled={unavailable} placeholder={cur?.loss_day_minor != null ? String(cur.loss_day_minor) : 'No limit'} value={loss} onChange={(e) => setLoss(e.target.value.replace(/\D/g, ''))} />
-        <Field label="Daily deposit limit" inputMode="numeric" disabled={unavailable} placeholder={cur?.deposit_day_minor != null ? String(cur.deposit_day_minor) : 'No limit'} value={deposit} onChange={(e) => setDeposit(e.target.value.replace(/\D/g, ''))} hint="Applies to real-money deposits when they are available." />
-        <Field label="Session time limit (minutes)" hint="A reminder at every interval; when the time is up, predictions stop until you sign in again. 5 minutes or more." inputMode="numeric" disabled={unavailable} placeholder={cur?.session_minutes != null ? String(cur.session_minutes) : 'Off'} value={session} onChange={(e) => setSession(e.target.value.replace(/\D/g, ''))} />
+        <Field label="Daily loss limit (€)" inputMode="decimal" disabled={unavailable} placeholder="No limit" value={form.loss} onChange={(e) => edit('loss', e.target.value.replace(/[^\d.]/g, ''))}
+          error={touched ? errs.loss ?? null : null} hint={`Real-money losses over 24 hours; free chips are never limited. Now: ${cur?.loss_day_minor != null ? formatMoney(cur.loss_day_minor, 'EUR') : 'no limit'}. Empty the field to remove it.`} />
+        <Field label="Daily deposit limit (€)" inputMode="decimal" disabled={unavailable} placeholder="No limit" value={form.deposit} onChange={(e) => edit('deposit', e.target.value.replace(/[^\d.]/g, ''))}
+          error={touched ? errs.deposit ?? null : null} hint={`Applies to real-money deposits when they are available. Now: ${cur?.deposit_day_minor != null ? formatMoney(cur.deposit_day_minor, 'EUR') : 'no limit'}.`} />
+        <Field label="Session time limit (minutes)" hint="A reminder at every interval; when the time is up, predictions stop until you sign in again. 5 minutes or more; empty for none." inputMode="numeric" disabled={unavailable}
+          placeholder="Off" value={form.session} onChange={(e) => edit('session', e.target.value.replace(/\D/g, ''))} error={touched ? errs.session ?? null : null} />
+        {pendingText(cur) && <Notice tone="info">{pendingText(cur)}</Notice>}
         <Button type="submit" variant="secondary" className="w-full" disabled={unavailable || save.isPending}>Save limits</Button>
         {save.isSuccess && <Notice tone="accent">Limits saved.</Notice>}
         {save.isError && <Notice tone="warn">{errorText(save.error)}</Notice>}

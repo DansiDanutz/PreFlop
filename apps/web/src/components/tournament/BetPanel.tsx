@@ -14,6 +14,8 @@ import {
 import { type TournamentView, tournamentKey } from '../../lib/useTournament.ts';
 import { Notice, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from '../table/Catalogue.tsx';
+import { StakeConfirmSheet } from '../table/StakeConfirmSheet.tsx';
+import { isLargeStake } from '../../lib/rooms.ts';
 import { FavoriteTile } from '../table/Tiles.tsx';
 
 /** A fresh key for every attempt (a price-change retry is a new attempt). */
@@ -55,6 +57,7 @@ export function BetPanel({ d }: { d: TournamentView }) {
   const [priceChange, setPriceChange] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [placed, setPlaced] = useState<string | null>(null);
+  const [bigStake, setBigStake] = useState(false);
 
   const option = resolveOption(book.index, selectedId);
   const nameOf = (id: string) => resolveOption(book.index, id)?.name ?? id;
@@ -76,7 +79,7 @@ export function BetPanel({ d }: { d: TournamentView }) {
         idempotency_key: attemptKey(),
       });
     },
-    onMutate: () => { setError(null); setPlaced(null); setPriceChange(null); },
+    onMutate: () => { setError(null); setPlaced(null); setPriceChange(null); setBigStake(false); },
     onSuccess: (bet) => {
       qc.setQueryData<TournamentView>(tournamentKey(t.id), (old) => withBet(old, bet));
       void qc.invalidateQueries({ queryKey: tournamentKey(t.id) });
@@ -180,10 +183,13 @@ export function BetPanel({ d }: { d: TournamentView }) {
       {error && <Notice tone="warn" className="mt-4">{error}</Notice>}
       {placed && !error && <Notice tone="accent" className="mt-4">{placed}</Notice>}
 
-      <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canPlace} onClick={() => place.mutate({})}>
+      <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canPlace} onClick={() => (isLargeStake(stake, you.stack) ? setBigStake(true) : place.mutate({}))}>
         {place.isPending ? 'Placing…' : betThisFlop ? 'Already bet on this flop' : !openId ? 'Waiting for the next round' : `Place bet · uses 1 of ${you.bets_left}`}
       </Button>
 
+      <StakeConfirmSheet open={bigStake && canPlace} onClose={() => setBigStake(false)} onConfirm={() => place.mutate({})} busy={place.isPending}
+        selection={option ? nameOf(selectedId) : ''} stake={points(stake)} allIn={stake >= you.stack} share={you.stack ? stake / you.stack : 0}
+        potential={ret !== null ? points(ret) : '—'} />
       <CatalogueSheet open={catalogue} onClose={() => setCatalogue(false)} options={allOptions} loading={book.isLoading} error={book.isError} onRetry={() => void book.refetch()}
         favorites={favs.ids} onSaveFavorites={(ids) => favs.save(ids)} pool={false} inRoom={false}
         onPick={(o) => { setSelectedId(o.id); setPriceChange(null); setCatalogue(false); }} />
