@@ -11,6 +11,7 @@ import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.
 import { newId } from '../lib/ids.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertRealMoneyAccount } from '../lib/accounts.ts';
+import { modeEnabled as modeEnabledIn } from '../growth/leaderboards.ts';
 import { assertPositive, buyChips, deposit, withdraw } from '../payments/sandbox.ts';
 
 const SELECTION_IDS = new Set(SELECTIONS.map((s) => s.id));
@@ -191,8 +192,10 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- payments (sandbox rail)
   // Run INSIDE idempotentMoneyWrite's callback: a retry of a payment that already committed must
   // replay its stored response, even if the account, KYC, territory or mode changed since.
+  // Every query goes through the transaction's own connection: asking the pool for a second one
+  // while holding this one could starve the pool under concurrent payments.
   const realGate = async (c: Tx, userId: string, mode: PlayMode) => {
-    if (!(await ctx.modeEnabled(mode))) throw conflict('mode_disabled', 'real money is not enabled in this territory');
+    if (!(await modeEnabledIn(c, mode))) throw conflict('mode_disabled', 'real money is not enabled in this territory');
     const u = (await c.query<{ kyc_status: string; status: string }>('select kyc_status, status from users where id = $1', [userId])).rows[0]!;
     if (u.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot transact');
     if (u.kyc_status !== 'verified') throw new ApiError(403, 'kyc_required', 'identity verification required');
@@ -255,7 +258,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ chips: z.number().int(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     assertPositive(b.chips, 'chips');
     const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
-      if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
+      if (!(await modeEnabledIn(c, 'virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
       return { status: 201, body: await buyChips(c, { userId: u.id }, b.chips, b.pay_with, ref) };
     });
     return reply.code(res.status).send(res.body);

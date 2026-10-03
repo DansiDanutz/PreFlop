@@ -367,6 +367,10 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     await h.db.query(`update users set kyc_status = 'verified' where id = $1`, [p.id]);
     expect(await wallet(p.token, 'real-fiat')).toBe(3_000);
     expect((await h.api('POST', '/v1/me/withdrawals', p.token, { ...dep, amount_minor: 9_000, method: 'bank' }, idemKey())).body.type).toBe('insufficient_funds');
+    // smoke check: a burst of payments larger than the pool (30) all complete; the gate checks run
+    // on each payment's own transaction connection and never ask the pool for a second one
+    const burst = await Promise.all(Array.from({ length: 35 }, () => h.api('POST', '/v1/me/deposits', p.token, { ...dep, amount_minor: 1 }, idemKey())));
+    expect(burst.every((r) => r.status === 201 || r.body.type === 'limit_reached')).toBe(true);
     expect((await h.api('POST', '/v1/me/self-exclusion', p.token, { days: 30 })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(401); // sessions ended
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
