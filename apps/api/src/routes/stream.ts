@@ -11,6 +11,17 @@ import { type DomainEvent, bus } from '../lib/events.ts';
  * and access logs, frames do not. An auth frame after the first one is ignored, so a socket can
  * never switch users.
  */
+/** Largest frame a client may send (subscribe/auth frames are tiny). Set on the websocket plugin. */
+export const STREAM_MAX_PAYLOAD = 4096;
+
+/**
+ * Connection health. Every `pingMs` the server pings; a socket that has not answered the previous
+ * ping is terminated (half-open TCP, a sleeping phone). A client that reads slower than events
+ * arrive is cut off once more than `maxBufferedBytes` wait in its send buffer, instead of buffering
+ * without bound; it reconnects and refetches. Mutable for tests only.
+ */
+export const streamTuning = { pingMs: 30_000, maxBufferedBytes: 1 << 20 };
+
 export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/stream', { websocket: true }, async (socket) => {
     ctx.stats.wsClients++;
@@ -18,7 +29,20 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
     const topics = new Set<string>();
     let userId: string | null = null;
     let first = true;
-    const send = (m: unknown) => { if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m)); };
+    let alive = true;
+    socket.on('pong', () => { alive = true; });
+    const ping = setInterval(() => {
+      if (!alive) { socket.terminate(); return; }
+      alive = false;
+      try { socket.ping(); } catch { socket.terminate(); }
+    }, streamTuning.pingMs);
+    ping.unref?.();
+    socket.on('close', () => clearInterval(ping));
+    const send = (m: unknown) => {
+      if (socket.readyState !== socket.OPEN) return;
+      if (socket.bufferedAmount > streamTuning.maxBufferedBytes) { socket.terminate(); return; }
+      socket.send(JSON.stringify(m));
+    };
     const onEvent = (e: DomainEvent) => {
       const forUser = e.userId !== undefined;
       const forTopic = e.topic !== undefined && topics.has(e.topic);

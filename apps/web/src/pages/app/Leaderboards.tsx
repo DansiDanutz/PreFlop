@@ -1,5 +1,5 @@
 import type { Leaderboard, LeaderboardEntry, LeaderboardMetric, PlayMode } from '@preflop/client';
-import { ChipIcon, EmptyState, cx, formatMoney } from '@preflop/ui';
+import { ChipIcon, EmptyState, cx, formatMoney, formatMoneyShort } from '@preflop/ui';
 import { useQuery } from '@tanstack/react-query';
 import { Award, ChevronLeft, ChevronRight, Crown, Medal, Trophy } from 'lucide-react';
 import { useState } from 'react';
@@ -18,14 +18,14 @@ export const METRIC: Record<LeaderboardMetric, { label: string; how: string }> =
 };
 
 export function money(minor: number, currency: string) {
-  return currency === 'PLAY' ? `${formatMoney(minor, 'PLAY')} free chips` : currency === 'CHIP' ? `${formatMoney(minor, 'PLAY')} chips` : formatMoney(minor, currency);
+  return formatMoney(minor, currency);
 }
 
 export function scoreText(metric: LeaderboardMetric, score: number, currency: string) {
   if (metric === 'roi') return `${score.toFixed(2)}×`;
   if (metric === 'points') return `${Math.round(score).toLocaleString('en-US')} pts`;
   const sign = metric === 'net' && score > 0 ? '+' : '';
-  return sign + (currency === 'PLAY' || currency === 'CHIP' ? formatMoney(score, 'PLAY') : formatMoney(score, currency));
+  return sign + formatMoneyShort(score, currency);
 }
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -60,7 +60,7 @@ function BoardCard({ lb }: { lb: Leaderboard }) {
         <PoolIcon currency={lb.currency} />
         <div className="min-w-0 flex-1">
           <div className="text-[12px] text-ink/75">{lb.status === 'settled' ? 'Paid out' : 'Prize pool'}</div>
-          <div className="font-serif text-[24px] leading-tight tabular-nums">{lb.currency === 'PLAY' || lb.currency === 'CHIP' ? formatMoney(lb.pool_minor, 'PLAY') : formatMoney(lb.pool_minor, lb.currency)}</div>
+          <div className="font-serif text-[24px] leading-tight tabular-nums">{formatMoney(lb.pool_minor, lb.currency)}</div>
         </div>
         <ChevronRight className="h-5 w-5 text-muted group-hover:text-ink" aria-hidden />
       </div>
@@ -135,7 +135,7 @@ export function LeaderboardPage() {
               <PoolIcon currency={lb.currency} />
               <div>
                 <div className="text-[12px] text-ink/75">{lb.status === 'settled' ? 'Paid out' : 'Prize pool'}</div>
-                <div className="font-serif text-[34px] leading-none tabular-nums">{lb.currency === 'PLAY' || lb.currency === 'CHIP' ? formatMoney(lb.pool_minor, 'PLAY') : formatMoney(lb.pool_minor, lb.currency)}</div>
+                <div className="font-serif text-[34px] leading-none tabular-nums">{formatMoney(lb.pool_minor, lb.currency)}</div>
                 <div className="mt-1 text-[12px] text-muted">{lb.currency === 'PLAY' ? 'Free chips. No cash value.' : lb.currency === 'DIAMOND' || lb.currency === 'CHIP' ? 'No cash value.' : 'Real money'}</div>
               </div>
             </div>
@@ -163,7 +163,7 @@ export function LeaderboardPage() {
                           <td className="px-4 py-2.5">{e.display_name}{e.you && <span className="ml-2 rounded-[4px] border border-accent/45 px-1.5 py-0.5 text-[10px] font-semibold text-accent">YOU</span>}{!e.qualified && <span className="ml-2 text-[12px] text-muted">qualifying</span>}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums">{scoreText(lb.metric, e.score, lb.currency)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-ink/75">{e.rounds}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums">{e.prize_minor > 0 ? <span className="text-accent">{lb.currency === 'PLAY' || lb.currency === 'CHIP' ? formatMoney(e.prize_minor, 'PLAY') : formatMoney(e.prize_minor, lb.currency)}</span> : <span className="text-faint">—</span>}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">{e.prize_minor > 0 ? <span className="text-accent">{formatMoney(e.prize_minor, lb.currency)}</span> : <span className="text-faint">—</span>}</td>
                         </tr>
                       ))}
                     </tbody>

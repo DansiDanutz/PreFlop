@@ -412,6 +412,8 @@ export function createClient(o: ClientOptions) {
     orgUpdate: (id: string, b: { name?: string; settings?: Record<string, unknown> }) => put<{ ok: true }>(`${org(id)}`, b),
     orgMembers: (id: string) => get<{ members: { user_id: string; email: string; display_name: string; role: OrgRole }[] }>(`${org(id)}/members`),
     orgAddMember: (id: string, b: { email: string; role: OrgRole }) => post<{ ok: true }>(`${org(id)}/members`, b),
+    orgSetMemberRole: (id: string, userId: string, role: OrgRole) => put<{ ok: true }>(`${org(id)}/members/${encodeURIComponent(userId)}`, { role }),
+    orgRemoveMember: (id: string, userId: string) => del<{ ok: true }>(`${org(id)}/members/${encodeURIComponent(userId)}`),
     orgStatements: (id: string, period?: string) => get<{ statements: Statement[] }>(`${org(id)}/statements${q({ period })}`),
     orgRounds: (id: string, f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number })[] }>(`${org(id)}/rounds${q(f)}`),
     /** balances: one entry per (mode, currency). balance_minor/currency are deprecated: the first currency only. */

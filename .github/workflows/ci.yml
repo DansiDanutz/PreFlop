@@ -30,4 +30,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+        env:
+          # Production builds require the API origin (no localhost fallback in a shipped bundle).
+          VITE_API_URL: http://localhost:4000
       - run: pnpm --filter @preflop/odds-engine smoke

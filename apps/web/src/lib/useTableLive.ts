@@ -8,6 +8,13 @@ import { qk, useTableDetail } from './queries.ts';
 import { type RoundSummary, isFinal, summarizeRound } from './rounds.ts';
 import { useStream } from './stream.ts';
 
+/**
+ * Queries to refetch after the table socket re-opens: round events sent while it was down are
+ * lost, so the cached table (open round, phase), the lobby rows and the player's bets and wallets
+ * may all be stale. Without this the screen could keep showing a round as open after it locked.
+ */
+export const reconnectKeys = (tableId: string) => [qk.table(tableId), qk.lobby, qk.bets, qk.wallets] as const;
+
 export interface PlacedBet { betId: string; roundId: string; selectionId: string; stakeMinor: number; oddsCenti: number; status: string }
 
 /**
@@ -81,7 +88,18 @@ export function useTableLive(tableId: string) {
       void check();
     }
   }, [qc, tableId, check]);
-  const ws = useStream([`table:${tableId}`], onEvent, token);
+  // While the table refetches after a reconnect, bets stay paused: the cached round may be stale.
+  const [resyncing, setResyncing] = useState(false);
+  const restoreRef = useRef<() => void>(() => {});
+  const onReconnect = useCallback(() => {
+    setResyncing(true);
+    const [table, ...rest] = reconnectKeys(tableId);
+    for (const queryKey of rest) void qc.invalidateQueries({ queryKey });
+    void qc.refetchQueries({ queryKey: table }).finally(() => setResyncing(false));
+    restoreRef.current();
+    void check();
+  }, [qc, tableId, check]);
+  const ws = useStream([`table:${tableId}`], onEvent, token, onReconnect);
 
   useEffect(() => {
     if (!reveal) return;
@@ -92,19 +110,24 @@ export function useTableLive(tableId: string) {
   const addPlaced = useCallback((b: PlacedBet) => setPlaced((cur) => (cur.some((x) => x.betId === b.betId) ? cur : [...cur, b])), []);
   const dismiss = useCallback(() => setCompleted((c) => c.slice(1)), []);
 
-  /** Restores the player's own accepted bets on this table after a reload. */
-  useEffect(() => {
+  /** Restores the player's own accepted bets on this table after a reload (and after a reconnect). */
+  const stopped = useRef(false);
+  const restore = useCallback(() => {
     if (!token) return;
-    let stop = false;
     api.myBets({ limit: 50, status: 'accepted' }).then(({ bets }) => {
-      if (stop) return;
+      if (stopped.current) return;
       const here = bets.filter((b: MyBet) => b.table_id === tableId);
       setPlaced((cur) => [...cur, ...here.filter((b) => !cur.some((c) => c.betId === b.bet_id)).map((b) => ({
         betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status,
       }))]);
     }).catch(() => {});
-    return () => { stop = true; };
   }, [token, tableId]);
+  restoreRef.current = restore;
+  useEffect(() => {
+    stopped.current = false;
+    restore();
+    return () => { stopped.current = true; };
+  }, [restore]);
 
-  return { detail, reveal: reveal?.key ?? null, placed, addPlaced, completed: completed[0] ?? null, dismiss, voidReasons, ws };
+  return { detail, reveal: reveal?.key ?? null, placed, addPlaced, completed: completed[0] ?? null, dismiss, voidReasons, ws, resyncing };
 }

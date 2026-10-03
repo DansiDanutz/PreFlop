@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, Suspense, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { ChevronDown, ChevronsUpDown, LogOut, Menu, X, FlaskConical } from 'lucide-react';
 import { Wordmark, cx } from '@preflop/ui';
@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { api, session } from '../lib/api.ts';
 import { canWrite, KIND_LABEL, portalForPath, type Portal } from '../lib/portals.ts';
 import { NAV, PORTAL_ICON } from './nav.ts';
+import { Loading } from './ui.tsx';
 
 const PortalCtx = createContext<Portal | null>(null);
 
@@ -184,7 +185,8 @@ export function Shell({ noAccess }: { noAccess: ReactNode }) {
             <div className="ml-auto flex items-center gap-3"><EnvBadge /><UserMenu /></div>
           </header>
           <main className="mx-auto w-full max-w-[1400px] px-4 py-8 md:px-10 md:py-10">
-            <Outlet />
+            {/* Pages load lazily: the shell stays while a portal chunk arrives. */}
+            <Suspense fallback={<Loading rows={4} />}><Outlet /></Suspense>
           </main>
         </div>
       </div>

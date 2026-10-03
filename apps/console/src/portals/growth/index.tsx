@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Leaderboard, LeaderboardInput, LeaderboardMetric, PlayMode, Promotion, PromotionInput, PromotionKind } from '@preflop/client';
-import { Badge, Button, formatMoney } from '@preflop/ui';
+import { Badge, Button, formatMoneyShort } from '@preflop/ui';
 import { Plus, Trophy, Gift } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { useCanWrite, usePortal } from '../../components/Shell.tsx';
@@ -13,7 +13,7 @@ import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Secti
 export const MODE_CURRENCY: Record<string, string[]> = { play: ['PLAY'], 'virtual-chips': ['CHIP'], diamonds: ['DIAMOND'], 'real-fiat': ['EUR'], 'real-crypto': ['USDT', 'USDC'] };
 export const MODE_NAME: Record<string, string> = { play: 'Free chips', 'virtual-chips': 'Chips', diamonds: 'Diamonds', 'real-fiat': 'Real money (EUR)', 'real-crypto': 'Real money (crypto)' };
 const METRIC_NAME: Record<LeaderboardMetric, string> = { net: 'Net result', volume: 'Volume', roi: 'Return per chip', points: 'Points' };
-export const amount = (minor: number, cur: string) => (cur === 'PLAY' || cur === 'CHIP' ? formatMoney(minor, 'PLAY') : formatMoney(minor, cur));
+export const amount = (minor: number, cur: string) => formatMoneyShort(minor, cur);
 export const day = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 export const localInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 

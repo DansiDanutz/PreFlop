@@ -1,6 +1,6 @@
 import { Wordmark, cx } from '@preflop/ui';
 import { Menu, X } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { useToken } from '../../lib/auth.tsx';
 
@@ -72,7 +72,7 @@ function SiteFooter() {
           <Wordmark />
           <p className="mt-3 max-w-[260px] text-sm text-muted">Predict the three-card flop at live poker tables, with exact odds.</p>
         </div>
-        <FooterCol title="Play">{l('/register', 'Play free')}{l('/login', 'Sign in')}{l('/odds', 'Odds book')}</FooterCol>
+        <FooterCol title="Play">{l('/register', 'Play free')}{l('/demo', 'Watch a live table')}{l('/login', 'Sign in')}{l('/odds', 'Odds book')}</FooterCol>
         <FooterCol title="Business">{l('/clubs', 'For poker clubs')}{l('/partners', 'For betting companies')}{l('/organizers', 'For organizers')}</FooterCol>
         <FooterCol title="Legal">{l('/terms', 'Terms of use')}{l('/privacy', 'Privacy notice')}{l('/responsible-gaming', 'Responsible gaming')}</FooterCol>
       </div>
@@ -90,7 +90,7 @@ export function SiteLayout() {
   return (
     <div className="min-h-dvh">
       <SiteNav />
-      <main><Outlet /></main>
+      <main><Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" />}><Outlet /></Suspense></main>
       <SiteFooter />
     </div>
   );

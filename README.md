@@ -27,7 +27,7 @@ Clubs supply tables and live video. Betting companies integrate through an API a
 
 ```bash
 pnpm install
-pnpm -r build
+VITE_API_URL=http://localhost:4000 pnpm -r build   # production web/console builds need the API origin
 # PostgreSQL 16 on localhost:5432
 export DATABASE_URL=postgres://postgres@localhost:5432/preflop
 pnpm --filter @preflop/api dev        # API + worker → :4000

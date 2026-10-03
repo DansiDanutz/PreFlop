@@ -147,6 +147,7 @@ export function LandingPage() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link to="/register" className={cx(cta, 'bg-accent text-accent-ink hover:bg-accent-strong')}>Play free <ArrowRight className="h-4 w-4" aria-hidden /></Link>
+            <Link to="/demo" className={cx(cta, 'border border-line-strong text-ink hover:border-accent hover:text-accent')}>Watch a live table</Link>
             <Link to="/odds" className={cx(cta, 'border border-line-strong text-ink hover:border-accent hover:text-accent')}>See the odds</Link>
           </div>
           <p className="mt-4 text-sm text-faint">10,000 free chips to start. Free chips have no cash value.</p>

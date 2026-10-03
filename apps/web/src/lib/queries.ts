@@ -68,7 +68,7 @@ export function useLobby() {
   useStream(['lobby'], (e: StreamEvent) => {
     if (!ROUND_EVENTS.has(e.type)) return;
     qc.setQueryData<Lobby>(qk.lobby, (old) => (old ? { ...old, tables: old.tables.map((t) => applyRoundEvent(t, e)) } : old));
-  });
+  }, null, () => void qc.invalidateQueries({ queryKey: qk.lobby }));
   return q;
 }
 

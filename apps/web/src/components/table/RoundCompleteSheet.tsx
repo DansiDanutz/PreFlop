@@ -1,4 +1,4 @@
-import { Button, Card, formatMoney } from '@preflop/ui';
+import { Button, Card } from '@preflop/ui';
 import { amountLabel, noCashValueLine } from '../../lib/rooms.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
 import type { RoundSummary } from '../../lib/rounds.ts';
@@ -11,7 +11,7 @@ export function RoundCompleteSheet({ summary, nameOf, voidReason, onNext, onActi
 }) {
   if (!summary) return null;
   const s = summary;
-  const money = (m: number) => (s.currency === 'DIAMOND' ? formatMoney(m, 'DIAMOND') : formatMoney(m, 'PLAY'));
+  // Every amount in the round's own currency and unit (free chips, chips, diamonds, EUR, USDT).
   const amount = (m: number) => amountLabel(m, s.currency);
   const isVoid = s.status === 'void';
   const names = [...new Set(s.selections.map(nameOf))];
@@ -46,8 +46,8 @@ export function RoundCompleteSheet({ summary, nameOf, voidReason, onNext, onActi
 
       <Card className="mt-5 divide-y divide-line">
         <Row label="Prediction" value={names.join(', ')} />
-        <Row label="Used" value={`${money(s.usedMinor)}`} />
-        <Row label="Returned" value={`${money(s.returnedMinor)}`} accent={s.returnedMinor > 0 && !isVoid} />
+        <Row label="Used" value={amount(s.usedMinor)} />
+        <Row label="Returned" value={amount(s.returnedMinor)} accent={s.returnedMinor > 0 && !isVoid} />
       </Card>
 
       <div className="mt-5 grid gap-3">

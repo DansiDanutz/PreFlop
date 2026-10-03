@@ -112,19 +112,39 @@ export function TextArea({ label, className, ...p }: TextareaHTMLAttributes<HTML
   );
 }
 
-export function Select({ label, className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { label: string }) {
+export function Select({ label, className, children, error, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; error?: string | null | undefined }) {
   const id = useId();
   return (
     <div className={className}>
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-ink">{label}</label>
-      <select id={id} className={inputCls} {...p}>{children}</select>
+      <select id={id} className={inputCls} aria-invalid={!!error} aria-describedby={error ? `${id}-h` : undefined} {...p}>{children}</select>
+      {error && <div id={`${id}-h`} className="mt-1.5 text-xs text-danger">{error}</div>}
     </div>
   );
 }
 
 // ------------------------------------------------------------------ sheet / dialog
 
-/** Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+
+/**
+ * Focus trap step: where Tab (or Shift+Tab) should go from `current` among a dialog's focusable
+ * elements, or null to let the browser move on. Wraps at both ends; from the dialog itself (or
+ * anything outside the list) Tab goes to the first control and Shift+Tab to the last.
+ */
+export function trapFocus<T>(items: readonly T[], current: T | null, shift: boolean): T | null {
+  if (!items.length) return null;
+  const i = current === null ? -1 : items.indexOf(current);
+  if (i === -1) return shift ? items[items.length - 1]! : items[0]!;
+  if (shift && i === 0) return items[items.length - 1]!;
+  if (!shift && i === items.length - 1) return items[0]!;
+  return null;
+}
+
+/**
+ * Bottom sheet on phones, centered dialog on wide screens. Escape and the backdrop close it. Focus
+ * moves into it on open, Tab and Shift+Tab cycle inside it, and focus returns to the opener on close.
+ */
 export function Sheet({ open, onClose, title, children, labelledBy, wide = false }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; labelledBy?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   // The latest onClose, so a parent passing a new function each render does not re-run the
@@ -136,7 +156,19 @@ export function Sheet({ open, onClose, title, children, labelledBy, wide = false
     const prev = document.activeElement as HTMLElement | null;
     // Focus the dialog itself once on open; Tab then moves into its controls.
     ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { closeRef.current(); return; }
+      if (e.key !== 'Tab' || !ref.current) return;
+      // With sheets stacked, only the top one (last in the document) traps focus.
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== ref.current) return;
+      const items = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+      const active = document.activeElement as HTMLElement | null;
+      const inside = !!active && ref.current.contains(active);
+      if (!items.length) { e.preventDefault(); ref.current.focus(); return; }
+      const next = trapFocus(items, inside ? active : null, e.shiftKey);
+      if (next) { e.preventDefault(); next.focus(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);

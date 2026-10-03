@@ -1,5 +1,7 @@
 import { createClient } from '@preflop/client';
 
+// The localhost fallback only ever applies in development: production builds fail without
+// VITE_API_URL (deploy/require-env.mjs).
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 export const WEB_URL: string = import.meta.env.VITE_WEB_URL ?? 'http://localhost:5173';
 

@@ -18,6 +18,7 @@ export function RegisterControls({ t, compact = false, className }: { t: Tournam
   const qc = useQueryClient();
   const realOn = useRealMoney();
   const [confirm, setConfirm] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['tournaments'] });
@@ -38,6 +39,7 @@ export function RegisterControls({ t, compact = false, className }: { t: Tournam
     mutationFn: () => api.unregisterTournament(t.id),
     onMutate: () => setMsg(null),
     onSuccess: (r) => {
+      setConfirmLeave(false);
       setMsg(r.refunded_minor > 0 ? `Unregistered. ${amountLabel(r.refunded_minor, t.currency)} refunded.` : 'Unregistered.');
       refresh();
     },
@@ -57,7 +59,7 @@ export function RegisterControls({ t, compact = false, className }: { t: Tournam
       <div className="flex flex-wrap items-center gap-3">
         <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-accent"><Check className="h-4 w-4" aria-hidden /> Registered</span>
         {t.status === 'scheduled' && (
-          <Button variant="secondary" size={size} disabled={unregister.isPending} onClick={() => unregister.mutate()}>
+          <Button variant="secondary" size={size} disabled={unregister.isPending} onClick={() => setConfirmLeave(true)}>
             {unregister.isPending ? 'Unregistering…' : 'Unregister'}
           </Button>
         )}
@@ -76,7 +78,7 @@ export function RegisterControls({ t, compact = false, className }: { t: Tournam
   return (
     <div className={cx('min-w-0', className)}>
       {control}
-      {err && !confirm && <Notice tone="warn" className="mt-3">{tournamentErrorText(err)}</Notice>}
+      {err && !confirm && !confirmLeave && <Notice tone="warn" className="mt-3">{tournamentErrorText(err)}</Notice>}
       {msg && !err && <Notice tone="accent" className="mt-3">{msg}</Notice>}
       <Sheet open={confirm} onClose={() => setConfirm(false)} title="Confirm your buy-in">
         <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">Buy-in</p>
@@ -93,6 +95,19 @@ export function RegisterControls({ t, compact = false, className }: { t: Tournam
         <div className="mt-5 grid grid-cols-2 gap-3">
           <Button variant="secondary" onClick={() => setConfirm(false)}>Cancel</Button>
           <Button disabled={register.isPending} onClick={() => register.mutate()}>{register.isPending ? 'Registering…' : 'Pay and register'}</Button>
+        </div>
+      </Sheet>
+      <Sheet open={confirmLeave} onClose={() => setConfirmLeave(false)} labelledBy={`leave-${t.id}`}>
+        <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-warn">Unregister</p>
+        <h2 id={`leave-${t.id}`} className="mt-2 font-serif text-[28px] leading-tight tracking-[-0.03em]">Leave {t.name}?</h2>
+        <p className="mt-3 text-[14px] text-ink/80">
+          {t.buy_in_minor > 0 ? <>Your buy-in of <strong className="text-ink">{amountLabel(t.buy_in_minor, t.currency)}</strong> goes back to your wallet. </> : null}
+          You can register again while registration is open{t.max_entries !== null ? ', if a seat is still free' : ''}.
+        </p>
+        {unregister.isError && <Notice tone="warn" className="mt-3">{tournamentErrorText(unregister.error)}</Notice>}
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <Button variant="secondary" onClick={() => setConfirmLeave(false)}>Stay registered</Button>
+          <Button disabled={unregister.isPending} onClick={() => unregister.mutate()}>{unregister.isPending ? 'Unregistering…' : 'Unregister'}</Button>
         </div>
       </Sheet>
     </div>
