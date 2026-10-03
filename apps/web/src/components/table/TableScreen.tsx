@@ -1,18 +1,21 @@
 import { ApiError } from '@preflop/client';
 import { Badge, Button, type RoundPhase, cx, formatMoneyShort, formatOdds } from '@preflop/ui';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Info, LayoutGrid, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../../lib/api.ts';
+import { type BetIntent, type IntentInputs, newIntent, priceOfferFor, withAcceptedPrice } from '../../lib/betIntent.ts';
 import { type BetOption, MAIN_GRID, MAX_FAVORITES, removeFavorite, resolveOption } from '../../lib/bets.ts';
 import { resultLine, roundLabel } from '../../lib/flop.ts';
 import { openHandNo, phaseOf, streamGate, tableStatus } from '../../lib/live.ts';
 import { marketAllowed } from '../../lib/embed.ts';
 import { type BetProblem, betProblem } from '../../lib/problems.ts';
-import { useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
+import { qk, useBalance, useBook, useFavorites, useResetPlay, useRoom } from '../../lib/queries.ts';
+import { betQuote, quoteLines } from '../../lib/quote.ts';
 import { amountLabel, amountRange, balanceLabel, isLargeStake, isPool, noCashValueLine, roomOption, stakePresets } from '../../lib/rooms.ts';
 import { KEYS, readJson, writeJson, writeString } from '../../lib/storage.ts';
+import { useBetIntent } from '../../lib/useBetIntent.ts';
 import { useTableLive } from '../../lib/useTableLive.ts';
 import { HowToPlay, PracticePill } from '../AppShell.tsx';
 import { MiniFlop } from '../MiniFlop.tsx';
@@ -86,7 +89,10 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const [confirmReset, setConfirmReset] = useState(false);
   const [help, setHelp] = useState(false);
   const [catalogueOpen, setCatalogueOpen] = useState(catalogue);
-  const [bigStake, setBigStake] = useState(false);
+  /** A large stake waiting for the confirm sheet: frozen when the sheet opens, sent as shown. */
+  const [draft, setDraft] = useState<BetIntent | null>(null);
+  /** A price change offered for one exact intent (lib/betIntent.ts): consent never carries over to other inputs. */
+  const [offer, setOffer] = useState<{ intent: BetIntent; oddsCenti: number } | null>(null);
 
   useEffect(() => { if (!embed && !guest) writeString(KEYS.lastTable, tableId); }, [tableId, embed, guest]);
   useEffect(() => writeJson(KEYS.stake, stake), [stake]);
@@ -146,29 +152,38 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const thisRound = useMemo(() => live.placed.filter((b) => b.roundId === openId), [live.placed, openId]);
   const inFlight = useMemo(() => live.placed.filter((b) => b.roundId !== openId && b.status === 'accepted'), [live.placed, openId]);
 
-  const place = useMutation({
-    mutationFn: async (o: { acceptPrice?: number }) => {
-      if (!openId) throw new ApiError(409, { type: 'round_locked', title: 'closed', status: 409 });
-      if (!option?.offered) throw new ApiError(422, { type: 'not_offered', title: 'not offered', status: 422 });
-      return api.placeBet({
-        round_id: openId, selection_id: option.id, stake_minor: stake, odds_centi: o.acceptPrice ?? option.oddsCenti,
-        ...(o.acceptPrice !== undefined ? { accept_price_change: true } : {}),
-        ...(room ? { room_id: room.id } : {}),
-      });
-    },
-    onMutate: () => { setProblem(null); setPlacedMsg(null); setBigStake(false); },
-    onSuccess: (bet) => {
-      live.addPlaced({ betId: bet.bet_id, roundId: bet.round_id, selectionId: bet.selection_id, stakeMinor: bet.stake_minor, oddsCenti: bet.odds_centi, status: bet.status });
-      const price = pool ? 'in the pool' : `at ${formatOdds(bet.odds_centi)}`;
-      setPlacedMsg(`${nameOf(bet.selection_id)} ${price} for ${amountLabel(bet.stake_minor, bet.currency)}. Good luck.`);
+  const bet = useBetIntent({
+    onPlaced: (b, intent) => {
+      if (intent.tableId === tableId) live.addPlaced({ betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status });
+      setProblem(null);
+      const price = intent.roomId && pool ? 'in the pool' : `at ${formatOdds(b.odds_centi)}`;
+      setPlacedMsg(`${nameOf(b.selection_id)} ${price} for ${amountLabel(b.stake_minor, b.currency)}. Good luck.`);
       void qc.invalidateQueries({ queryKey: ['me', 'wallets'] });
+      void qc.invalidateQueries({ queryKey: qk.bets });
     },
-    onError: (err) => {
+    onRefused: (err, intent) => {
       const p = betProblem(err);
+      // The new price is offered for this intent only; accepting it needs a fresh tap.
+      setOffer(p.kind === 'price_changed' && p.oddsCenti > 0 ? { intent, oddsCenti: p.oddsCenti } : null);
       setProblem(room && p.kind === 'insufficient_funds' ? { kind: 'other', message: `Not enough ${balanceLabel(currency).toLowerCase()} in ${room.org_name}.` } : p);
       if (p.kind === 'unauthorized' && !embed) nav(`/login?next=/app/table/${tableId}`);
     },
+    onUnknown: () => setProblem({ kind: 'other', message: 'We could not confirm your prediction yet. We are checking with PreFlop; you can place another one once we know.' }),
+    onNotPlaced: () => setProblem({ kind: 'other', message: 'Your last prediction was not placed. Nothing was taken from your balance.' }),
   });
+
+  // What the slip would send now; a confirm freezes it into an intent with one Idempotency-Key.
+  const inputs: IntentInputs | null = openId && option?.offered
+    ? { tableId, roundId: openId, selectionId: option.id, stakeMinor: stake, oddsCenti: option.oddsCenti, roomId: room?.id ?? null, currency }
+    : null;
+  // The price notice belongs to the bet it was raised for: another selection, stake, wallet or a new
+  // round drops it for good, so a later price change always needs fresh consent.
+  const offerStale = !!offer && !priceOfferFor(offer, inputs);
+  useEffect(() => {
+    if (!offerStale) return;
+    setOffer(null);
+    setProblem((p) => (p?.kind === 'price_changed' ? null : p));
+  }, [offerStale]);
 
   if (live.detail.isError) {
     return (
@@ -184,11 +199,28 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const tooMuch = balance !== null && stake > balance;
   // No bets while the live stream is down: the round may already be locked without us seeing it.
   const gate = streamGate(live.ws, live.resyncing);
-  const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !place.isPending && status?.open !== false && !roomMismatch && !(roomId && !room);
+  const canConfirm = !gate.paused && !!openId && !!option?.offered && stake >= minStake && !tooMuch && !bet.busy && status?.open !== false && !roomMismatch && !(roomId && !room);
+  const send = (i: BetIntent) => {
+    setProblem(null); setPlacedMsg(null); setOffer(null); setDraft(null);
+    void bet.submit(i);
+  };
+  const confirm = () => {
+    if (!inputs || !canConfirm) return;
+    const i = newIntent(inputs);
+    if (isLargeStake(stake, balance)) setDraft(i);
+    else send(i);
+  };
+  const liveOffer = priceOfferFor(offer, inputs);
+  const shownProblem = problem?.kind === 'price_changed' && !liveOffer ? null : problem;
+  const liveDraft = draft && inputs && priceOfferFor({ intent: draft, oddsCenti: draft.oddsCenti }, inputs) ? draft : null;
   const favCount = favIds.length;
   const unavailable = !!t && (t.status !== 'active' || status?.label === 'Stream unavailable');
   const prompt = PROMPT[phase];
-  const returns = option?.offered && !pool ? Math.floor((stake * option.oddsCenti) / 100) : null;
+  // The engine's own fee arithmetic: equals the API's potential_payout_minor for this stake.
+  const quote = option?.offered ? betQuote(stake, option.oddsCenti, room) : null;
+  const returns = quote?.totalReturnMinor ?? null;
+  const draftQuote = liveDraft ? betQuote(liveDraft.stakeMinor, liveDraft.oddsCenti, room) : null;
+  const fmt = (m: number) => amountLabel(m, currency);
 
   return (
     <div className={cx('@container', embed && 'px-4 pb-8 pt-4')}>
@@ -329,20 +361,26 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               <span className="text-ink/85">{pool ? 'Pool payout' : 'Total return if correct'}</span>
               <span className="font-bold">{pool ? 'Share of the pool' : returns !== null ? amountLabel(returns, currency).replace('free chips', 'chips') : '—'}</span>
             </div>
+            {quoteLines(quote, fmt).length > 0 && (
+              <dl className="mt-2 space-y-1 text-[12px] text-ink/80" aria-label="Fees">
+                {quoteLines(quote, fmt).map((l) => <div key={l.label} className="flex justify-between gap-3"><dt>{l.label}</dt><dd>{l.value}</dd></div>)}
+              </dl>
+            )}
             <p className="mt-1 text-[12px] text-ink/75">
               {pool ? `Winners share the pool after the room’s ${((room?.rules.rake_bps ?? 0) / 100).toFixed(0)}% rake.` : room ? 'Room odds, after the organizer’s fees.' : 'Decimal odds include your original chips.'}
             </p>
 
-            {problem && (
+            {shownProblem && (
               <div className="mt-4">
-                <ProblemNotice problem={problem} pending={place.isPending || gate.paused} canReset={!room}
-                  onAccept={(odds) => place.mutate({ acceptPrice: odds })} onReset={() => setConfirmReset(true)} onDismiss={() => setProblem(null)} />
+                <ProblemNotice problem={shownProblem} offerOdds={liveOffer?.oddsCenti ?? null} pending={bet.busy || gate.paused} canReset={!room}
+                  onAccept={() => { if (liveOffer && canConfirm) send(withAcceptedPrice(liveOffer.intent, liveOffer.oddsCenti)); }}
+                  onReset={() => setConfirmReset(true)} onDismiss={() => { setProblem(null); setOffer(null); }} />
               </div>
             )}
-            {placedMsg && !problem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
+            {placedMsg && !shownProblem && <Notice tone="accent" className="mt-4">{placedMsg}</Notice>}
 
-            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={() => (isLargeStake(stake, balance) ? setBigStake(true) : place.mutate({}))}>
-              {place.isPending ? 'Placing…' : gate.paused ? (live.ws === 'open' ? 'Bets paused · updating' : 'Bets paused · reconnecting') : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
+            <Button size="lg" className="mt-5 h-[50px] w-full text-[15px]" disabled={!canConfirm} onClick={confirm}>
+              {bet.status === 'sending' ? 'Placing…' : bet.status === 'checking' ? 'Checking your last prediction…' : gate.paused ? (live.ws === 'open' ? 'Bets paused · updating' : 'Bets paused · reconnecting') : !openId && t ? 'Waiting for the next round' : `Confirm · ${amountLabel(stake, currency).replace('free chips', 'chips')}`}
             </Button>
             <p className="mt-4 text-center text-[12px] text-ink/80">{currency === 'PLAY' ? 'Free chips. No purchases, prizes or cash-out.' : noCashValueLine(currency)}</p>
           </div>
@@ -398,9 +436,11 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         </div>
       </Sheet>
 
-      <StakeConfirmSheet open={bigStake && canConfirm} onClose={() => setBigStake(false)} onConfirm={() => place.mutate({})} busy={place.isPending}
-        selection={option ? nameOf(selectedId) : ''} stake={amountLabel(stake, currency)} allIn={balance !== null && stake >= balance} share={balance ? stake / balance : 0}
-        potential={pool ? 'A share of the pool' : returns !== null ? amountLabel(returns, currency) : '—'} />
+      <StakeConfirmSheet open={!!liveDraft && canConfirm} onClose={() => setDraft(null)} onConfirm={() => { if (liveDraft) send(liveDraft); }} busy={bet.busy}
+        selection={liveDraft ? nameOf(liveDraft.selectionId) : ''} stake={liveDraft ? fmt(liveDraft.stakeMinor) : ''}
+        allIn={!!liveDraft && balance !== null && liveDraft.stakeMinor >= balance} share={liveDraft && balance ? liveDraft.stakeMinor / balance : 0}
+        breakdown={quoteLines(draftQuote, fmt)}
+        potential={pool ? 'A share of the pool' : draftQuote?.totalReturnMinor != null ? fmt(draftQuote.totalReturnMinor) : '—'} />
 
       <HowToPlay open={help} onClose={() => setHelp(false)} />
     </div>
@@ -428,17 +468,20 @@ export function GuestPanel({ tableId }: { tableId: string }) {
   );
 }
 
-function ProblemNotice({ problem, pending, canReset, onAccept, onReset, onDismiss }: {
-  problem: BetProblem; pending: boolean; canReset: boolean; onAccept: (odds: number) => void; onReset: () => void; onDismiss: () => void;
+function ProblemNotice({ problem, offerOdds, pending, canReset, onAccept, onReset, onDismiss }: {
+  problem: BetProblem;
+  /** The new price offered for the bet that was refused (null once the slip no longer shows that bet). */
+  offerOdds: number | null;
+  pending: boolean; canReset: boolean; onAccept: () => void; onReset: () => void; onDismiss: () => void;
 }) {
   return (
     <Notice tone={problem.kind === 'round_locked' ? 'info' : 'warn'}>
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <p>{problem.message}</p>
-          {problem.kind === 'price_changed' && problem.oddsCenti > 0 && (
-            <Button size="sm" className="mt-2" disabled={pending} onClick={() => onAccept(problem.oddsCenti)}>
-              Accept {formatOdds(problem.oddsCenti)} and confirm
+          {problem.kind === 'price_changed' && offerOdds !== null && (
+            <Button size="sm" className="mt-2" disabled={pending} onClick={onAccept}>
+              Accept {formatOdds(offerOdds)} and confirm
             </Button>
           )}
           {problem.kind === 'insufficient_funds' && canReset && (

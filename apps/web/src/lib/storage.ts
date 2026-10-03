@@ -52,6 +52,8 @@ export const KEYS = {
   lastTable: 'pf.lastTable',
   stake: 'pf.stake',
   howToPlaySeen: 'pf.howToPlay.seen',
+  /** A confirmed bet whose outcome is not known yet (sessionStorage: this tab only). */
+  betIntent: 'pf.betIntent',
 } as const;
 
 let firstRunHelpTaken = false;
