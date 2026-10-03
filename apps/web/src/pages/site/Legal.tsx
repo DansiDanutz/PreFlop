@@ -2,8 +2,10 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Eyebrow, SiteSection } from '../../components/site/SiteLayout.tsx';
 import { Notice } from '../../components/ui.tsx';
+import { usePageMeta } from '../../lib/site.ts';
 
-function LegalPage({ eyebrow, title, updated, children, draft = true }: { eyebrow: string; title: string; updated: string; children: ReactNode; draft?: boolean }) {
+function LegalPage({ eyebrow, title, updated, children, draft = true, meta }: { eyebrow: string; title: string; updated: string; children: ReactNode; draft?: boolean; meta: [string, string] }) {
+  usePageMeta(meta[0], meta[1]);
   return (
     <SiteSection className="max-w-[820px] pb-10 pt-12">
       <Eyebrow>{eyebrow}</Eyebrow>
@@ -23,36 +25,44 @@ function LegalPage({ eyebrow, title, updated, children, draft = true }: { eyebro
 
 export function ResponsiblePage() {
   return (
-    <LegalPage eyebrow="Responsible play" title="Play for fun. Stay in control." updated="2 October 2026" draft={false}>
-      <p>PreFlop is entertainment for adults. Predicting a flop should be a few minutes of fun around a real poker table, never a way to make money or to chase losses.</p>
+    <LegalPage eyebrow="Responsible play" title="Play for fun. Stay in control." updated="3 October 2026" draft={false}
+      meta={['Responsible play', 'PreFlop responsible play: 18+ age gate, territory rules, session limits with reality checks, deposit and loss limits, self-exclusion, and free chips with no cash value.']}>
+      <p>PreFlop is entertainment for adults. Predicting a flop should be a few minutes of fun around a poker table, never a way to make money or to chase losses.</p>
       <h2>Our commitments</h2>
       <ul>
-        <li>18+ only. Accounts that appear to belong to minors are closed.</li>
-        <li><strong>Free chips have no cash value.</strong> They can be reset at any time and can never be cashed out. Virtual chips and diamonds cannot be cashed out on PreFlop either.</li>
+        <li><strong>18+ only.</strong> Registration asks for your date of birth and refuses anyone under 18. A recorded age under 18 also refuses every bet.</li>
+        <li><strong>Free chips have no cash value.</strong> They can be reset at any time and can never be cashed out. Organizer chips and diamonds cannot be cashed out on PreFlop either.</li>
+        <li><strong>Real money is switched off.</strong> It would only ever be offered where licensed, through licensed operators, with identity checks.</li>
         <li>Every price is published and calculated from all 22,100 possible flops, so you always know your real chances.</li>
-        <li>Betting on a flop closes before any card of that hand is dealt.</li>
+        <li>Betting on a flop closes before any card of that hand is dealt. There is no auto-replay and no countdown pressure.</li>
+        <li>Promotions never use pressure wording such as “last chance”.</li>
       </ul>
       <h2>Tools in your profile</h2>
       <ul>
-        <li><strong>Limits:</strong> daily loss and deposit limits, and a session reminder. Lowering a limit applies at once; raising one waits 24 hours.</li>
-        <li><strong>Self-exclusion:</strong> from 24 hours to a year. It cannot be shortened once it starts.</li>
+        <li><strong>Session limit:</strong> choose how many minutes a session lasts. When it is reached, bets stop until you sign in again, so you stop and decide.</li>
+        <li><strong>Reality checks:</strong> a regular reminder (at your session limit, or every 60 minutes) showing your time played and your net result for the session, with <em>Continue</em> or <em>Take a break</em>.</li>
+        <li><strong>Deposit and loss limits:</strong> daily limits for real-money play, wherever it is available. Lowering a limit applies at once; raising one waits 24 hours.</li>
+        <li><strong>Self-exclusion:</strong> from 24 hours to a year. It cannot be shortened once it starts, and you are left out of leaderboards while it lasts.</li>
         <li><strong>Reset:</strong> reset your free chips whenever you like.</li>
       </ul>
+      <h2>Where PreFlop is available</h2>
+      <p>Registration asks for your country. Some countries are blocked entirely and cannot register or play. Real-money play, if it is ever enabled, would be accepted only from countries where it is licensed. Free chips work from any country that is not blocked.</p>
       <h2>Signs to take a break</h2>
       <ul>
         <li>Playing longer or with more than you planned.</li>
         <li>Trying to win back what you lost.</li>
         <li>Feeling anxious, irritable or secretive about play.</li>
+        <li>Play getting in the way of work, sleep, money or the people around you.</li>
       </ul>
       <h2>Get support</h2>
-      <p>If gambling is causing you or someone close to you harm, talk to a free, confidential support service in your country, such as GambleAware (UK), BeGambleAware or Gamblers Anonymous. You can self-exclude from your <Link to="/app/profile" className="text-accent underline">profile</Link> at any time.</p>
+      <p>If gambling is causing you or someone close to you harm, talk to a free, confidential support service in your country, such as GamCare or Gamblers Anonymous. You can set limits or self-exclude from your <Link to="/app/profile" className="text-accent underline">profile</Link> at any time.</p>
     </LegalPage>
   );
 }
 
 export function TermsPage() {
   return (
-    <LegalPage eyebrow="Legal" title="Terms of use" updated="2 October 2026">
+    <LegalPage eyebrow="Legal" title="Terms of use" updated="2 October 2026" meta={['Terms of use', 'The terms of use of the PreFlop website and app (draft for review by counsel).']}>
       <h2>1. Who we are</h2>
       <p>PreFlop operates a platform where players predict the three community cards (“the flop”) dealt at participating poker tables. These terms govern your use of the PreFlop website and app.</p>
       <h2>2. Eligibility</h2>
@@ -77,7 +87,7 @@ export function TermsPage() {
 
 export function PrivacyPage() {
   return (
-    <LegalPage eyebrow="Legal" title="Privacy notice" updated="2 October 2026">
+    <LegalPage eyebrow="Legal" title="Privacy notice" updated="2 October 2026" meta={['Privacy notice', 'How PreFlop collects and uses personal data (draft for review by counsel).']}>
       <h2>What we collect</h2>
       <ul>
         <li>Account details: display name, email, an optional country and a hashed password.</li>

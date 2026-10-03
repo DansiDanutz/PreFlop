@@ -24,7 +24,7 @@ const A = {
   Overview: lazyNamed(admin, 'Overview'), Tables: lazyNamed(admin, 'Tables'), ReviewQueue: lazyNamed(admin, 'ReviewQueue'), ReviewDetail: lazyNamed(admin, 'ReviewDetail'),
   Rounds: lazyNamed(admin, 'Rounds'), Risk: lazyNamed(admin, 'Risk'), Alerts: lazyNamed(admin, 'Alerts'), Users: lazyNamed(admin, 'Users'), Orgs: lazyNamed(admin, 'Orgs'),
   Ledger: lazyNamed(admin, 'Ledger'), Audit: lazyNamed(admin, 'Audit'), Statements: lazyNamed(admin, 'Statements'), Book: lazyNamed(admin, 'Book'),
-  Payments: lazyNamed(admin, 'Payments'), Settings: lazyNamed(admin, 'Settings'),
+  Payments: lazyNamed(admin, 'Payments'), Settings: lazyNamed(admin, 'Settings'), News: lazyNamed(admin, 'News'),
 };
 const O = {
   OrgOverviewPage: lazyNamed(org, 'OrgOverviewPage'), Members: lazyNamed(org, 'Members'), Players: lazyNamed(org, 'Players'), Statements: lazyNamed(org, 'Statements'),
@@ -85,6 +85,7 @@ export function App() {
         <Route path="book" element={<A.Book />} />
         <Route path="payments" element={<A.Payments />} />
         <Route path="settings" element={<A.Settings />} />
+        <Route path="news" element={<A.News />} />
         <Route path="leaderboards" element={<W.Leaderboards />} />
         <Route path="tournaments" element={<Tournaments />} />
         <Route path="tournaments/:id" element={<TournamentDetailPage />} />

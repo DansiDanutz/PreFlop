@@ -93,3 +93,17 @@ export const tournamentDetailSchema = z.object({
   you: nullable(standingSchema.extend({ bets: z.array(tournamentBetSchema) }).passthrough()),
   server_time: isoTime,
 }).passthrough();
+
+// ------------------------------------------------------------------ news
+
+const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+export const newsCardSchema = z.object({
+  id: z.string().min(1), slug, title: z.string(), summary: z.string(), tags: z.array(z.string()), published_at: isoTime,
+}).passthrough();
+export const newsListSchema = z.object({ posts: z.array(newsCardSchema) }).passthrough();
+export const newsPostSchema = newsCardSchema.extend({ body: z.string(), updated_at: isoTime }).passthrough();
+export const adminNewsSchema = z.object({
+  id: z.string().min(1), slug, title: z.string(), summary: z.string(), body: z.string(), tags: z.array(z.string()),
+  status: z.enum(['draft', 'published']), published_at: nullable(isoTime), author_id: nullable(z.string()), created_at: isoTime, updated_at: isoTime,
+}).passthrough();
+export const adminNewsListSchema = z.object({ posts: z.array(adminNewsSchema) }).passthrough();

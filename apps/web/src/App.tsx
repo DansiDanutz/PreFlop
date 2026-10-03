@@ -34,6 +34,12 @@ const ResponsiblePage = lazyNamed(legal, 'ResponsiblePage');
 const TermsPage = lazyNamed(legal, 'TermsPage');
 const OddsPage = lazyNamed(() => import('./pages/site/Odds.tsx'), 'OddsPage');
 const DemoPage = lazyNamed(() => import('./pages/site/Demo.tsx'), 'DemoPage');
+const AgentsPage = lazyNamed(() => import('./pages/site/Agents.tsx'), 'AgentsPage');
+const FairnessPage = lazyNamed(() => import('./pages/site/Fairness.tsx'), 'FairnessPage');
+const PlayersPage = lazyNamed(() => import('./pages/site/Players.tsx'), 'PlayersPage');
+const news = () => import('./pages/site/News.tsx');
+const NewsPage = lazyNamed(news, 'NewsPage');
+const NewsArticlePage = lazyNamed(news, 'NewsArticlePage');
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -60,6 +66,11 @@ export function App() {
           <Route path="clubs" element={<ForClubsPage />} />
           <Route path="partners" element={<ForPartnersPage />} />
           <Route path="organizers" element={<ForOrganizersPage />} />
+          <Route path="players" element={<PlayersPage />} />
+          <Route path="agents" element={<AgentsPage />} />
+          <Route path="fairness" element={<FairnessPage />} />
+          <Route path="news" element={<NewsPage />} />
+          <Route path="news/:slug" element={<NewsArticlePage />} />
           <Route path="responsible-gaming" element={<ResponsiblePage />} />
           <Route path="terms" element={<TermsPage />} />
           <Route path="privacy" element={<PrivacyPage />} />
