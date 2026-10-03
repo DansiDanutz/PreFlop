@@ -129,7 +129,7 @@ describe('partner widget settings', () => {
   let owner: { token: string; email: string };
   beforeAll(async () => {
     const email = `widget-${Date.now()}@test.dev`;
-    const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: 'Widget owner' });
+    const r = await h.api('POST', '/v1/auth/register', undefined, { email, password: 'correct horse', display_name: 'Widget owner', date_of_birth: '1990-01-01', country: 'MT' });
     owner = { token: r.body.token, email };
     org = await ownedOrg(h, admin, { kind: 'partner', name: 'Widget Partner' }, owner);
   });
