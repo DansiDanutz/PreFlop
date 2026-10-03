@@ -75,6 +75,12 @@ export const intentStore = {
   },
   save(i: BetIntent) { writeJson(KEYS.betIntent, i, 'session'); },
   clear() { writeString(KEYS.betIntent, null, 'session'); },
+  /**
+   * Updates or clears only while the stored intent is still this one (same key). A screen that was
+   * left, or an old request's late answer or retry, can never touch a newer intent's saved key.
+   */
+  saveIf(i: BetIntent) { if (this.load()?.key === i.key) this.save(i); },
+  clearIf(key: string) { if (this.load()?.key === key) this.clear(); },
 };
 
 // ---------------------------------------------------------------------------------- outcomes
@@ -119,7 +125,17 @@ export async function submitIntent(api: Api, i: BetIntent, o: { attempts?: numbe
     try {
       return { kind: 'placed', bet: await api.placeBet(intentBody(i), i.key) };
     } catch (e) {
-      if (isDefinitiveRefusal(e)) return { kind: 'refused', error: e };
+      if (isDefinitiveRefusal(e)) {
+        // A first request refused: nothing exists for the key. A RETRY refused proves nothing about
+        // the earlier, uncertain request (a 429 or a pre-check fails before the key is looked up),
+        // which may have committed or still be in flight: look the key up, else stay unknown.
+        if (n === 0) return { kind: 'refused', error: e };
+        try {
+          const bet = await findPlaced(api, i);
+          if (bet) return { kind: 'placed', bet };
+        } catch { /* still unknown */ }
+        return { kind: 'unknown', error: e };
+      }
       last = e;
     }
   }

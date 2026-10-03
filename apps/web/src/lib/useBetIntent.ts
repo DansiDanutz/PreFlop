@@ -25,8 +25,10 @@ export function useBetIntent(h: {
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
-  const settle = useCallback(() => {
-    intentStore.clear();
+  // The stored intent is cleared only if it is still this key: a screen mounted later may have
+  // started a newer intent, which a late answer here must never erase.
+  const settle = useCallback((key: string) => {
+    intentStore.clearIf(key);
     if (!alive.current) return;
     setPending(null);
     setStatus('idle');
@@ -38,11 +40,11 @@ export function useBetIntent(h: {
     setPending(cur);
     setStatus('sending');
     const out = await submitIntent(api, cur, {
-      onSend: (i) => { cur = Object.freeze({ ...i, sentAt: Date.now() }); intentStore.save(cur); },
+      onSend: (i) => { cur = Object.freeze({ ...i, sentAt: Date.now() }); intentStore.saveIf(cur); },
     });
-    if (out.kind === 'placed') { settle(); handlers.current.onPlaced(out.bet, intent); }
-    else if (out.kind === 'refused') { settle(); handlers.current.onRefused(out.error, intent); }
-    else if (out.kind === 'not_placed') { settle(); handlers.current.onNotPlaced(intent); }
+    if (out.kind === 'placed') { settle(intent.key); handlers.current.onPlaced(out.bet, intent); }
+    else if (out.kind === 'refused') { settle(intent.key); handlers.current.onRefused(out.error, intent); }
+    else if (out.kind === 'not_placed') { settle(intent.key); handlers.current.onNotPlaced(intent); }
     else if (alive.current) { setPending(cur); setStatus('checking'); handlers.current.onUnknown(intent); }
   }, [settle]);
 
@@ -53,8 +55,8 @@ export function useBetIntent(h: {
     const tick = async () => {
       const out = await reconcileIntent(api, pending);
       if (stop) return;
-      if (out.kind === 'placed') { settle(); handlers.current.onPlaced(out.bet, pending); }
-      else if (out.kind === 'not_placed') { settle(); handlers.current.onNotPlaced(pending); }
+      if (out.kind === 'placed') { settle(pending.key); handlers.current.onPlaced(out.bet, pending); }
+      else if (out.kind === 'not_placed') { settle(pending.key); handlers.current.onNotPlaced(pending); }
     };
     void tick();
     const t = setInterval(() => void tick(), 3000);

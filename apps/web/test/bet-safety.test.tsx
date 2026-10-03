@@ -20,7 +20,7 @@ interface FakeBet { bet_id: string; key: string; body: Record<string, unknown> }
  * Behaves like the API: a key that was used replays the stored bet; a new key debits and stores
  * one. `drop` makes the network lose the response AFTER the server committed.
  */
-function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number } = {}) {
+function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number; rateLimitRetries?: boolean } = {}) {
   const bets: FakeBet[] = [];
   const round = { state: 'OPEN' };
   let drops = o.drop ?? 0;
@@ -32,6 +32,8 @@ function fakeApi(o: { drop?: number; fail5xxAfterCommit?: number; price?: number
       const key = new Headers(init.headers).get('idempotency-key')!;
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       posts.push({ key, body });
+      // the API's rate limit answers before the key is even looked up
+      if (o.rateLimitRetries && posts.length > 1) return new Response(JSON.stringify({ type: 'rate_limited', title: 'slow down', status: 429 }), { status: 429 });
       let bet = bets.find((b) => b.key === key);
       if (!bet) {
         if (o.price !== undefined) {
@@ -98,6 +100,27 @@ describe('F07: an uncertain bet is retried with the same key and never debited t
     expect(out.kind).toBe('placed');
     expect(f.bets).toHaveLength(1);
     expect(f.fetchMock.mock.calls.some(([u]) => String(u).includes('/v1/me/bets?round_id=sim-1%3Ah7'))).toBe(true);
+  });
+
+  it('a retry refused with 429 after the first request committed: found by the key, reported placed', async () => {
+    const f = fakeApi({ drop: 1, rateLimitRetries: true });
+    const out = await submitIntent(f.api, newIntent(inputs), { wait: noWait });
+    expect(out.kind).toBe('placed');
+    expect(f.bets).toHaveLength(1);
+  });
+
+  it('a retry refused while the first request is not visible yet: unknown (kept and checked), never refused', async () => {
+    const f = fakeApi();
+    let posts = 0;
+    const net = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method !== 'POST') return net(url, init);
+      // the first request is lost (or still waiting on a lock); every retry is rate-limited
+      if (posts++ === 0) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({ type: 'rate_limited', title: 'slow down', status: 429 }), { status: 429 });
+    });
+    const out = await submitIntent(f.api, newIntent(inputs), { wait: noWait });
+    expect(out.kind).toBe('unknown');
   });
 
   it('a definitive refusal (4xx) is not retried', async () => {
@@ -177,6 +200,17 @@ describe('F07: a pending intent survives a reload and is reconciled before anoth
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     const api = createClient({ baseUrl: 'https://api.test' });
     expect((await reconcileIntent(api, { ...newIntent(inputs), sentAt: 0 })).kind).toBe('unknown');
+  });
+
+  it('a late answer for an old intent never erases or overwrites a newer one', () => {
+    const old = newIntent(inputs);
+    const newer = newIntent(inputs);
+    intentStore.save(newer); // a screen mounted later started another bet
+    intentStore.clearIf(old.key);
+    intentStore.saveIf({ ...old, sentAt: 5 });
+    expect(intentStore.load()?.key).toBe(newer.key);
+    intentStore.clearIf(newer.key);
+    expect(intentStore.load()).toBeNull();
   });
 
   it('stores in sessionStorage, ignores junk, and never throws when storage is blocked', () => {

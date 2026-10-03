@@ -15,7 +15,8 @@ import { useStream } from './stream.ts';
  */
 export const reconnectKeys = (tableId: string) => [qk.table(tableId), qk.lobby, qk.bets, qk.wallets] as const;
 
-export interface PlacedBet { betId: string; roundId: string; selectionId: string; stakeMinor: number; oddsCenti: number; status: string }
+/** A bet shown on the table. Each keeps its own wallet currency: one table can hold bets from several wallets (rooms). */
+export interface PlacedBet { betId: string; roundId: string; selectionId: string; stakeMinor: number; oddsCenti: number; status: string; currency: string }
 
 /**
  * Everything live about one table for the player: the table state (patched from WS), the reveal
@@ -120,7 +121,7 @@ export function useTableLive(tableId: string) {
       if (stopped.current) return;
       const here = bets.filter((b: MyBet) => b.table_id === tableId);
       setPlaced((cur) => [...cur, ...here.filter((b) => !cur.some((c) => c.betId === b.bet_id)).map((b) => ({
-        betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status,
+        betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status, currency: b.currency,
       }))]);
     }).catch(() => {});
   }, [token, tableId]);

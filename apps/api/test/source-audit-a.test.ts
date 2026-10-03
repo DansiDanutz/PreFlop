@@ -439,6 +439,18 @@ describe('Email: per-message backoff and a bounded number of attempts', () => {
     expect(m.email_outbox.failed).toBeGreaterThanOrEqual(1);
   });
 
+  it('a provider that hangs costs one bounded attempt, not the worker', async () => {
+    await h.db.query(`update email_outbox set status = 'sent', sent_at = now(), body = '' where status = 'pending'`);
+    const to = `hang-${Date.now()}@sa.dev`;
+    await tx(h.db, (c) => queueMail(c, { to, template: 'verify_email', subject: 's', text: 'b' }));
+    const hang: MailTransport = { name: 'hang', send: () => new Promise(() => {}) };
+    const t0 = Date.now();
+    expect(await deliverMail(h.db, hang, 'x', 5, 200)).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect((await h.db.query('select status, attempts, last_error from email_outbox where to_email = $1', [to])).rows[0])
+      .toMatchObject({ status: 'pending', attempts: 1, last_error: 'send timed out after 200 ms' });
+  });
+
   it('an expired link is never sent late, a replaced one is never sent at all, and dead messages lose their link', async () => {
     await h.db.query(`update email_outbox set status = 'sent', sent_at = now(), body = '' where status = 'pending'`);
     const to = `late-${Date.now()}@sa.dev`;

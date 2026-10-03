@@ -83,6 +83,15 @@ export async function expireMail(db: Db | Tx): Promise<number> {
       where status = 'pending' and expires_at is not null and expires_at <= now()`)).rowCount ?? 0;
 }
 
+/** Longest wait for one send; a provider that hangs counts as a failed attempt (retried later). */
+export const MAIL_SEND_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`send timed out after ${ms} ms`)), ms); });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
 /** Attempts per message before it is marked failed. */
 export const MAIL_MAX_ATTEMPTS = 8;
 /** Wait before attempt n+1 after n failures: 1 min, 2, 4, … capped at 6 h. */
@@ -102,7 +111,7 @@ export const mailStats = { sent: 0, failedAttempts: 0, gaveUp: 0, expired: 0 };
  * It runs on its own loop (startWorker), never inside the game tick: a slow provider or a backlog
  * cannot delay settlement, refunds or the heartbeat.
  */
-export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20): Promise<number> {
+export async function deliverMail(db: Db, transport: MailTransport | null, from: string, limit = 20, sendTimeoutMs = MAIL_SEND_TIMEOUT_MS): Promise<number> {
   if (!transport) return 0;
   mailStats.expired += await expireMail(db);
   let sent = 0;
@@ -122,7 +131,7 @@ export async function deliverMail(db: Db, transport: MailTransport | null, from:
       }
       tried.push(m.id);
       try {
-        await transport.send({ from, to: m.to_email, subject: m.subject, text: m.body, template: m.template });
+        await withTimeout(transport.send({ from, to: m.to_email, subject: m.subject, text: m.body, template: m.template }), sendTimeoutMs);
         await c.query(`update email_outbox set status = 'sent', sent_at = now(), attempts = attempts + 1, body = '', last_error = null where id = $1`, [m.id]);
         mailStats.sent++;
         sent++;

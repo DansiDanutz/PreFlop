@@ -115,6 +115,41 @@ describe('F11: partner tiers compare one unit (EUR cents)', () => {
   });
 });
 
+describe('F11: tier turnover is converted once per partner and currency', () => {
+  it('two clubs supplying 15,000 micro-USDT each count as 3 EUR cents, not 1 + 1', async () => {
+    const c1 = await club('club-round-1', 'Round One');
+    const c2 = await club('club-round-2', 'Round Two');
+    const p = await partner('partner-round', 'RoundBet');
+    const at = '2023-05-10T12:00:00Z';
+    await settled({ clubId: c1.id, user: 'u-r1', currency: 'USDT', stake: 15_000, payout: 0, at, partnerId: p.id });
+    await settled({ clubId: c2.id, user: 'u-r2', currency: 'USDT', stake: 15_000, payout: 0, at, partnerId: p.id });
+    const [st] = await orgStatements(h.db, p, '2023-05');
+    expect(line(st!, /^distribution/).metric).toBe(3);
+  });
+});
+
+describe('Statements cache', () => {
+  it('a period is computed once and recomputed as soon as a bet changes', async () => {
+    const c = await club('club-cache', 'Cache Club');
+    const at = '2023-06-10T12:00:00Z';
+    const id = await settled({ clubId: c.id, user: 'u-k1', stake: 10_000, payout: 0, at });
+    const a = await orgStatements(h.db, c, '2023-06');
+    const calls: string[] = [];
+    const q = h.db.query.bind(h.db);
+    (h.db as { query: unknown }).query = (sql: string, ...rest: unknown[]) => { calls.push(String(sql)); return (q as (...x: unknown[]) => unknown)(sql, ...rest); };
+    try {
+      expect(await orgStatements(h.db, c, '2023-06')).toEqual(a);
+      expect(calls.some((sql) => sql.includes('group by 1, 2, 3, 4'))).toBe(false); // served from the cache
+    } finally {
+      (h.db as { query: unknown }).query = q;
+    }
+    // a backdated correction: the counter moves, the next read recomputes
+    await h.db.query(`update bets set payout_minor = 20_000, status = 'won' where id = $1`, [id]);
+    const b = await orgStatements(h.db, c, '2023-06');
+    expect(b).not.toEqual(a);
+  });
+});
+
 describe('F12: losses carry forward per (org, currency, policy)', () => {
   const months = ['2024-03', '2024-04', '2024-05'];
   let c: { id: string; kind: string; name: string };

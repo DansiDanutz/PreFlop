@@ -71,6 +71,27 @@ export interface PeriodShares {
  */
 export async function periodShares(db: Db, periodIn?: string): Promise<PeriodShares> {
   const period = validPeriod(periodIn);
+  // The joint statement is platform-wide by design (one cap per pool across clubs and partners,
+  // losses carried from every earlier month), so it is computed once per period and shared by
+  // every organization's statement. It is recomputed when bets change (bets_change_seq, migration
+  // 018) and at least every SHARES_TTL_MS (the counter is read before computing, so a change that
+  // commits during a computation is picked up by the TTL at worst).
+  const version = (await db.query<{ v: string }>('select last_value::text as v from bets_change_seq')).rows[0]!.v;
+  let perDb = sharesCache.get(db);
+  if (!perDb) sharesCache.set(db, perDb = new Map());
+  const hit = perDb.get(period);
+  if (hit && hit.version === version && Date.now() - hit.at < SHARES_TTL_MS) return hit.value;
+  const value = computePeriodShares(db, period);
+  perDb.set(period, { version, at: Date.now(), value });
+  value.catch(() => { if (perDb.get(period)?.value === value) perDb.delete(period); });
+  return value;
+}
+
+/** Longest a cached period result is reused even without a recorded change to bets. */
+export const SHARES_TTL_MS = 60_000;
+const sharesCache = new WeakMap<Db, Map<string, { version: string; at: number; value: Promise<PeriodShares> }>>();
+
+async function computePeriodShares(db: Db, period: string): Promise<PeriodShares> {
   const rows = await cellRows(db, period);
   const current = rows.filter((r) => r.month === period);
   const history = rows.filter((r) => r.month < period);
@@ -84,9 +105,17 @@ export async function periodShares(db: Db, periodIn?: string): Promise<PeriodSha
       where b.status in ('won','lost') and b.house_kind = 'preflop' and b.partner_id is null and to_char(b.placed_at, 'YYYY-MM') = $1
       group by 1, 2`, [period])).rows.map((r) => [`${r.club}\u0000${r.currency}`, Number(r.n)]));
   // Partner tiers use the partner's turnover in ALL currencies, normalised to EUR cents (docs/09 §1).
+  // Minor units are summed per partner and currency first, then converted once: rounding each
+  // club's bucket separately would make the same turnover count less when more clubs supplied it.
+  const partnerTurnover = new Map<string, Map<string, number>>();
+  for (const r of current) if (r.partner !== null) {
+    const byCur = partnerTurnover.get(r.partner) ?? new Map<string, number>();
+    byCur.set(r.currency, (byCur.get(r.currency) ?? 0) + r.turnover);
+    partnerTurnover.set(r.partner, byCur);
+  }
   const partnerTierCents = new Map<string, number>();
-  for (const r of current) if (r.partner !== null)
-    partnerTierCents.set(r.partner, (partnerTierCents.get(r.partner) ?? 0) + tierTurnoverEurCents(r.currency, r.turnover));
+  for (const [partner, byCur] of partnerTurnover)
+    partnerTierCents.set(partner, [...byCur].reduce((a, [cur, minor]) => a + tierTurnoverEurCents(cur, minor), 0));
 
   const byCurrency: PeriodShares['byCurrency'] = new Map();
   for (const currency of [...new Set(current.map((r) => r.currency))].sort()) {

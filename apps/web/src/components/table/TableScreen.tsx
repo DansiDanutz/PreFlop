@@ -154,7 +154,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
 
   const bet = useBetIntent({
     onPlaced: (b, intent) => {
-      if (intent.tableId === tableId) live.addPlaced({ betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status });
+      if (intent.tableId === tableId) live.addPlaced({ betId: b.bet_id, roundId: b.round_id, selectionId: b.selection_id, stakeMinor: b.stake_minor, oddsCenti: b.odds_centi, status: b.status, currency: b.currency });
       setProblem(null);
       const price = intent.roomId && pool ? 'in the pool' : `at ${formatOdds(b.odds_centi)}`;
       setPlacedMsg(`${nameOf(b.selection_id)} ${price} for ${amountLabel(b.stake_minor, b.currency)}. Good luck.`);
@@ -287,7 +287,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
                   <ul className="mt-2 flex flex-wrap gap-2">
                     {[...inFlight, ...thisRound].map((b) => (
                       <li key={b.betId} className={cx('rounded-[6px] border px-3 py-1.5 text-[13px]', b.roundId === openId ? 'border-accent/60 bg-accent-deep/30' : 'border-info/50')}>
-                        {nameOf(b.selectionId)} · {amountLabel(b.stakeMinor, currency)}
+                        {nameOf(b.selectionId)} · {amountLabel(b.stakeMinor, b.currency)}
                         {b.roundId !== openId && <span className="ml-1 text-muted">· awaiting flop</span>}
                       </li>
                     ))}
