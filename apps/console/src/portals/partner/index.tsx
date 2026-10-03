@@ -90,6 +90,8 @@ export function Webhooks() {
   const create = useAction(() => api.partnerCreateWebhook(id, { url: url.trim(), events }), { invalidate: [['org', id, 'webhooks']], onSuccess: (h) => { setCreated(h); setUrl(''); setTouched(false); } });
   const test = useAction((h: Webhook) => api.partnerTestWebhook(id, h.id), { invalidate: [['org', id, 'webhooks']], success: (d) => `Test delivery ${d.status}${d.last_error ? `: ${d.last_error}` : ''}.` });
   const remove = useAction((h: Webhook) => api.partnerDeleteWebhook(id, h.id), { invalidate: [['org', id, 'webhooks']], success: 'Webhook deleted.', onSuccess: () => setDel(null) });
+  // A disabled endpoint receives new events again once enabled; deliveries cancelled when it was disabled stay cancelled.
+  const enable = useAction((h: Webhook) => api.raw<{ ok: true }>('POST', `/v1/org/${encodeURIComponent(id)}/webhooks/${encodeURIComponent(h.id)}/enable`), { invalidate: [['org', id, 'webhooks']], success: 'Webhook enabled. New events will be delivered.' });
   const close = () => { setCreating(false); setCreated(null); setEvents([...WEBHOOK_EVENTS]); };
   return (
     <>
@@ -108,8 +110,12 @@ export function Webhooks() {
                   {
                     key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', cell: (h) => write ? (
                       <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="secondary" disabled={test.isPending} onClick={() => test.mutate(h)}><Send size={13} aria-hidden />Test</Button>
-                        <Button size="sm" variant="ghost" className="!text-danger" onClick={() => setDel(h)}>Delete</Button>
+                        {h.active ? (
+                          <>
+                            <Button size="sm" variant="secondary" disabled={test.isPending} onClick={() => test.mutate(h)}><Send size={13} aria-hidden />Test</Button>
+                            <Button size="sm" variant="ghost" className="!text-danger" onClick={() => setDel(h)}>Delete</Button>
+                          </>
+                        ) : <Button size="sm" variant="secondary" disabled={enable.isPending} onClick={() => enable.mutate(h)}>Enable</Button>}
                       </div>
                     ) : null,
                   },

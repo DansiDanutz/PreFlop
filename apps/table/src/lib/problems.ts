@@ -14,6 +14,8 @@ const MESSAGES: Record<string, string> = {
   unsigned_request: 'Request was not signed.',
   invalid_flop: 'Choose exactly three different cards.',
   review_expired: 'The review deadline passed. The hand was voided and refunded.',
+  platform_review_required: 'Real money rides on this hand, so the PreFlop team decides it. Contact PreFlop support.',
+  platform_resume_required: 'This table is on an integrity hold (outcome monitor, failed captures or a PreFlop decision). Only the PreFlop team can lift it.',
   idempotency_mismatch: 'A retry did not match the original request. Start the action again.',
   retry_later: 'Server busy. Retry.',
   not_found: 'Not found.',
