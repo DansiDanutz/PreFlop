@@ -1,14 +1,15 @@
 import { Badge, PlayingCard, Spinner, cx } from '@preflop/ui';
 import { AlertOctagon, Ban, Camera, CameraOff, CircleSlash, Gavel, Hourglass, Pause, Play, RefreshCw, Scale, UserRound, X } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionStatus, BigButton, Choice, HoldButton, Sheet } from '../components/controls.tsx';
 import { FlopEntry } from '../components/FlopEntry.tsx';
 import { StateBadge } from '../components/RoundBits.tsx';
 import { ApiProblem, type TableApi } from '../lib/api.ts';
 import { sameFlop } from '../lib/cards.ts';
+import { EvidenceLoader, type EvidenceStatus, type EvidenceView, decisionAllowed, viewFor } from '../lib/evidence.ts';
 import { type Live, type Runner, myEntry, useNow } from '../lib/hooks.ts';
 import { type Countdown, type TrackedReview, reviewAlert, reviewCountdown, reviewDeadlineMs, trackReviews } from '../lib/review.ts';
-import type { Evidence, Round } from '../lib/types.ts';
+import type { Round } from '../lib/types.ts';
 import { FloorScreen } from './Floor.tsx';
 
 type Tab = 'hand' | 'review' | 'table';
@@ -33,23 +34,18 @@ const reasonText = (v: string | null, other: string) => (v === 'other' ? other.t
 
 // ------------------------------------------------------------------ review
 
+/**
+ * Evidence for one round, keyed by its id (lib/evidence.ts): switching hands aborts the earlier
+ * request and ignores its late answer, and the view returned always belongs to `roundId`.
+ */
 function useEvidence(api: TableApi, roundId: string) {
-  const [ev, setEv] = useState<Evidence | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ok' | 'unavailable' | 'error'>('loading');
-  const [err, setErr] = useState<string>('');
-  const load = async () => {
-    setStatus('loading');
-    try {
-      setEv(await api.evidence(roundId));
-      setStatus('ok');
-    } catch (e) {
-      const p = e instanceof ApiProblem ? e : null;
-      if (p?.status === 404) setStatus('unavailable');
-      else { setStatus('error'); setErr(p?.message ?? String(e)); }
-    }
-  };
-  useEffect(() => { setEv(null); void load(); }, [roundId]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { ev, status, err, reload: load };
+  const [view, setView] = useState<EvidenceView | null>(null);
+  const loader = useMemo(() => new EvidenceLoader((id, signal) => api.evidence(id, signal), setView), [api]);
+  useEffect(() => {
+    void loader.load(roundId);
+    return () => loader.dispose();
+  }, [loader, roundId]);
+  return { view: viewFor(view, roundId), reload: () => void loader.load(roundId) };
 }
 
 function Section({ title, icon, children, className }: { title: ReactNode; icon?: ReactNode; children: ReactNode; className?: string }) {
@@ -100,7 +96,7 @@ function ReviewCountdownBar({ c, handNo }: { c: Countdown | null; handNo: number
  * camera image. Without an image the sheet says so plainly and asks for a press-and-hold instead.
  */
 function CameraCheckSheet({ handNo, image, camera, status, onConfirm, onClose }: {
-  handNo: number; image: string | null | undefined; camera: string[] | undefined; status: 'loading' | 'ok' | 'unavailable' | 'error'; onConfirm: () => void; onClose: () => void;
+  handNo: number; image: string | null | undefined; camera: string[] | undefined; status: EvidenceStatus; onConfirm: () => void; onClose: () => void;
 }) {
   return (
     <Sheet title={<>Settle hand {handNo}: check the camera</>} onClose={onClose} wide>
@@ -138,13 +134,24 @@ function CameraCheckSheet({ handNo, image, camera, status, onConfirm, onClose }:
   );
 }
 
+/**
+ * One round's review. Mounted with `key={r.id}`, so all of its state (mode, held reason, camera
+ * check, evidence) starts fresh for every round; on top of that, every decision checks that the
+ * evidence on screen belongs to the round it is about to decide (decisionAllowed).
+ */
 function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Record<string, string[]>; runner: Runner }) {
-  const { ev, status, err, reload } = useEvidence(api, r.id);
+  const { view, reload } = useEvidence(api, r.id);
+  const { ev, status, err } = view;
   const [mode, setMode] = useState<'view' | 'settle' | 'void'>('view');
   const [checking, setChecking] = useState(false);
   const [reason, setReason] = useState<VoidReason | null>(null);
   const [other, setOther] = useState('');
-  useEffect(() => { setMode('view'); setChecking(false); setReason(null); setOther(''); }, [r.id]);
+  const ready = decisionAllowed(view, r.id);
+  /** Runs a review decision for this round only if the evidence on screen is this round's. */
+  const decide = (d: Parameters<TableApi['review']>[1]) => {
+    if (!decisionAllowed(view, r.id)) return;
+    void runner.run(api.review(r.id, d));
+  };
   // Server time: the tablet clock corrected by the measured offset.
   const now = useNow(1000) + api.clockOffsetMs;
   const countdown = reviewCountdown(reviewDeadlineMs(r), now);
@@ -164,7 +171,7 @@ function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Re
         <FlopEntry resetKey={`${r.id}-settle`} busy={busy || expired} tone="warn" submitLabel={`Settle hand ${r.hand_no}`}
           title={<>Settle hand {r.hand_no} with cards</>} subtitle="Enter the flop the evidence shows. Bets pay on these cards."
           aside={<BigButton tone="neutral" onClick={() => setMode('view')}>Back to evidence</BigButton>}
-          onSubmit={(cards) => void runner.run(api.review(r.id, { action: 'settle', cards }))} />
+          onSubmit={(cards) => decide({ action: 'settle', cards })} />
       </div>
     );
   }
@@ -172,7 +179,7 @@ function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Re
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
     <ReviewCountdownBar c={countdown} handNo={r.hand_no} />
-    <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1.2fr_1fr]" data-testid="review-panel">
+    <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1.2fr_1fr]" data-testid="review-panel" data-round-id={r.id} data-evidence-round-id={view.roundId}>
       <div className="flex min-h-0 flex-col gap-4 overflow-auto">
         <Section title={<>Hand {r.hand_no} · review reasons</>} icon={<AlertOctagon className="h-4 w-4 text-warn" />}>
           <ul className="flex flex-col gap-2">
@@ -202,8 +209,8 @@ function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Re
           <Section title="Decision" icon={<Gavel className="h-4 w-4" />} className="flex flex-col">
             <p className="mb-4 text-base text-muted">Decide from the verified camera image. You cannot resolve a hand whose flop you entered.</p>
             <div className="flex flex-col gap-3">
-              <BigButton tone="warn" className="h-20 text-2xl" disabled={busy || expired} onClick={() => setChecking(true)} data-testid="btn-settle-cards"><Scale className="h-7 w-7" /> SETTLE WITH CARDS</BigButton>
-              <BigButton tone="neutral" className="h-16 text-xl" disabled={busy || expired} onClick={() => setMode('void')}><CircleSlash className="h-6 w-6 text-danger" /> VOID HAND</BigButton>
+              <BigButton tone="warn" className="h-20 text-2xl" disabled={busy || expired || !ready} onClick={() => setChecking(true)} data-testid="btn-settle-cards"><Scale className="h-7 w-7" /> SETTLE WITH CARDS</BigButton>
+              <BigButton tone="neutral" className="h-16 text-xl" disabled={busy || expired || !ready} onClick={() => setMode('void')}><CircleSlash className="h-6 w-6 text-danger" /> VOID HAND</BigButton>
             </div>
           </Section>
         )}
@@ -212,8 +219,8 @@ function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Re
             <ReasonPicker options={VOID_REASONS} value={reason} onChange={setReason} other={other} setOther={setOther} />
             <div className="mt-4 flex gap-3">
               <BigButton tone="neutral" className="flex-1" onClick={() => setMode('view')}>Back</BigButton>
-              <HoldButton tone="danger" className="flex-[2] text-lg" ms={900} busy={busy} disabled={expired || !reasonText(reason, other)}
-                onHold={() => void runner.run(api.review(r.id, { action: 'void', reason: reasonText(reason, other) }))}>Void · refund all</HoldButton>
+              <HoldButton tone="danger" className="flex-[2] text-lg" ms={900} busy={busy} disabled={expired || !ready || !reasonText(reason, other)}
+                onHold={() => decide({ action: 'void', reason: reasonText(reason, other) })}>Void · refund all</HoldButton>
             </div>
           </Section>
         )}
@@ -221,7 +228,7 @@ function ReviewPanel({ api, r, mem, runner }: { api: TableApi; r: Round; mem: Re
     </div>
     {checking && (
       <CameraCheckSheet handNo={r.hand_no} image={ev?.image_data_url} camera={camera} status={status}
-        onClose={() => setChecking(false)} onConfirm={() => { setChecking(false); setMode('settle'); }} />
+        onClose={() => setChecking(false)} onConfirm={() => { setChecking(false); if (decisionAllowed(view, r.id)) setMode('settle'); }} />
     )}
     </div>
   );
@@ -372,7 +379,7 @@ export function ManagerScreen({ api, live, mem, runner, submitFlop }: {
             {reviews.length > 1 && (
               <div className="flex gap-2">{[...reviews].sort((a, b) => a.hand_no - b.hand_no).map((r) => <BigButton key={r.id} tone={r.id === current?.id ? 'warn' : 'neutral'} onClick={() => setPick(r.id)}>Hand {r.hand_no}</BigButton>)}</div>
             )}
-            {current ? <div className="min-h-0 flex-1"><ReviewPanel api={api} r={current} mem={mem} runner={runner} /></div> : (
+            {current ? <div className="min-h-0 flex-1"><ReviewPanel key={current.id} api={api} r={current} mem={mem} runner={runner} /></div> : (
               <div className="grid flex-1 place-items-center rounded-[22px] border border-dashed border-line-strong text-center">
                 <div><div className="font-serif text-4xl">No hands in review</div><p className="mt-2 text-lg text-muted">When the dealer, floor and camera disagree, the hand appears here.</p>
                   {s?.rounds[0] && <div className="mt-4"><StateBadge r={s.rounds[0]} /></div>}</div>
