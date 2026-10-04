@@ -27,7 +27,7 @@ Staging runs the real product against **simulated tables**:
 1. **Supabase Postgres** (staging moved here on 4 Oct 2026, when the Neon free-plan quota ran out: the API and worker keep the database busy around the clock)
    1. In an existing Supabase project (eu-central-1), create a login role and a database it owns: `create role preflop_staging login password '<40 random hex chars>' connection limit 40; grant preflop_staging to postgres; create database preflop_staging owner preflop_staging;`.
    2. Use the **direct** connection, not the pooler: `postgres://preflop_staging:<password>@db.<ref>.supabase.co:5432/preflop_staging?sslmode=verify-full`. The direct host is IPv6-only, which Fly machines reach; the pooler (Supavisor) drops the session settings and advisory locks the API relies on.
-   3. Supabase signs the database certificate with its own CA, so the Dockerfile fetches `supabase-prod-ca-2021.crt` into the image and the Fly configs point `NODE_EXTRA_CA_CERTS` at it; `verify-full` then checks the certificate and the host name. The API refuses a remote database without TLS.
+   3. Supabase signs the database certificate with its own CA, so `deploy/supabase-ca.crt` (Supabase Root 2021 CA, from the project's Database settings → SSL) is copied into the image and the Fly configs point `NODE_EXTRA_CA_CERTS` at it; `verify-full` then checks the certificate and the host name. The API refuses a remote database without TLS.
 2. **Fly.io**
    1. Create an account, then `fly auth login`.
    2. Create the apps:
