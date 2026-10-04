@@ -30,9 +30,15 @@ export const Answer = z.discriminatedUnion('type', [
 export type Answer = z.infer<typeof Answer>;
 export type Answers = Record<string, Answer>;
 
-/** A noul answer read as a verdict: yes when the probability is at least one half, with the confidence in that verdict. */
-export const noulVerdict = (a: Answer | undefined): { yes: boolean; confidence: number } | null =>
-  a?.type === 'noul' ? { yes: a.noul >= 0.5, confidence: Math.max(a.noul, 1 - a.noul) } : null;
+/**
+ * A noul answer read as a verdict: yes when the probability of yes is at least `sure` (one half by
+ * default), with the confidence in the verdict given, max(p, 1 - p).
+ */
+export const noulVerdict = (a: Answer | undefined, sure = 0.5): { yes: boolean; confidence: number } | null =>
+  a?.type === 'noul' ? { yes: a.noul >= sure, confidence: Math.max(a.noul, 1 - a.noul) } : null;
+
+/** The reading check pre-fills a card only when the model is this sure; a near-even answer is "check by eye". */
+export const READING_SURE = 0.7;
 
 const Response = z.object({
   model: z.string().optional(),

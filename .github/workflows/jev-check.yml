@@ -33,7 +33,7 @@ jobs:
           # Only the status and a verdict are printed; the response body never is.
           case "$code" in
             200)
-              if jq -e '.answers.accept.type == "noul" and (.answers.accept.noul | type) == "number"' /tmp/jev.json >/dev/null 2>&1; then
+              if jq -e '.answers.accept.type == "noul" and (.answers.accept.noul | type) == "number" and .answers.accept.noul >= 0 and .answers.accept.noul <= 1' /tmp/jev.json >/dev/null 2>&1; then
                 echo "verdict: the key works and the answer is one the API accepts"
               else
                 echo "verdict: 200 but the answer is missing or not a noul answer; the API would reject it"
