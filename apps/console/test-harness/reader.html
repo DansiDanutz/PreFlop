@@ -9,9 +9,15 @@
 -->
 <canvas id="felt" width="1280" height="720"></canvas>
 <script type="module">
+  // The same bundled fonts the console ships (main.tsx): the reader's glyph templates are drawn in
+  // Inter 700 as in the real app, and the cards' indices in Inter 600, so the scene does not depend on
+  // which system fonts a machine happens to have (Arial, Liberation, DejaVu … all read differently).
+  import '@fontsource/inter/600.css';
+  import '@fontsource/inter/700.css';
   import { loadCv } from '/src/lib/cards/opencv.ts';
   import { readCards } from '/src/lib/cards/reader.ts';
   const SUIT = { s: '♠', h: '♥', d: '♦', c: '♣' };
+  const INDEX_FONT = '600 56px "Inter"', PIP_FONT = '110px "Inter"';
   /** Draws the felt with cards ("Ah", "Ts", …) at the given centres and rotations (degrees). */
   window.drawScene = (cards) => {
     const c = document.getElementById('felt'), g = c.getContext('2d');
@@ -24,9 +30,9 @@
       g.fillStyle = '#fff'; g.beginPath(); g.roundRect(-95, -133, 190, 266, 10); g.fill();
       g.fillStyle = suit === 'h' || suit === 'd' ? '#d10f1f' : '#111';
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = 'bold 56px Arial'; g.fillText(rank, -95 + 30, -133 + 36);
-      g.font = '56px Arial'; g.fillText(SUIT[suit], -95 + 30, -133 + 92);
-      g.font = '110px Arial'; g.fillText(SUIT[suit], 0, 10);
+      g.font = INDEX_FONT; g.fillText(rank, -95 + 30, -133 + 36);
+      g.font = INDEX_FONT; g.fillText(SUIT[suit], -95 + 30, -133 + 92);
+      g.font = PIP_FONT; g.fillText(SUIT[suit], 0, 10);
       g.restore();
     }
   };
@@ -34,6 +40,9 @@
     const cv = await loadCv();
     return readCards(cv, document.getElementById('felt'));
   };
+  // Fonts must be in place before the first scene is drawn and before the reader draws its templates.
+  await Promise.all([document.fonts.load('bold 120px "Inter"'), document.fonts.load(INDEX_FONT), document.fonts.load(PIP_FONT)]);
+  await document.fonts.ready;
   window.harnessReady = true;
 </script>
 </body></html>

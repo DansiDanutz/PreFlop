@@ -63,6 +63,8 @@ describe('card reader on synthetic frames (OpenCV.js in Chromium)', () => {
   for (const s of SCENES) {
     it(`reads ${s.name}: ${s.flop.join(' ')}`, async () => {
       const r = await read(s.cards);
+      // Printed so a CI log shows how much headroom each scene has over the confidence floor.
+      console.info(`[reader.frame] ${s.name}: ${r.guesses.map((g) => `${g.card} ${(g.confidence * 100).toFixed(0)}% (margin ${(g.margin * 100).toFixed(0)}%)`).join(', ')} in ${r.ms} ms`);
       expect(r.flop).toEqual(s.flop);
       expect(r.guesses).toHaveLength(3);
       for (const g of r.guesses) {
