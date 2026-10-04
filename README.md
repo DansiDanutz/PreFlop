@@ -19,6 +19,7 @@ Clubs supply tables and live video. Betting companies integrate through an API a
 | `packages/db` | PostgreSQL 16 schema and migrations, including an append-only balanced ledger and a hash-chained audit log |
 | `apps/api` | Fastify API, WebSocket stream, worker (outbox, deadline sweeper, webhooks) and simulated tables. It implements `docs/13`. PostgreSQL integration tests plus a 10,000-round soak test |
 | `apps/web` | Public website and player app: an installable PWA (manifest, app-shell service worker that never caches API calls). Mobile-first, following Codex's concepts (`docs/15`), with the partner widget at `/embed` |
+| `apps/mobile` | The iOS and Android apps: a Capacitor shell that ships the player app (`apps/web`) inside a native app. CI builds an installable Android APK on every change (`apps/mobile/README.md`) |
 | `apps/console` | Dashboards for the PreFlop team, poker clubs, partners (betting companies) and organizers |
 | `apps/table` | Club tablet for the dealer, floor and floor manager. Each person has an Ed25519 key in WebCrypto, and every request is signed |
 | `packages/ui`, `packages/client` | Design tokens and components, and the typed API client (the contract) |
@@ -95,6 +96,7 @@ Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database pl
 | [`docs/15`](docs/15-app-design.md) | App design taken from Codex's mobile concepts |
 | [`docs/16`](docs/16-leaderboards-promotions-agents.md) · [`17`](docs/17-tournaments.md) | Leaderboards, prize pools, promotions and agents; tournaments |
 | [`docs/18`](docs/18-staging.md) | **Staging environment** (Vercel + Fly.io + Neon): setup, deploys, operations |
+| [`docs/19`](docs/19-manual-tables.md) | **Manual tables**: the PreFlop team types each flop in the console (free play only), the base for webcam card recognition |
 | [`docs/screens/`](docs/screens) | Screenshots of the web app, console and club tablet |
 | [`docs/odds-book.md`](docs/odds-book.md) · [`docs/profitability.md`](docs/profitability.md) | The generated odds book and P&L for each participant |
 

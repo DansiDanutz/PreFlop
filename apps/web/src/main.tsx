@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { App } from './App.tsx';
 import { isEmbed } from './lib/api.ts';
+import { isNativeApp } from './lib/native.ts';
 // Fonts are self-hosted (bundled from @fontsource): no third-party request, and the CSP stays 'self'.
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -31,8 +32,9 @@ createRoot(document.getElementById('root')!).render(
 );
 
 // Installable PWA: app-shell caching only; the service worker never stores API responses or the
-// partner widget (see public/sw.js). Not registered inside partner iframes (/embed).
-if (import.meta.env.PROD && 'serviceWorker' in navigator && !isEmbed()) {
+// partner widget (see public/sw.js). Not registered inside partner iframes (/embed), nor in the
+// native app, which already ships every file with it.
+if (import.meta.env.PROD && 'serviceWorker' in navigator && !isEmbed() && !isNativeApp()) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });

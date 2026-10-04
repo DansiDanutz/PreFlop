@@ -69,6 +69,7 @@ export function Settings() {
           const modes = (get('modes_enabled')?.value ?? {}) as Record<string, boolean>;
           const physical = get('physical_play_enabled')?.value === true;
           const staffMfa = get('require_staff_mfa')?.value === true;
+          const manual = get('manual_tables_enabled')?.value === true;
           return (
             <div className="grid gap-4 xl:grid-cols-2">
               <Section title="Play modes" subtitle={meta('modes_enabled')}>
@@ -103,6 +104,17 @@ export function Settings() {
                     <div className={cx('text-xs', physical ? 'text-danger' : 'text-muted')}>{physical ? 'ENABLED — physical tables can open rounds' : 'Disabled (default)'}</div>
                   </div>
                   <Toggle danger checked={physical} label="Physical-table play enabled" disabled={!isAdmin || save.isPending} onChange={(v) => setConfirmPhysical(v)} />
+                </div>
+              </Section>
+
+              <Section title="Manual tables" subtitle={meta('manual_tables_enabled') || 'Tables whose flop the PreFlop team types in Manual tables.'}>
+                <div className="flex items-center justify-between gap-4 rounded-[10px] border border-line px-4 py-3">
+                  <div>
+                    <div className="text-sm font-medium">Allow rounds on manual tables</div>
+                    <div className="text-xs text-muted">{manual ? 'On: manual tables open rounds. Play money and free chips only; every typed flop is audited.' : 'Off: manual tables open no rounds.'}</div>
+                  </div>
+                  <Toggle checked={manual} label="Manual tables enabled" disabled={!isAdmin || save.isPending}
+                    onChange={(v) => save.mutate({ key: 'manual_tables_enabled', value: v })} />
                 </div>
               </Section>
 

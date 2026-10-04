@@ -12,8 +12,9 @@ primary_region = "fra"
   TRUST_PROXY = "true"
   RUN_WORKER = "true"
   LOG = "1"
-  # The three staging sites, plus each Vercel preview deployment's unique URL (<project>-<hash>-<team>.vercel.app).
-  CORS_ORIGINS = "https://preflop-staging-web.vercel.app,https://preflop-staging-console.vercel.app,https://preflop-staging-table.vercel.app,https://preflop-staging-web-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-console-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-table-*-irises-projects-ce549f63.vercel.app"
+  # The three staging sites, each Vercel preview deployment's unique URL (<project>-<hash>-<team>.vercel.app),
+  # and the native apps (apps/mobile): capacitor://localhost on iOS, https://localhost on Android.
+  CORS_ORIGINS = "capacitor://localhost,https://localhost,https://preflop-staging-web.vercel.app,https://preflop-staging-console.vercel.app,https://preflop-staging-table.vercel.app,https://preflop-staging-web-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-console-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-table-*-irises-projects-ce549f63.vercel.app"
   # Secrets (fly secrets set): DATABASE_URL — Neon *direct* endpoint with ?sslmode=verify-full
 
 [http_service]

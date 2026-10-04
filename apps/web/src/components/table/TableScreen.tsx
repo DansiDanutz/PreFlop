@@ -239,7 +239,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
             <h1 className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
               <span className="font-serif text-[30px] leading-tight tracking-[-0.045em] @min-[640px]:text-[36px]">{room ? room.name : t.name}</span>
               <span className="text-[13px] text-ink/80">
-                {room ? `${room.org_name} · ${pool ? 'Player pool' : 'Organizer house'} · ${t.name}` : feltLabel(t.name) ? `${t.club_name} · ${t.city ?? 'Online'}` : (t.kind === 'simulated' ? 'Practice table' : 'Live table')}
+                {room ? `${room.org_name} · ${pool ? 'Player pool' : 'Organizer house'} · ${t.name}` : feltLabel(t.name) ? `${t.club_name} · ${t.city ?? 'Online'}` : (t.kind === 'simulated' ? 'Practice table' : t.kind === 'manual' ? 'Test table' : 'Live table')}
               </span>
             </h1>
           ) : <Skeleton className="h-10 w-64" />}
@@ -267,11 +267,11 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         {/* left: the table */}
         <div className="@min-[880px]:col-start-1 @min-[880px]:row-start-1">
           <section aria-label="The table" className="overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface">
-            <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} unavailable={unavailable} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)}
+            <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} unavailable={unavailable} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)} badgeText={t?.kind === 'manual' ? 'TEST TABLE' : 'SIMULATED TABLE'}
               onExpand={() => setExpanded(true)} className="h-[250px] @min-[640px]:h-[340px]" />
             <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 text-[12px] text-ink/85">
               <span>Previous flop · {prev ? roundLabel(prev.hand_no) : '—'}{prev && <span className="text-muted"> · {resultLine(prev.cards).replace('.', '')}</span>}</span>
-              <span className="text-right">{t?.kind === 'simulated' ? 'Simulated · Not a live stream' : 'Live table'}</span>
+              <span className="text-right">{t?.kind === 'simulated' ? 'Simulated · Not a live stream' : t?.kind === 'manual' ? 'Test table · Flop entered by the PreFlop team' : 'Live table'}</span>
             </div>
             <div className="border-b border-line px-4 py-5"><Steps phase={phase} /></div>
             <div className="px-6 py-8 @min-[640px]:px-8">
@@ -429,9 +429,9 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
           <span className="text-sm text-muted">{t?.name} · Previous flop · {prev ? roundLabel(prev.hand_no) : '—'}</span>
           <button type="button" onClick={() => setExpanded(false)} aria-label="Close table view" className="grid h-9 w-9 place-items-center rounded-[8px] border border-line"><X className="h-4 w-4" /></button>
         </div>
-        <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)} className="mt-4 h-[320px] rounded-[12px]" />
+        <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)} badgeText={t?.kind === 'manual' ? 'TEST TABLE' : 'SIMULATED TABLE'} className="mt-4 h-[320px] rounded-[12px]" />
         {prev && <p className="mt-4 text-center font-serif text-2xl">{resultLine(prev.cards)}</p>}
-        <p className="mt-2 text-center text-xs text-faint">Simulated table: the flop is real game data, shown on a practice felt.</p>
+        <p className="mt-2 text-center text-xs text-faint">{t?.kind === 'manual' ? 'Test table: the PreFlop team enters each flop after betting closes.' : 'Simulated table: the flop is real game data, shown on a practice felt.'}</p>
       </Sheet>
 
       <Sheet open={confirmReset} onClose={() => setConfirmReset(false)} title="Reset free chips">

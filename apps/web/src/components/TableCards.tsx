@@ -8,7 +8,7 @@ import { StreamView, feltLabel, feltTheme } from './StreamView.tsx';
 /** Two-digit table number for the card heading: "Table 04" → "TABLE 04", otherwise the city. */
 function tableCode(t: TableSummary) {
   const code = feltLabel(t.name);
-  return code && !/^table\s*\d+$/i.test(t.name.trim()) ? code : t.kind === 'simulated' ? 'PRACTICE TABLE' : 'LIVE TABLE';
+  return code && !/^table\s*\d+$/i.test(t.name.trim()) ? code : t.kind === 'simulated' ? 'PRACTICE TABLE' : t.kind === 'manual' ? 'TEST TABLE' : 'LIVE TABLE';
 }
 
 /** A table in the lobby or a club: felt with the last flop, name, club, status and Take a seat. */
@@ -19,7 +19,7 @@ export function TableCard({ t, saved, onToggleSave }: { t: TableSummary; saved: 
   const ready = !unavailable;
   return (
     <article className="flex w-full flex-col overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface">
-      <StreamView cards={t.last_flop?.cards} size="md" unavailable={unavailable} theme={feltTheme(t.club_id)} label={feltLabel(t.name)}
+      <StreamView cards={t.last_flop?.cards} size="md" unavailable={unavailable} theme={feltTheme(t.club_id)} label={feltLabel(t.name)} badgeText={t.kind === 'manual' ? 'TEST TABLE' : 'SIMULATED TABLE'}
         className="h-[190px] border-b border-white/5"
         action={
           <button type="button" onClick={onToggleSave} aria-pressed={saved} aria-label={saved ? `Remove ${t.name} from saved tables` : `Save ${t.name}`}
@@ -41,7 +41,7 @@ export function TableCard({ t, saved, onToggleSave }: { t: TableSummary; saved: 
         </Link>
         <div className="mt-4 flex flex-1 items-end justify-between gap-3 border-t border-line pt-4">
           <span className="pb-0.5 text-[12px] text-ink/80">
-            {t.city ?? 'Online'} <span className="mx-1 text-faint">/</span> {t.kind === 'simulated' ? 'Practice' : 'Live'}
+            {t.city ?? 'Online'} <span className="mx-1 text-faint">/</span> {t.kind === 'simulated' ? 'Practice' : t.kind === 'manual' ? 'Test' : 'Live'}
           </span>
           {unavailable ? (
             <span className="pb-0.5 text-[12px] text-ink/80">Check back later</span>

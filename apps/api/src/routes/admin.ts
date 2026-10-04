@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { statsOf } from '../bets/service.ts';
 import { audit, verifyAuditChain } from '../lib/audit.ts';
-import { retryCount, retryStats, tx } from '../lib/db.ts';
+import { type Tx, retryCount, retryStats, tx } from '../lib/db.ts';
+import { defaultRoundLossMinor } from '../lib/limits.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
@@ -13,12 +14,17 @@ import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
 import { platformStatements } from '../lib/statements.ts';
+import { manualFlop, manualLock } from '../rounds/manual.ts';
 import { MONITOR } from '../rounds/monitor.ts';
+import { manualTablesEnabled } from '../rounds/readiness.ts';
 import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound, withReviewDeadline } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
 import { RESERVED_SETTINGS } from './org.ts';
 import { endPartnerSessions } from './partner.ts';
+
+/** The club every manual table belongs to: the PreFlop team itself, not a partner club. */
+export const MANUAL_CLUB = 'club_preflop_manual';
 
 export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...roles: string[]) {
   const u = await ctx.user(req);
@@ -120,6 +126,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const { value, note } = Setting.parse(req.body);
     if (key === 'physical_play_enabled' && value !== false && value !== true) throw unprocessable('invalid_value', 'physical_play_enabled is true or false');
     if (key === 'modes_enabled' && (typeof value !== 'object' || value === null)) throw unprocessable('invalid_value', 'modes_enabled is an object of mode → boolean');
+    if (key === 'manual_tables_enabled' && value !== false && value !== true) throw unprocessable('invalid_value', 'manual_tables_enabled is true or false');
     if (key === 'require_staff_mfa' && value !== false && value !== true) throw unprocessable('invalid_value', 'require_staff_mfa is true or false');
     let stored = value;
     if (key === 'territories') {
@@ -394,6 +401,68 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     });
     publish(ev);
     return { ok: true };
+  });
+
+  // ---------------------------------------------------------------- manual tables (migration 020)
+  // The PreFlop team closes betting and types the flop; free play only (rounds/manual.ts).
+  app.post('/v1/admin/tables/manual', async (req) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const b = z.object({ name: z.string().trim().min(2).max(60), mode: z.enum(['play', 'virtual-chips']).default('play') }).parse(req.body);
+    const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
+    const id = newId('manual');
+    const ev = new EventBatch();
+    await tx(ctx.db, async (c) => {
+      await upsertClub(c, MANUAL_CLUB, 'PreFlop test tables');
+      await c.query(
+        `insert into poker_tables (id, club_id, name, mode, currency, kind, max_round_loss_minor) values ($1, $2, $3, $4, $5, 'manual', $6)`,
+        [id, MANUAL_CLUB, b.name, b.mode, currency, defaultRoundLossMinor(currency)]);
+      await audit(c, { type: 'table.created', tableId: id, kind: 'manual', mode: b.mode, by: u.id });
+      await ensureOpenRound(c, id, ev);
+    });
+    publish(ev);
+    return { id, name: b.name, kind: 'manual', mode: b.mode, currency };
+  });
+  app.get('/v1/admin/tables/manual', async (req) => {
+    await requirePlatform(ctx, req, 'admin', 'ops');
+    const tables = (await ctx.db.query<{ id: string; name: string; mode: string; currency: string; status: string; pause_reason: string | null }>(
+      `select id, name, mode, currency, status, pause_reason from poker_tables where kind = 'manual' order by name`)).rows;
+    const rounds = (await ctx.db.query<{ id: string; table_id: string; hand_no: number; state: string; opened_at: Date; locked_at: Date | null; settled_at: Date | null; flop: string[] | null; void_reason: string | null; bets: number; staked_minor: number }>(
+      `select distinct on (r.table_id) r.id, r.table_id, r.hand_no, r.state, r.opened_at, r.locked_at, r.settled_at, r.flop, r.void_reason,
+              (select count(*)::int from bets b where b.round_id = r.id) as bets,
+              (select coalesce(sum(stake_minor), 0)::bigint from bets b where b.round_id = r.id) as staked_minor
+         from rounds r join poker_tables t on t.id = r.table_id
+        where t.kind = 'manual' order by r.table_id, r.hand_no desc`)).rows;
+    const last = (await ctx.db.query<{ table_id: string; hand_no: number; flop: string[]; settled_at: Date }>(
+      `select distinct on (r.table_id) r.table_id, r.hand_no, r.flop, r.settled_at from rounds r join poker_tables t on t.id = r.table_id
+        where t.kind = 'manual' and r.state = 'SETTLED' order by r.table_id, r.hand_no desc`)).rows;
+    return {
+      enabled: await manualTablesEnabled(ctx.db),
+      result_sla_ms: ctx.config.resultSlaMs,
+      tables: tables.map((t) => ({ ...t, round: rounds.find((r) => r.table_id === t.id) ?? null, last_settled: last.find((r) => r.table_id === t.id) ?? null })),
+    };
+  });
+  const manualRound = async (c: Tx, tableId: string, handNo: number) => {
+    const r = (await c.query<{ id: string }>('select id from rounds where table_id = $1 and hand_no = $2', [tableId, handNo])).rows[0];
+    if (!r) throw notFound('round');
+    return lockRound(c, r.id);
+  };
+  app.post('/v1/admin/tables/:id/manual/lock', async (req) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const b = z.object({ hand_no: z.number().int().positive() }).parse(req.body);
+    const ev = new EventBatch();
+    const out = await tx(ctx.db, async (c) => manualLock(c, await manualRound(c, id, b.hand_no), u.id, ev));
+    publish(ev);
+    return out;
+  });
+  app.post('/v1/admin/tables/:id/manual/flop', async (req) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const b = z.object({ hand_no: z.number().int().positive(), cards: z.array(z.string()).length(3) }).parse(req.body);
+    const ev = new EventBatch();
+    const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ev));
+    publish(ev);
+    return out;
   });
 
   // ---------------------------------------------------------------- ledger & audit

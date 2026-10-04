@@ -24,7 +24,7 @@ const A = {
   Overview: lazyNamed(admin, 'Overview'), Tables: lazyNamed(admin, 'Tables'), ReviewQueue: lazyNamed(admin, 'ReviewQueue'), ReviewDetail: lazyNamed(admin, 'ReviewDetail'),
   Rounds: lazyNamed(admin, 'Rounds'), Risk: lazyNamed(admin, 'Risk'), Alerts: lazyNamed(admin, 'Alerts'), Users: lazyNamed(admin, 'Users'), Orgs: lazyNamed(admin, 'Orgs'),
   Ledger: lazyNamed(admin, 'Ledger'), Audit: lazyNamed(admin, 'Audit'), Statements: lazyNamed(admin, 'Statements'), Book: lazyNamed(admin, 'Book'),
-  Payments: lazyNamed(admin, 'Payments'), Settings: lazyNamed(admin, 'Settings'), News: lazyNamed(admin, 'News'),
+  Payments: lazyNamed(admin, 'Payments'), Settings: lazyNamed(admin, 'Settings'), News: lazyNamed(admin, 'News'), ManualTables: lazyNamed(admin, 'ManualTables'),
 };
 const O = {
   OrgOverviewPage: lazyNamed(org, 'OrgOverviewPage'), Members: lazyNamed(org, 'Members'), Players: lazyNamed(org, 'Players'), Statements: lazyNamed(org, 'Statements'),
@@ -72,6 +72,7 @@ export function App() {
       <Route path="/admin" element={shell}>
         <Route index element={<A.Overview />} />
         <Route path="tables" element={<A.Tables />} />
+        <Route path="manual" element={<A.ManualTables />} />
         <Route path="review" element={<A.ReviewQueue />} />
         <Route path="review/:roundId" element={<A.ReviewDetail />} />
         <Route path="rounds" element={<A.Rounds />} />

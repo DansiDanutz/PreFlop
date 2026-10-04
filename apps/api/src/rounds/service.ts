@@ -87,7 +87,7 @@ async function nextOrd(c: Tx, rid: string): Promise<number> {
   return (await c.query<{ n: number }>('select coalesce(max(ord), 0) + 1 as n from round_events where round_id = $1', [rid])).rows[0]!.n;
 }
 
-async function event(c: Tx, rid: string, step: string, credentialId: string | null): Promise<void> {
+export async function event(c: Tx, rid: string, step: string, credentialId: string | null): Promise<void> {
   await c.query('insert into round_events (round_id, ord, step, credential_id) values ($1, $2, $3, $4)', [rid, await nextOrd(c, rid), step, credentialId]);
 }
 
@@ -451,7 +451,7 @@ export async function settleRound(c: Tx, r: RoundRow, cards: string[], expected:
   const parsed = cards.map((x) => parseCard(x)) as [ReturnType<typeof parseCard>, ReturnType<typeof parseCard>, ReturnType<typeof parseCard>];
   const flop = flopFromCards(parsed);
   const won = await c.query(
-    `update rounds set state = 'SETTLED', settled_at = clock_timestamp(), flop = $3, flop_index = $4
+    `update rounds set state = 'SETTLED', settled_at = clock_timestamp(), flop = $3, flop_index = $4, flop_source = coalesce(flop_source, 'vision')
       where id = $1 and state = $2 returning id`,
     [r.id, expected, cards, flopIndex(parsed.map((x) => x.id) as unknown as [number, number, number])]);
   if (won.rowCount !== 1) return false;

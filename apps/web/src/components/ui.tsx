@@ -55,10 +55,11 @@ export function Tabs<T extends string>({ options, value, onChange, label, classN
   options: readonly { id: T; label: ReactNode }[]; value: T; onChange: (v: T) => void; label: string; className?: string;
 }) {
   return (
-    <div role="group" aria-label={label} className={cx('flex gap-1', className)}>
+    // On the narrowest phones the row scrolls sideways inside itself instead of widening the page.
+    <div role="group" aria-label={label} className={cx('flex max-w-full gap-1 overflow-x-auto [scrollbar-width:none]', className)}>
       {options.map((o) => (
         <button key={o.id} type="button" aria-pressed={value === o.id} onClick={() => onChange(o.id)}
-          className={cx('inline-flex h-11 shrink-0 items-center gap-2 rounded-[8px] border px-4 text-[15px] transition-colors',
+          className={cx('inline-flex h-11 shrink-0 items-center gap-2 rounded-[8px] border px-3 text-[14px] transition-colors min-[360px]:px-4 min-[360px]:text-[15px]',
             value === o.id ? 'border-line-strong bg-surface-3 text-ink' : 'border-transparent text-ink/80 hover:text-ink')}>
           {o.label}
         </button>

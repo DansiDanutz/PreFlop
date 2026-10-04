@@ -1,7 +1,7 @@
 import {
   Activity, AlertTriangle, BadgeEuro, BookOpen, Building2, Coins, CreditCard, Diamond, FileText, Gauge, Gem, KeyRound, LayoutDashboard,
   Landmark, ListChecks, Newspaper, Trophy, Swords, Gift, Plug, ScrollText, Settings, ShieldAlert, ShieldCheck, Table2, UserCog, Users, Webhook, Wallet, ArrowLeftRight, History, DoorOpen, Code2, Network,
-  type LucideIcon,
+  Keyboard, type LucideIcon,
 } from 'lucide-react';
 import type { PortalKind } from '../lib/portals.ts';
 
@@ -10,7 +10,7 @@ export interface NavGroup { label?: string; items: NavItem[] }
 
 export const NAV: Record<PortalKind, NavGroup[]> = {
   admin: [
-    { items: [{ to: '', label: 'Overview', icon: LayoutDashboard, end: true }, { to: 'tables', label: 'Live tables', icon: Table2 }] },
+    { items: [{ to: '', label: 'Overview', icon: LayoutDashboard, end: true }, { to: 'tables', label: 'Live tables', icon: Table2 }, { to: 'manual', label: 'Manual tables', icon: Keyboard }] },
     { label: 'Integrity', items: [
       { to: 'review', label: 'Review queue', icon: ListChecks },
       { to: 'rounds', label: 'Rounds explorer', icon: History },

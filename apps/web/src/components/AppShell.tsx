@@ -58,11 +58,11 @@ function Avatar() {
 export function ChipBalance({ className }: { className?: string }) {
   const b = useBalance();
   return (
-    <span className={cx('flex items-center gap-2.5', className)}>
-      <span className="grid h-10 w-10 place-items-center rounded-full border border-accent/40 bg-accent-deep"><ChipIcon size={26} /></span>
+    <span className={cx('flex shrink-0 items-center gap-2 min-[360px]:gap-2.5', className)} aria-label="Free chips balance">
+      <span className="grid h-9 w-9 place-items-center rounded-full border border-accent/40 bg-accent-deep min-[360px]:h-10 min-[360px]:w-10"><ChipIcon size={24} /></span>
       <span className="leading-tight">
         <span className="block text-[16px] font-bold">{b.balance === null ? <Skeleton className="h-4 w-14" /> : formatMoneyShort(b.balance, 'PLAY')}</span>
-        <span className="block text-[12px] text-muted">free chips</span>
+        <span className="hidden text-[12px] text-muted min-[360px]:block">free chips</span>
       </span>
     </span>
   );
@@ -94,9 +94,15 @@ export function TopBar({ embed = false }: { embed?: boolean }) {
   const roomId = params.get('room');
   const practice = !real && !roomId;
   return (
-    <header className="sticky top-0 z-30 flex h-[72px] items-center gap-4 border-b border-line bg-bg/92 px-5 backdrop-blur lg:h-[92px] lg:px-10">
+    // Short screens (a phone in landscape): a slimmer bar leaves room for the table. The top inset keeps it
+    // clear of the status bar and notch in the native app and the installed (standalone) PWA.
+    <header className="sticky top-0 z-30 flex h-[calc(72px+env(safe-area-inset-top))] min-w-0 items-center pt-[env(safe-area-inset-top)] gap-3 border-b border-line bg-bg/92 px-4 backdrop-blur min-[360px]:gap-4 min-[360px]:px-5 lg:h-[92px] lg:px-10 [@media(max-height:500px)]:h-[calc(3.5rem+env(safe-area-inset-top))] [@media(max-height:500px)]:pl-[max(1.25rem,env(safe-area-inset-left))] [@media(max-height:500px)]:pr-[max(1.25rem,env(safe-area-inset-right))]">
       {embed ? <Wordmark size="sm" /> : (
-        <Link to="/app" aria-label="PreFlop lobby" className="lg:hidden"><Wordmark size="md" /></Link>
+        // Narrowest phones (320 px): the small wordmark leaves room for the clock and the balance.
+        <Link to="/app" aria-label="PreFlop lobby" className="shrink-0 lg:hidden">
+          <span className="min-[360px]:hidden"><Wordmark size="sm" /></span>
+          <span className="hidden min-[360px]:inline"><Wordmark size="md" /></span>
+        </Link>
       )}
       {!embed && <span className="hidden text-[13px] font-medium uppercase tracking-[0.14em] text-muted lg:inline">{sectionOf(loc.pathname)}</span>}
       {practice && <PracticePill className={embed ? 'inline-flex' : 'hidden lg:inline-flex'} />}
@@ -144,9 +150,10 @@ export function TabBar() {
       <div className="mx-auto flex max-w-[560px] px-2">
         {NAV.map(({ to, label, short, end, icon: Icon }) => (
           <NavLink key={to} to={to} end={end} aria-label={label}
-            className={({ isActive }) => cx('flex min-w-0 flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium', isActive ? 'text-accent' : 'text-muted hover:text-ink')}>
+            className={({ isActive }) => cx('flex min-h-[44px] min-w-0 flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-medium [@media(max-height:500px)]:py-1.5', isActive ? 'text-accent' : 'text-muted hover:text-ink')}>
             <Icon className="h-[22px] w-[22px]" strokeWidth={1.6} aria-hidden />
-            <span className="truncate">{short}</span>
+            {/* Landscape phones: icons only (the link keeps its aria-label). */}
+            <span className="truncate [@media(max-height:500px)]:hidden">{short}</span>
           </NavLink>
         ))}
       </div>
@@ -211,7 +218,8 @@ export function AppLayout() {
       <div className="min-w-0">
         <TopBar />
         <VerifyEmailBanner />
-        <main id="main" className="mx-auto max-w-[1240px] px-5 pb-28 pt-8 lg:px-10 lg:pb-10 lg:pt-10">
+        {/* Side padding clears a landscape phone's notch; the bottom padding clears the tab bar. */}
+        <main id="main" className="mx-auto max-w-[1240px] pb-28 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-8 lg:pb-10 lg:pl-10 lg:pr-10 lg:pt-10 [@media(max-height:500px)]:pb-20 [@media(max-height:500px)]:pt-5">
           <Suspense fallback={<Skeleton className="h-[60vh]" />}><Outlet context={{ openHelp: () => setHelp(true) }} /></Suspense>
           <AppFooter />
         </main>

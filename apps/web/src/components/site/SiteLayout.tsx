@@ -98,7 +98,7 @@ function SiteNav() {
     </>
   );
   return (
-    <header className="sticky top-0 z-40 border-b border-line/70 bg-bg/90 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-line/70 bg-bg/90 pt-[env(safe-area-inset-top)] backdrop-blur">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-[10px] focus:bg-accent focus:px-4 focus:py-2 focus:font-semibold focus:text-accent-ink">Skip to content</a>
       <div className="mx-auto flex h-16 max-w-[1200px] items-center gap-6 px-4 sm:px-5">
         <Link to="/" aria-label="PreFlop home"><Wordmark /></Link>
