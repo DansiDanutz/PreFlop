@@ -12,6 +12,8 @@ export interface CardGuess {
   card: string;
   /** 0..1: the lower of the rank and suit match scores. */
   confidence: number;
+  /** 0..1: how far the chosen glyph beat the runner-up (the lower of the rank and suit margins). Small = easily confused. */
+  margin: number;
   /** The card's four corners in the source image, in order top-left, top-right, bottom-right, bottom-left. */
   corners: [Point, Point, Point, Point];
 }
@@ -123,4 +125,11 @@ export function bestMatch<T extends { code: string }>(scores: readonly { templat
   let best: { template: T; score: number } | null = null;
   for (const s of scores) if (Number.isFinite(s.score) && (!best || s.score > best.score)) best = s;
   return best;
+}
+
+/** The gap between the best and the second-best score (0..1); 0 with fewer than two finite scores. */
+export function runnerUpMargin(scores: readonly { score: number }[]): number {
+  const sorted = scores.map((s) => s.score).filter(Number.isFinite).sort((a, b) => b - a);
+  if (sorted.length < 2) return 0;
+  return Math.max(0, Math.min(1, sorted[0]! - sorted[1]!));
 }

@@ -10,6 +10,7 @@ import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
+import { READING_CHECK } from '../lib/decisions.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
@@ -111,6 +112,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
         ws_clients: ctx.stats.wsClients,
         mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp, expired: mailStats.expired },
+        decisions: { enabled: ctx.decider.enabled, model: ctx.decider.model, ...ctx.decider.stats },
       },
     };
   });
@@ -158,7 +160,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- alerts
   app.get('/v1/admin/alerts', async (req) => {
     await requirePlatform(ctx, req);
-    return { alerts: (await ctx.db.query('select * from alerts order by resolved_at nulls first, created_at desc limit 300')).rows };
+    // `hint` is the decision model's triage (docs/20) when one is stored: advice beside the alert, never an action.
+    return { alerts: (await ctx.db.query(
+      `select a.*, case when h.ref is null or h.error is not null then null else jsonb_build_object('model', h.model, 'answers', h.answers, 'at', h.created_at) end as hint
+         from alerts a left join decision_hints h on h.kind = 'alert' and h.ref = a.id::text
+        order by a.resolved_at nulls first, a.created_at desc limit 300`)).rows };
   });
   app.post('/v1/admin/alerts/:id/resolve', async (req) => {
     const u = await requirePlatform(ctx, req);
@@ -172,8 +178,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     await requirePlatform(ctx, req);
     return { rounds: (await ctx.db.query(
       `select r.id, r.table_id, r.hand_no, r.state, r.procedure_step as step, r.mode, r.currency, r.opened_at, r.locked_at, r.settled_at, r.voided_at, r.void_reason,
-              r.flop, r.review_reasons, r.review_started_at, t.name as table_name
-         from rounds r join poker_tables t on t.id = r.table_id where r.state in ('REVIEW','EVIDENCE_REJECTED') order by r.review_started_at nulls last, r.opened_at`))
+              r.flop, r.review_reasons, r.review_started_at, t.name as table_name,
+              case when h.ref is null or h.error is not null then null else jsonb_build_object('model', h.model, 'answers', h.answers, 'at', h.created_at) end as hint
+         from rounds r join poker_tables t on t.id = r.table_id
+         left join decision_hints h on h.kind = 'review' and h.ref = r.id
+        where r.state in ('REVIEW','EVIDENCE_REJECTED') order by r.review_started_at nulls last, r.opened_at`))
       .rows.map((r) => withReviewDeadline(r, ctx.config.reviewSlaMs)) };
   });
   app.get('/v1/admin/rounds/:id/evidence', async (req) => {
@@ -462,6 +471,25 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!r) throw notFound('round');
     return lockRound(c, r.id);
   };
+  /**
+   * Card reading check (docs/19, docs/20): the browser read the cards; the decision model says, per
+   * card, whether the reading is sure enough to pre-fill the picker. Advice for the operator's
+   * confirmation, never applied by itself. {enabled:false} without JEV_API_KEY, so the console
+   * never fails because the adviser is off.
+   */
+  app.post('/v1/admin/manual/reading-check', async (req) => {
+    await requirePlatform(ctx, req, 'admin', 'ops');
+    const { cards } = z.object({
+      cards: z.array(z.object({ card: z.string().regex(/^(10|[2-9TJQKA])[shdc]$/), confidence: z.number().min(0).max(1), margin: z.number().min(0).max(1).optional() })).min(1).max(8),
+    }).parse(req.body);
+    if (!ctx.decider.enabled) return { enabled: false as const, model: null, cards: [] as never[] };
+    const out: { card: string; accept: boolean; confidence: number | null }[] = [];
+    for (const c of cards) {
+      const a = (await ctx.decider.decide({ card: c.card, match_confidence: c.confidence, runner_up_margin: c.margin ?? null }, READING_CHECK)).accept;
+      out.push({ card: c.card, accept: a?.type === 'noul' ? a.noul : false, confidence: a?.confidence ?? null });
+    }
+    return { enabled: true as const, model: ctx.decider.model, cards: out };
+  });
   app.post('/v1/admin/tables/:id/manual/lock', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     const { id } = req.params as { id: string };

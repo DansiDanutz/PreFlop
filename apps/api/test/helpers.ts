@@ -1,7 +1,7 @@
 import { migrate } from '@preflop/db';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
-import { buildApp } from '../src/app.ts';
+import { type BuildOptions, buildApp } from '../src/app.ts';
 import { type Config, loadConfig } from '../src/config.ts';
 import { type Db, createPool, tx } from '../src/lib/db.ts';
 import { seedSimTable, upsertClub } from '../src/seed.ts';
@@ -44,12 +44,12 @@ export interface Harness {
 
 let userN = 0;
 
-export async function harness(name: string, overrides: Partial<Config> = {}): Promise<Harness> {
+export async function harness(name: string, overrides: Partial<Config> = {}, opts: BuildOptions = {}): Promise<Harness> {
   const db = await freshDb(name);
   const base = loadConfig({});
   // Rate limits are off unless a test opts in: the suites register and bet far faster than a person.
   const config: Config = { ...base, runWorker: false, rateLimit: { ...base.rateLimit, enabled: false }, ...overrides };
-  const app = await buildApp(db, config);
+  const app = await buildApp(db, config, opts);
   const send: Send = async (r) => {
     const res = await app.inject({ method: r.method as 'GET', url: r.url, headers: r.headers, ...(r.body !== undefined ? { payload: r.body } : {}) });
     return { status: res.statusCode, json: () => (res.body ? JSON.parse(res.body) : null) };

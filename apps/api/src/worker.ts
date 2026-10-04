@@ -4,6 +4,7 @@ import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
+import { ALERT_TRIAGE, type Decider, DecisionError, REVIEW_HINT, saveHint } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -100,7 +101,59 @@ export interface WorkerMail { transport: MailTransport | null; from: string }
 export const nextDelayMs = (worked: boolean, everyMs: number, idleMs: number, elapsedMs = 0): number =>
   (worked ? Math.max(0, everyMs - elapsedMs) : Math.max(everyMs, idleMs));
 
-export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000): () => Promise<void> {
+/**
+ * Decision hints (docs/20): asks the decision model about open alerts and rounds in review that have
+ * no hint yet, a few at a time, and stores the answers for the console. Advice only: nothing here
+ * changes a round, a table or a balance. An answer the service refuses (bad request) is stored as
+ * an error and retried a few times, ten minutes apart (a key or the service may have been fixed), then
+ * left alone; a rate limit or outage ends the pass and the rest waits for the next one. Returns the
+ * number of hints stored.
+ */
+/** How often a question the service refused is asked again: a few more times, ten minutes apart, in case the key or the service was fixed. */
+export const HINT_RETRY_MAX = 5;
+export const HINT_RETRY_AFTER = '10 minutes';
+/** SQL (on the joined decision_hints row `h`): no hint yet, or a failed one that is due for a bounded retry. */
+const HINT_WANTED = `(h.ref is null or (h.error is not null and h.attempts < ${HINT_RETRY_MAX} and h.created_at < now() - interval '${HINT_RETRY_AFTER}'))`;
+
+export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promise<number> {
+  if (!decider.enabled) return 0;
+  let stored = 0;
+  const ask = async (kind: string, ref: string, state: unknown, questions: typeof ALERT_TRIAGE): Promise<boolean> => {
+    try {
+      const answers = await decider.decide(state, questions);
+      await saveHint(db, kind, ref, decider.model, answers);
+      stored++;
+      return true;
+    } catch (e) {
+      if (e instanceof DecisionError && e.retryable) { console.error('decisions paused:', e.message); return false; }
+      console.error(`decision hint ${kind}/${ref} failed:`, e instanceof Error ? e.message : e);
+      await saveHint(db, kind, ref, decider.model, null, e instanceof Error ? e.message : String(e));
+      return true;
+    }
+  };
+  const alerts = (await db.query<{ id: number; table_id: string | null; round_id: string | null; kind: string; severity: string; details: unknown; created_at: Date; open_on_table: number }>(
+    `select a.id, a.table_id, a.round_id, a.kind, a.severity, a.details, a.created_at,
+            (select count(*)::int from alerts o where o.resolved_at is null and o.table_id is not distinct from a.table_id and o.id <> a.id) as open_on_table
+       from alerts a left join decision_hints h on h.kind = 'alert' and h.ref = a.id::text
+      where a.resolved_at is null and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;
+  for (const a of alerts) {
+    const state = { alert: { kind: a.kind, severity: a.severity, details: a.details, table_id: a.table_id, round_id: a.round_id, age_s: Math.round((Date.now() - a.created_at.getTime()) / 1000) }, other_open_alerts_on_table: a.open_on_table };
+    if (!(await ask('alert', String(a.id), state, ALERT_TRIAGE))) return stored;
+  }
+  const reviews = (await db.query<{ id: string; state: string; mode: string; review_reasons: unknown; capture: unknown; entries: unknown }>(
+    `select r.id, r.state, r.mode, r.review_reasons,
+            (select c.capture from captures c where c.round_id = r.id) as capture,
+            (select coalesce(jsonb_agg(jsonb_build_object('source', e.source, 'cards', e.cards) order by e.source), '[]'::jsonb) from flop_entries e where e.round_id = r.id) as entries
+       from rounds r left join decision_hints h on h.kind = 'review' and h.ref = r.id
+      where r.state in ('REVIEW','EVIDENCE_REJECTED') and ${HINT_WANTED} order by r.review_started_at nulls last, r.opened_at limit $1`, [limit])).rows;
+  for (const r of reviews) {
+    const state = { round: { state: r.state, mode: r.mode, review_reasons: r.review_reasons }, entries: r.entries, capture: r.capture };
+    if (!(await ask('review', r.id, state, REVIEW_HINT))) return stored;
+  }
+  return stored;
+}
+
+export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000, decider?: Decider): () => Promise<void> {
   let stopped = false;
   let current: Promise<void> | null = null;
   const workerId = newWorkerId();
@@ -148,11 +201,26 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
     }, ms);
   };
   scheduleMail(everyMs);
+  // Decision hints (docs/20) run on their own loop too: a slow or rate-limited adviser must never hold
+  // up a settlement, a refund or the heartbeat. Advice is the one job here that can wait.
+  let hinting: Promise<void> | null = null;
+  let hintTimer: NodeJS.Timeout | null = null;
+  const scheduleHints = (ms: number) => {
+    if (stopped || !decider?.enabled) return;
+    hintTimer = setTimeout(() => {
+      const started = Date.now();
+      hinting = decisionsOnce(db, decider)
+        .then((stored) => stored > 0, (e) => { console.error('decision hints error', e); return false; })
+        .then((worked) => { hinting = null; scheduleHints(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
+    }, ms);
+  };
+  scheduleHints(everyMs);
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
     if (mailTimer) clearTimeout(mailTimer);
-    await Promise.all([current, mailing]);
+    if (hintTimer) clearTimeout(hintTimer);
+    await Promise.all([current, mailing, hinting]);
     await db.query('delete from worker_heartbeats where worker_id = $1', [workerId]).catch(() => {});
   };
 }

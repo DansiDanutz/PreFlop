@@ -1,0 +1,50 @@
+# 20 · Decision hints (TypeSafe AI Jev)
+
+**Status:** built; off until `JEV_API_KEY` is set. Advice only, in every surface.
+
+## What it is
+
+PreFlop asks TypeSafe AI's **Jev** decision model (the System One API) small, typed questions and shows the answers beside the operator's own controls. Jev is not a chat model: it takes a *state* (JSON) and *questions* of three kinds and returns, for each question, a decision with calibrated probabilities and a confidence.
+
+| Question type | Answer |
+|---|---|
+| `noul` | yes / no (`noul: true|false`) |
+| `choice` | one of the given `criteria` keys, with a probability per key |
+| `score` | a number on a legend |
+
+The request is one `POST` to `JEV_API_URL` (`https://api.typesafe.ai/v1/systemone` by default) with `Authorization: Bearer <JEV_API_KEY>` and `{ model, state, questions }`. Text and JSON only: no images are sent, and nothing a player typed is sent either. Each call is a few hundred input tokens.
+
+## Where it is used
+
+Every use is a **hint**. No round is settled or voided, no table paused, no alert resolved and no balance changed because of an answer. The person decides; the hint says what the model would do and how sure it is.
+
+| Surface | Question | Where the answer shows |
+|---|---|---|
+| **Alert triage** | For each open alert: `triage` ∈ dismiss · watch · pause table · escalate, and `money_at_risk` (yes/no) | Console → Integrity → **Alerts**, column *Suggested* |
+| **Round review** | For each round in `REVIEW` or `EVIDENCE_REJECTED`: `outcome` ∈ settle · void · escalate, from the dealer/floor entries and the capture record | Console → Integrity → **Review queue**, column *Suggested* |
+| **Card reading** (docs/19) | For each card the browser read: `accept`, from the match confidence and the margin to the runner-up glyph | Manual table webcam panel and the Card reader test page: *Adviser:* badges per card, and which cards to check by eye |
+
+The first two run in the **worker** (`decisionsOnce`, on its own loop): open alerts and rounds in review without a hint are asked about, a few per pass, and the answers stored in `decision_hints (kind, ref, model, answers, error, created_at)`. The console reads them with the alert or the round. Nothing is asked twice while it has an answer. A question the service refused (HTTP 422, a bad key, or an answer that left a question out) is stored as an error and asked again at most four more times, ten minutes apart, in case the key or the service was fixed; a rate limit or outage (429/529, or unreachable) ends the pass after one retry and the rest waits for the next pass. The hint pass runs on its own loop in the worker, beside the game tick and the mail loop, so a slow adviser never delays a settlement, a refund or the heartbeat.
+
+The reading check runs on request: `POST /v1/admin/manual/reading-check` (admin or ops) with the cards and scores, one question per card. Without a key it answers `{ enabled: false }` and the console shows nothing; the reading stands on its own.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JEV_API_KEY` | unset = off | The TypeSafe AI key. A secret, never in the repository or a chat. Staging: add it as a GitHub repository secret named `JEV_API_KEY` (Settings → Secrets and variables → Actions), then run the `Fly secrets` workflow with name `JEV_API_KEY`, the value left empty and apps `both`; the run copies the encrypted secret to Fly. At least 16 characters; production refuses demo values. |
+| `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Must be https in production. |
+| `JEV_MODEL` | `jev-latest` | The model name sent with every request. |
+
+Both the API (when `RUN_WORKER=true`) and the standalone worker read the key; the API also needs it for the reading check. `GET /v1/admin/metrics` → `instance.decisions` reports whether it is on, the model, and this process's calls, failures and tokens. Start-up logs one line: `decision hints: jev-latest (docs/20)` or `decision hints: off`.
+
+## Boundaries
+
+- **Advice only.** The code paths that move money (`rounds/service.ts`, `bets/`, `payments/`) never read a hint, and no hint is a precondition of anything.
+- **No player data.** The state holds alert kinds and details, round states, card codes and recognition scores. No names, emails, balances or bets.
+- **Degrades to nothing.** Without a key, or when the service is down, every surface is exactly what it was before this document.
+- **Not a chat or vision model.** Jev reads JSON; it does not look at the camera frame. Card recognition stays in the browser (docs/19).
+
+## Code
+
+`apps/api/src/lib/decisions.ts` (the client, the questions, hint storage), `apps/api/src/worker.ts` (`decisionsOnce`), `apps/api/src/routes/admin.ts` (`/v1/admin/alerts`, `/v1/admin/review-queue`, `/v1/admin/manual/reading-check`), `packages/db/migrations/022_decision_hints.sql`, `apps/console/src/components/decisions.tsx`. Tests: `apps/api/test/decisions.test.ts` (request shape, parsing, retries, worker pass, routes, config).

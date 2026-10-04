@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import type { ReadingCheck } from '@preflop/client';
 import { Badge, Button } from '@preflop/ui';
 import { Camera, CameraOff, ImageUp, ScanSearch } from 'lucide-react';
 import { loadCv } from '../../lib/cards/opencv.ts';
 import { readCards } from '../../lib/cards/reader.ts';
 import { MIN_CONFIDENCE, type Reading, center } from '../../lib/cards/vision.ts';
 import { cardLabel } from '../../lib/manualFlop.ts';
+import { api } from '../../lib/api.ts';
+import { ReadingVerdicts } from '../../components/decisions.tsx';
 import { Callout, PageHeader, Section } from '../../components/ui.tsx';
 import { FlopText } from '../../components/domain.tsx';
 
@@ -22,6 +25,9 @@ export function CardReader() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
   const [reading, setReading] = useState<Reading | null>(null);
+  const [check, setCheck] = useState<ReadingCheck | null>(null);
+  // Each reading gets a number; a verdict that comes back for an older reading is dropped, so the badges never describe other cards than the ones shown.
+  const readingNo = useRef(0);
   const [source, setSource] = useState<'camera' | 'photo' | null>(null);
   // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
   // arrives for a request the operator has since stopped or repeated, or after they left this page,
@@ -77,7 +83,15 @@ export function CardReader() {
         ctx.fillStyle = ctx.strokeStyle; ctx.textAlign = 'center';
         ctx.fillText(`${cardLabel(g.card)} ${Math.round(g.confidence * 100)}%`, mid.x, mid.y);
       }
-      if (mounted.current) setReading(r);
+      if (!mounted.current) return;
+      setReading(r);
+      setCheck(null);
+      const no = ++readingNo.current;
+      // Second opinion (docs/20): the decision model says per card whether the reading is sure enough. Advice only; silent when off.
+      if (r.guesses.length) {
+        api.adminReadingCheck(r.guesses.map((g) => ({ card: g.card, confidence: g.confidence, margin: g.margin })))
+          .then((v) => { if (mounted.current && no === readingNo.current) setCheck(v); }, () => { /* the reading stands on its own */ });
+      }
     } catch (e) {
       if (mounted.current) setError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -149,9 +163,10 @@ export function CardReader() {
               <p className="text-sm">Flop: {reading.flop.length ? <FlopText cards={reading.flop} /> : <span className="text-muted">not enough sure cards for a flop</span>}</p>
               <ul className="flex flex-wrap gap-2">
                 {reading.guesses.map((g, i) => (
-                  <li key={i}><Badge tone={g.confidence >= MIN_CONFIDENCE ? 'live' : 'warn'}>{cardLabel(g.card)} · {Math.round(g.confidence * 100)}%</Badge></li>
+                  <li key={i} title={`match ${Math.round(g.confidence * 100)}%, margin to the runner-up ${Math.round(g.margin * 100)}%`}><Badge tone={g.confidence >= MIN_CONFIDENCE ? 'live' : 'warn'}>{cardLabel(g.card)} · {Math.round(g.confidence * 100)}%</Badge></li>
                 ))}
               </ul>
+              <ReadingVerdicts check={check} />
               {reading.guesses.length === 0 && <p className="text-sm text-muted">No card-shaped bright rectangle was found. Check the light and that the cards lie flat and apart.</p>}
             </div>
           </Section>

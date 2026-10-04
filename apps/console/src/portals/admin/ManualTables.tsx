@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { ManualTable } from '@preflop/client';
+import type { ManualTable, ReadingCheck } from '@preflop/client';
 import { Badge, Button, formatMoney } from '@preflop/ui';
 import { Link, useNavigate } from 'react-router';
 import { Camera, CameraOff, Lock, Plus, ScanSearch } from 'lucide-react';
@@ -12,6 +12,7 @@ import { pad3 } from '../../lib/format.ts';
 import { RANKS, SUITS, cardLabel, secondsLeft, toggleCard } from '../../lib/manualFlop.ts';
 import { Callout, ConfirmDialog, ErrorBox, Field, Loading, PageHeader, Section, TextInput, useAction } from '../../components/ui.tsx';
 import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
+import { ReadingVerdicts } from '../../components/decisions.tsx';
 
 /**
  * Manual tables (migration 020): close betting, then type the three flop cards. Free play only.
@@ -160,6 +161,9 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
   const [reading, setReading] = useState<Reading | null>(null);
+  const [check, setCheck] = useState<ReadingCheck | null>(null);
+  // Each reading gets a number; a verdict that comes back for an older reading is dropped, so the badges never describe other cards than the ones shown.
+  const readingNo = useRef(0);
   // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
   // arrives for a request the operator has since stopped or repeated, or after the hand is gone and
   // this panel with it, is stopped at once instead of staying live with no view and no Stop button.
@@ -174,7 +178,7 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, [stream]);
 
-  const stop = () => { request.current++; setStream(null); setReading(null); };
+  const stop = () => { request.current++; readingNo.current++; setStream(null); setReading(null); setCheck(null); };
   /** Reads the current frame in this browser (OpenCV.js, loaded on first use); the result is a proposal, never applied by itself. */
   const read = async () => {
     const v = video.current;
@@ -190,6 +194,13 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
       const r = readCards(cv, c);
       if (!mounted.current) return;
       setReading(r);
+      setCheck(null);
+      const no = ++readingNo.current;
+      // Second opinion (docs/20): the decision model says per card whether the reading is sure enough. Advice only; silent when off.
+      if (r.guesses.length) {
+        api.adminReadingCheck(r.guesses.map((g) => ({ card: g.card, confidence: g.confidence, margin: g.margin })))
+          .then((v) => { if (mounted.current && no === readingNo.current) setCheck(v); }, () => { /* the reading stands on its own */ });
+      }
     } catch (e) {
       if (mounted.current) setCameraError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -227,6 +238,7 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
             ? <>Read: <FlopText cards={reading.flop} /><Button size="sm" variant="secondary" onClick={() => onReading({ cards: reading.flop })}>Use these cards</Button></>
             : <span className="text-muted">{reading.guesses.length ? `${reading.guesses.length} card${reading.guesses.length === 1 ? '' : 's'} seen, not three sure ones` : 'No cards seen'}: pick them below.</span>}
           {reading.guesses.filter((g) => g.confidence < MIN_CONFIDENCE).length > 0 && <span className="text-xs text-muted">({reading.guesses.filter((g) => g.confidence < MIN_CONFIDENCE).map((g) => cardLabel(g.card)).join(', ')} unsure)</span>}
+          <ReadingVerdicts check={check} />
         </div>
       )}
     </div>

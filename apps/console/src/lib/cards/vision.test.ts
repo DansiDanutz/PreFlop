@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { type CardGuess, type Point, bestMatch, cardLike, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
+import { type CardGuess, type Point, bestMatch, cardLike, runnerUpMargin, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
 
 const quad = (x: number, y: number, w: number, h: number): [Point, Point, Point, Point] => [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
-const guess = (card: string, confidence: number, x: number): CardGuess => ({ card, confidence, corners: quad(x, 100, 70, 100) });
+const guess = (card: string, confidence: number, x: number): CardGuess => ({ card, confidence, margin: 0.2, corners: quad(x, 100, 70, 100) });
 
 describe('card recognition helpers (docs/19)', () => {
+  it('runnerUpMargin: the gap to the second-best score, 0 when there is no runner-up', () => {
+    expect(runnerUpMargin([{ score: 0.9 }, { score: 0.6 }, { score: 0.2 }])).toBeCloseTo(0.3);
+    expect(runnerUpMargin([{ score: 0.9 }])).toBe(0);
+    expect(runnerUpMargin([{ score: 0.9 }, { score: NaN }])).toBe(0);
+    expect(runnerUpMargin([{ score: 0.5 }, { score: 0.5 }])).toBe(0);
+  });
+
   it('orders four corners top-left, top-right, bottom-right, bottom-left whatever order they came in', () => {
     const shuffled = [{ x: 170, y: 200 }, { x: 100, y: 100 }, { x: 100, y: 200 }, { x: 170, y: 100 }];
     expect(orderCorners(shuffled)).toEqual([{ x: 100, y: 100 }, { x: 170, y: 100 }, { x: 170, y: 200 }, { x: 100, y: 200 }]);
