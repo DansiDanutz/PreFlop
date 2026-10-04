@@ -86,7 +86,10 @@ describe('manual table, end to end in the console', () => {
     const table = (await h.api('POST', '/v1/admin/tables/manual', admin, { name: 'E2E webcam table' })).body;
     const player = await h.register('E2E player');
     const before = await walletOf(h, player.token);
-    expect((await bet(h, player.token, `${table.id}:h1`, 'colour:mixed', 1_000)).status).toBe(201);
+    const placed = await bet(h, player.token, `${table.id}:h1`, 'colour:mixed', 1_000);
+    expect(placed.status).toBe(201);
+    const payout: number = placed.body.potential_payout_minor;
+    expect(payout).toBeGreaterThan(1_000);
 
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
@@ -121,7 +124,8 @@ describe('manual table, end to end in the console', () => {
     await expect.poll(async () => (await h.db.query<{ state: string }>('select state from rounds where id = $1', [`${table.id}:h1`])).rows[0]?.state, { timeout: 30_000 }).toBe('SETTLED');
     const round = (await h.db.query<{ flop: string[] }>('select flop from rounds where id = $1', [`${table.id}:h1`])).rows[0]!;
     expect(round.flop).toEqual(FLOP);
-    expect(await walletOf(h, player.token)).toBeGreaterThan(before);
+    // Paid exactly once, at the quoted payout: the stake left the wallet, the full return came back.
+    expect(await walletOf(h, player.token)).toBe(before - 1_000 + payout);
     expect((await h.db.query<{ state: string }>('select state from rounds where id = $1', [`${table.id}:h2`])).rows[0]?.state).toBe('OPEN');
     await expect.poll(() => card.getByText('Hand #002').count(), { timeout: 30_000 }).toBe(1);
     expect(errors).toEqual([]);
