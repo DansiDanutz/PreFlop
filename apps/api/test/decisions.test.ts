@@ -204,8 +204,8 @@ describe('decision hints in the worker and the console API', () => {
   it('the reading check answers per card and says so when the adviser is off', async () => {
     const r = await h.api('POST', '/v1/admin/manual/reading-check', admin, { cards: [{ card: 'Ah', confidence: 0.91, margin: 0.3 }, { card: 'Kd', confidence: 0.47 }, { card: 'Qs', confidence: 0.7 }] });
     expect(r.status).toBe(200);
-    // A near-even answer (0.55) is not accepted: the operator checks that card by eye.
-    expect(r.body).toEqual({ enabled: true, model: 'fake-jev', cards: [{ card: 'Ah', accept: true, confidence: 0.8 }, { card: 'Kd', accept: false, confidence: 0.8 }, { card: 'Qs', accept: false, confidence: 0.55 }] });
+    // confidence is the probability that pre-filling is safe; a near-even answer (0.55) is not accepted and the operator checks that card by eye.
+    expect(r.body).toEqual({ enabled: true, model: 'fake-jev', cards: [{ card: 'Ah', accept: true, confidence: 0.8 }, { card: 'Kd', accept: false, confidence: 0.2 }, { card: 'Qs', accept: false, confidence: 0.55 }] });
     expect(decider.seen.find((s) => s.card === 'Ah')).toEqual({ card: 'Ah', match_confidence: 0.91, runner_up_margin: 0.3 });
     expect((await h.api('POST', '/v1/admin/manual/reading-check', admin, { cards: [{ card: 'Zz', confidence: 0.9 }] })).status).toBe(400);
     const player = await h.register();

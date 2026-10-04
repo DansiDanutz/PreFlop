@@ -22,8 +22,8 @@ describe('decision hint components', () => {
 
   it('ReadingVerdicts marks accepted and doubtful cards, names the ones to check, and renders nothing when the adviser is off', () => {
     const html = renderToStaticMarkup(<ReadingVerdicts check={{ enabled: true, model: 'jev-latest', cards: [{ card: 'Ah', accept: true, confidence: 0.9 }, { card: 'Td', accept: false, confidence: 0.4 }] }} />);
-    expect(html).toContain('A♥ ✓ 90%');
-    expect(html).toContain('10♦ ? 40%');
+    expect(html).toContain('A♥ ✓ 90% safe');
+    expect(html).toContain('10♦ ? 40% safe');
     expect(html).toMatch(/check 10♦ by eye/);
     expect(renderToStaticMarkup(<ReadingVerdicts check={{ enabled: false, model: null, cards: [] }} />)).toBe('');
     expect(renderToStaticMarkup(<ReadingVerdicts check={null} />)).toBe('');

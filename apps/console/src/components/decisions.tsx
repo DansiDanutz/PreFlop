@@ -31,9 +31,9 @@ export function ReadingVerdicts({ check }: { check: ReadingCheck | null }) {
   if (!check?.enabled || !check.cards.length) return null;
   const unsure = check.cards.filter((c) => !c.accept);
   return (
-    <span className="flex flex-wrap items-center gap-1 text-xs" data-testid="reading-check" title={`Checked by ${check.model ?? 'the decision model'}: whether each reading is sure enough to pre-fill, with the model's confidence; ✓ only when it is at least 70 % sure. Advice only.`}>
+    <span className="flex flex-wrap items-center gap-1 text-xs" data-testid="reading-check" title={`Checked by ${check.model ?? 'the decision model'}: the model's probability that pre-filling each card is safe; ✓ from 70 % up, otherwise check the card by eye. Advice only.`}>
       <span className="text-muted">Adviser:</span>
-      {check.cards.map((c) => <Badge key={c.card} tone={c.accept ? 'live' : 'warn'} className="!px-2 !py-0.5 !text-[10px]">{cardLabel(c.card)} {c.accept ? '✓' : '?'}{c.confidence !== null ? ` ${Math.round(c.confidence * 100)}%` : ''}</Badge>)}
+      {check.cards.map((c) => <Badge key={c.card} tone={c.accept ? 'live' : 'warn'} className="!px-2 !py-0.5 !text-[10px]">{cardLabel(c.card)} {c.accept ? '✓' : '?'}{c.confidence !== null ? ` ${Math.round(c.confidence * 100)}% safe` : ''}</Badge>)}
       {unsure.length > 0 && <span className="text-muted">check {unsure.map((c) => cardLabel(c.card)).join(', ')} by eye</span>}
     </span>
   );
