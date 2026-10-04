@@ -18,15 +18,23 @@
   import { readCards } from '/src/lib/cards/reader.ts';
   const SUIT = { s: '♠', h: '♥', d: '♦', c: '♣' };
   const INDEX_FONT = '600 56px "Inter"', PIP_FONT = '110px "Inter"';
-  /** Draws the felt with cards ("Ah", "Ts", …) at the given centres and rotations (degrees). */
-  window.drawScene = (cards) => {
-    const c = document.getElementById('felt'), g = c.getContext('2d');
-    g.fillStyle = '#1f5f3a'; g.fillRect(0, 0, c.width, c.height);
+  /**
+   * Draws the felt with cards ("Ah", "Ts", …) at the given centres and rotations (degrees). `opts` adds
+   * what a real table does to a frame: felt colour, uneven light (a dark gradient across the table),
+   * a camera that is not straight above (skew), lens blur (px) and sensor noise (0..255 amplitude).
+   */
+  window.drawScene = (cards, opts = {}) => {
+    const c = document.getElementById('felt');
+    const scene = document.createElement('canvas'); scene.width = c.width; scene.height = c.height;
+    const g = scene.getContext('2d');
+    g.save();
+    if (opts.skew) g.transform(1, 0, opts.skew, 0.86, -opts.skew * 100, 50);
+    g.fillStyle = opts.felt ?? '#1f5f3a'; g.fillRect(-400, -200, c.width + 800, c.height + 400);
     g.fillStyle = '#c0392b'; g.beginPath(); g.arc(1100, 600, 60, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#e8c39e'; g.fillRect(40, 560, 220, 120);
-    for (const { card, x, y, rot } of cards) {
+    for (const { card, x, y, rot, scale = 1 } of cards) {
       const rank = card.slice(0, -1).replace('T', '10'), suit = card.slice(-1);
-      g.save(); g.translate(x, y); g.rotate((rot * Math.PI) / 180);
+      g.save(); g.translate(x, y); g.rotate((rot * Math.PI) / 180); g.scale(scale, scale);
       g.fillStyle = '#fff'; g.beginPath(); g.roundRect(-95, -133, 190, 266, 10); g.fill();
       g.fillStyle = suit === 'h' || suit === 'd' ? '#d10f1f' : '#111';
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -34,6 +42,29 @@
       g.font = INDEX_FONT; g.fillText(SUIT[suit], -95 + 30, -133 + 92);
       g.font = PIP_FONT; g.fillText(SUIT[suit], 0, 10);
       g.restore();
+    }
+    if (opts.glare) {
+      // a lamp's reflection on the felt: a soft bright blob between the cards and the chips
+      const gl = g.createRadialGradient(820, 560, 10, 820, 560, 120);
+      gl.addColorStop(0, 'rgba(255,255,255,0.95)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gl; g.fillRect(650, 400, 350, 320);
+    }
+    g.restore();
+    if (opts.light) {
+      const grad = g.createLinearGradient(0, 0, c.width, c.height);
+      grad.addColorStop(0, `rgba(0,0,0,${opts.light})`); grad.addColorStop(0.5, 'rgba(0,0,0,0)'); grad.addColorStop(1, `rgba(0,0,0,${opts.light})`);
+      g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+    }
+    const out = c.getContext('2d');
+    out.filter = opts.blur ? `blur(${opts.blur}px)` : 'none';
+    out.drawImage(scene, 0, 0);
+    out.filter = 'none';
+    if (opts.noise) {
+      const img = out.getImageData(0, 0, c.width, c.height), d = img.data;
+      let seed = 1;
+      const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 2 * opts.noise; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+      out.putImageData(img, 0, 0);
     }
   };
   window.runReader = async () => {
