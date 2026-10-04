@@ -85,13 +85,11 @@ export interface TableSummary {
 }
 /** GET /v1/admin/tables/manual: tables whose flop the PreFlop team types in the console (free play only). */
 export interface ManualTable {
-  id: string; name: string; mode: 'play' | 'virtual-chips'; currency: string; status: string; pause_reason: string | null;
+  id: string; name: string; mode: 'play'; currency: string; status: string; pause_reason: string | null;
   round: { id: string; hand_no: number; state: RoundState; opened_at: string; locked_at: string | null; settled_at: string | null; flop: string[] | null; void_reason: string | null; bets: number; staked_minor: number } | null;
   last_settled: { hand_no: number; flop: string[]; settled_at: string } | null;
 }
 export interface ManualTables { enabled: boolean; result_sla_ms: number; tables: ManualTable[] }
-/** POST /v1/admin/manual/read-flop: the cards recognised in a webcam photo; a suggestion for the picker, never a settlement. */
-export interface FlopReading { cards: string[]; confidence: 'high' | 'medium' | 'low'; notes: string }
 export interface RoundHistoryItem { id: string; hand_no: number; state: RoundState; flop: string[] | null; settled_at: string | null; voided_at: string | null; void_reason: string | null }
 export interface TableDetail extends TableSummary { history: RoundHistoryItem[] }
 export interface ClubSummary { id: string; name: string; city: string | null; status: string | null; tables: number }
@@ -499,9 +497,8 @@ export function createClient(o: ClientOptions) {
     /** bets_24h.staked_by_currency: 24 h stakes per (mode, currency). `staked` (a sum across currencies) is no longer sent. */
     adminOverview: () => get<{ users: { n: number }; bets_24h: { n: number; staked_by_currency: CurrencyAmount[]; /** @deprecated not sent any more: use staked_by_currency */ staked?: number }; rounds_24h: { settled: number; voided: number }; open_alerts: { n: number }; tables: TableSummary[] }>('/v1/admin/overview'),
     adminManualTables: () => get<ManualTables>('/v1/admin/tables/manual'),
-    adminCreateManualTable: (b: { name: string; mode?: 'play' | 'virtual-chips' }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string }>('/v1/admin/tables/manual', b),
+    adminCreateManualTable: (b: { name: string }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string }>('/v1/admin/tables/manual', b),
     adminManualLock: (tableId: string, handNo: number) => post<{ state: 'LOCKED' }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/lock`, { hand_no: handNo }),
-    adminReadFlop: (image_base64: string, media_type: 'image/jpeg' | 'image/png' | 'image/webp') => post<FlopReading>('/v1/admin/manual/read-flop', { image_base64, media_type }),
     adminManualFlop: (tableId: string, handNo: number, cards: string[]) => post<{ state: 'SETTLED'; cards: string[]; next_round_id: string | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/flop`, { hand_no: handNo, cards }),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),

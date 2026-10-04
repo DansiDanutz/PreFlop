@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { NATIVE_START, backAction, isNativeApp, isRootPath } from '../src/lib/native.ts';
+import { NATIVE_START, backAction, isNativeApp, isRootPath, publicOrigin } from '../src/lib/native.ts';
 
 const g = globalThis as { Capacitor?: unknown };
 afterEach(() => { delete g.Capacitor; });
@@ -11,6 +11,20 @@ describe('native app (Capacitor shell)', () => {
     expect(isNativeApp()).toBe(false);
     g.Capacitor = { isNativePlatform: () => true };
     expect(isNativeApp()).toBe(true);
+  });
+
+  it('shares links with the public website origin inside the app, its own origin elsewhere', () => {
+    const loc = globalThis as { location?: unknown };
+    const had = 'location' in loc, prev = loc.location;
+    loc.location = { origin: 'https://localhost' };
+    try {
+      expect(publicOrigin('https://preflop-staging-web.vercel.app/')).toBe('https://localhost'); // the website: its own origin
+      g.Capacitor = { isNativePlatform: () => true };
+      expect(publicOrigin('https://preflop-staging-web.vercel.app/')).toBe('https://preflop-staging-web.vercel.app');
+      expect(publicOrigin(undefined)).toBe('https://localhost'); // no public origin configured: nothing better to use
+    } finally {
+      if (had) loc.location = prev; else delete loc.location;
+    }
   });
 
   it('opens on the player app; top-level screens are the lobby and sign-in', () => {

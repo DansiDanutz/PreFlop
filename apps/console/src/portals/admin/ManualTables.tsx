@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { FlopReading, ManualTable } from '@preflop/client';
+import type { ManualTable } from '@preflop/client';
 import { Badge, Button, formatMoney } from '@preflop/ui';
-import { Camera, CameraOff, Lock, Plus, ScanLine } from 'lucide-react';
+import { Camera, CameraOff, Lock, Plus } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { pad3 } from '../../lib/format.ts';
-import { RANKS, SUITS, cardLabel, scaledSize, secondsLeft, splitDataUrl, toggleCard } from '../../lib/manualFlop.ts';
-import { Callout, ConfirmDialog, ErrorBox, Field, Loading, PageHeader, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
+import { RANKS, SUITS, cardLabel, secondsLeft, toggleCard } from '../../lib/manualFlop.ts';
+import { Callout, ConfirmDialog, ErrorBox, Field, Loading, PageHeader, Section, TextInput, useAction } from '../../components/ui.tsx';
 import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
 
 /**
@@ -16,8 +16,8 @@ import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
  */
 export function ManualTables() {
   const q = useQuery({ queryKey: ['admin', 'manual-tables'], queryFn: api.adminManualTables, refetchInterval: 3000 });
-  const [form, setForm] = useState({ name: '', mode: 'play' as 'play' | 'virtual-chips' });
-  const create = useAction((b: typeof form) => api.adminCreateManualTable({ name: b.name.trim(), mode: b.mode }), {
+  const [form, setForm] = useState({ name: '' });
+  const create = useAction((b: typeof form) => api.adminCreateManualTable({ name: b.name.trim() }), {
     invalidate: [['admin', 'manual-tables'], ['admin', 'tables']],
     success: (r) => `Manual table “${r.name}” created; betting is open.`,
     onSuccess: () => setForm({ ...form, name: '' }),
@@ -26,7 +26,7 @@ export function ManualTables() {
   return (
     <>
       <PageHeader eyebrow="PreFlop team" title="Manual tables"
-        subtitle="Close betting, then type the three flop cards. Players bet with play money or free chips only; every entry is audited." />
+        subtitle="Close betting, then type the three flop cards. Players bet with play money only; every entry is audited." />
       {q.isPending ? <Loading rows={4} /> : q.isError ? <ErrorBox error={q.error} onRetry={() => void q.refetch()} /> : (
         <div className="space-y-6">
           {!q.data.enabled && (
@@ -35,15 +35,9 @@ export function ManualTables() {
             </Callout>
           )}
           {q.data.tables.map((t) => <ManualTableCard key={t.id} t={t} slaMs={q.data.result_sla_ms} />)}
-          <Section title="New manual table" subtitle="It opens for bets at once and appears in the player lobby.">
+          <Section title="New manual table" subtitle="Play money. It opens for bets at once and appears in the player lobby.">
             <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (form.name.trim().length >= 2) create.mutate(form); }}>
               <Field label="Name" className="min-w-[200px] flex-1">{(p) => <TextInput {...p} value={form.name} maxLength={60} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Webcam test table" />}</Field>
-              <Field label="Plays with">{(p) => (
-                <Select {...p} value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as typeof form.mode })}>
-                  <option value="play">Play money</option>
-                  <option value="virtual-chips">Free chips</option>
-                </Select>
-              )}</Field>
               <Button type="submit" disabled={create.isPending || form.name.trim().length < 2}><Plus size={16} aria-hidden />Create table</Button>
             </form>
           </Section>
@@ -59,7 +53,8 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
   const [confirming, setConfirming] = useState(false);
   const [, tick] = useState(0);
   // A new hand clears the picker; the countdown re-renders every second while betting is closed.
-  useEffect(() => setPicked([]), [r?.id]);
+  // A new hand (settled, or voided and replaced) clears the picker and any confirmation still open.
+  useEffect(() => { setPicked([]); setConfirming(false); }, [r?.id]);
   useEffect(() => {
     if (r?.state !== 'LOCKED') return;
     const i = setInterval(() => tick((n) => n + 1), 1000);
@@ -76,7 +71,7 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
 
   return (
     <Section
-      title={<span className="flex flex-wrap items-center gap-2">{t.name}<Badge tone="muted">{t.mode === 'play' ? 'Play money' : 'Free chips'}</Badge>{t.status !== 'active' && <Badge tone="warn">{t.status}</Badge>}</span>}
+      title={<span className="flex flex-wrap items-center gap-2">{t.name}<Badge tone="muted">Play money</Badge>{t.status !== 'active' && <Badge tone="warn">{t.status}</Badge>}</span>}
       subtitle={t.last_settled ? <span className="inline-flex items-center gap-2">Last flop, hand #{pad3(t.last_settled.hand_no)}: <FlopText cards={t.last_settled.flop} /></span> : 'No hand settled yet.'}>
       {!r ? <p className="text-sm text-muted">No hand yet. One opens within a few seconds while the table is active.</p> : (
         <div className="space-y-4">
@@ -147,15 +142,15 @@ function CardPicker({ picked, onToggle }: { picked: readonly string[]; onToggle:
 }
 
 /**
- * Webcam card recognition (docs/19): a still from the laptop camera goes to the API, and the cards
- * it reads pre-fill the picker. The operator still checks them and settles; nothing is paid from
- * a reading alone. Works only over https or on localhost (the browser rule for cameras).
+ * Camera preview (docs/19): the laptop camera pointed at the dealt cards, shown beside the picker so
+ * the operator types what the camera sees. Card recognition will run in this browser, on this
+ * laptop, with no outside service; until then the picker is filled by hand. Works only over https
+ * or on localhost (the browser rule for cameras).
  */
-function WebcamReader({ onReading }: { onReading: (r: FlopReading) => void }) {
+function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: string[] }) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [last, setLast] = useState<FlopReading | null>(null);
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
     return () => stream?.getTracks().forEach((t) => t.stop());
@@ -170,21 +165,6 @@ function WebcamReader({ onReading }: { onReading: (r: FlopReading) => void }) {
       setCameraError(e instanceof Error && e.name === 'NotAllowedError' ? 'Camera access was refused. Allow the camera for this site and try again.' : `Camera unavailable: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  const read = useAction(async () => {
-    const v = video.current;
-    if (!v || !v.videoWidth) throw new Error('The camera has no picture yet.');
-    const { width, height } = scaledSize(v.videoWidth, v.videoHeight);
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    canvas.getContext('2d')!.drawImage(v, 0, 0, width, height);
-    const img = splitDataUrl(canvas.toDataURL('image/jpeg', 0.85));
-    if (!img) throw new Error('Could not capture a frame from the camera.');
-    return api.adminReadFlop(img.base64, img.mediaType);
-  }, {
-    success: (r) => (r.cards.length === 3 ? `Read ${r.cards.map(cardLabel).join(' ')} (${r.confidence} confidence). Check the cards, then settle.` : `Read ${r.cards.length} of 3 cards; pick the rest by hand.`),
-    onSuccess: (r) => { setLast(r); onReading(r); },
-  });
 
   return (
     <div className="rounded-[10px] border border-line p-3">
@@ -192,17 +172,10 @@ function WebcamReader({ onReading }: { onReading: (r: FlopReading) => void }) {
         {stream
           ? <Button size="sm" variant="secondary" onClick={() => setStream(null)}><CameraOff size={14} aria-hidden />Stop camera</Button>
           : <Button size="sm" variant="secondary" onClick={() => void start()}><Camera size={14} aria-hidden />Use webcam</Button>}
-        {stream && <Button size="sm" onClick={() => read.mutate(undefined)} disabled={read.isPending}><ScanLine size={14} aria-hidden />{read.isPending ? 'Reading…' : 'Read flop'}</Button>}
-        <span className="text-xs text-muted">Point the camera at the three cards, press Read flop, then check the picker before settling.</span>
+        <span className="text-xs text-muted">Point the camera at the three cards and pick them below. Nothing leaves this laptop.</span>
       </div>
       {cameraError && <p className="mt-2 text-xs text-danger">{cameraError}</p>}
-      {read.isError && <p className="mt-2 text-xs text-danger">{read.error instanceof Error ? read.error.message : 'Reading failed; enter the cards by hand.'}</p>}
       {stream && <video ref={video} autoPlay playsInline muted className="mt-3 aspect-video w-full max-w-md rounded-[8px] border border-line bg-black" aria-label="Webcam view of the table" />}
-      {last && (
-        <p className="mt-2 text-xs text-muted">
-          Last reading: {last.cards.length ? <FlopText cards={last.cards} /> : 'no card found'} · {last.confidence} confidence{last.notes ? ` · ${last.notes}` : ''}
-        </p>
-      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { statsOf } from '../bets/service.ts';
 import { audit, verifyAuditChain } from '../lib/audit.ts';
 import { type Tx, retryCount, retryStats, tx } from '../lib/db.ts';
 import { defaultRoundLossMinor } from '../lib/limits.ts';
-import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
+import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
@@ -17,7 +17,6 @@ import { platformStatements } from '../lib/statements.ts';
 import { manualFlop, manualLock } from '../rounds/manual.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { manualTablesEnabled } from '../rounds/readiness.ts';
-import { MAX_IMAGE_BASE64 } from '../lib/vision.ts';
 import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound, withReviewDeadline } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
@@ -136,12 +135,21 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!t.success) throw unprocessable('invalid_value', `territories: ${t.error.issues.map((i) => `${i.path.join('.') || 'value'} ${i.message}`).join('; ')}`);
       stored = { blocked: [...new Set(t.data.blocked)].sort(), real_money_allowed: [...new Set(t.data.real_money_allowed)].sort() };
     }
-    return tx(ctx.db, async (c) => {
+    const ev = new EventBatch();
+    const out = await tx(ctx.db, async (c) => {
       const r = await c.query('update settings set value = $2, updated_at = now(), updated_by = $3 where key = $1 returning key', [key, JSON.stringify(stored), u.id]);
       if (!r.rowCount) throw notFound('setting');
       await audit(c, { type: 'settings.changed', key, value: stored as never, note: note ?? null, by: u.id });
+      // Manual tables off: no hand can be closed or typed any more, so open hands are refunded now
+      // rather than left with bets nobody can settle (locked hands still reach the result deadline).
+      if (key === 'manual_tables_enabled' && stored === false) {
+        const open = (await c.query<{ id: string }>(`select r.id from rounds r join poker_tables t on t.id = r.table_id where t.kind = 'manual' and r.state = 'OPEN' order by r.id`)).rows;
+        for (const o of open) await voidRound(c, await lockRound(c, o.id), 'manual tables switched off', `user:${u.id}`, ev, ['OPEN']);
+      }
       return { key, value: stored };
     });
+    publish(ev);
+    return out;
   });
 
   // ---------------------------------------------------------------- alerts
@@ -371,8 +379,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const { id } = req.params as { id: string };
     const b = z.object({ approved: z.boolean(), note: z.string().max(500).optional() }).parse(req.body);
     return tx(ctx.db, async (c) => {
-      const t = (await c.query<{ mode: PlayMode }>('select mode from poker_tables where id = $1 for update', [id])).rows[0];
+      const t = (await c.query<{ mode: PlayMode; kind: string }>('select mode, kind from poker_tables where id = $1 for update', [id])).rows[0];
       if (!t) throw notFound('table');
+      // A typed flop has no capture or review: a manual table never carries real money, not even a
+      // real-money tournament's bets (docs/19).
+      if (b.approved && t.kind === 'manual') throw unprocessable('manual_table', 'a manual table cannot be approved for real money');
       const r = (await c.query<{ real_money_approved_at: Date | null; real_money_approved_by: string | null }>(
         `update poker_tables set real_money_approved_at = case when $2 then now() end, real_money_approved_by = case when $2 then $3 end
           where id = $1 returning real_money_approved_at, real_money_approved_by`, [id, b.approved, u.id])).rows[0]!;
@@ -408,20 +419,21 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   // The PreFlop team closes betting and types the flop; free play only (rounds/manual.ts).
   app.post('/v1/admin/tables/manual', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
-    const b = z.object({ name: z.string().trim().min(2).max(60), mode: z.enum(['play', 'virtual-chips']).default('play') }).parse(req.body);
-    const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
+    // Play money only (migration 021): every player has a play wallet; nothing funds a direct chip wallet.
+    const b = z.object({ name: z.string().trim().min(2).max(60) }).parse(req.body);
+    const mode = 'play', currency = 'PLAY';
     const id = newId('manual');
     const ev = new EventBatch();
     await tx(ctx.db, async (c) => {
       await upsertClub(c, MANUAL_CLUB, 'PreFlop test tables');
       await c.query(
         `insert into poker_tables (id, club_id, name, mode, currency, kind, max_round_loss_minor) values ($1, $2, $3, $4, $5, 'manual', $6)`,
-        [id, MANUAL_CLUB, b.name, b.mode, currency, defaultRoundLossMinor(currency)]);
-      await audit(c, { type: 'table.created', tableId: id, kind: 'manual', mode: b.mode, by: u.id });
+        [id, MANUAL_CLUB, b.name, mode, currency, defaultRoundLossMinor(currency)]);
+      await audit(c, { type: 'table.created', tableId: id, kind: 'manual', mode, by: u.id });
       await ensureOpenRound(c, id, ev);
     });
     publish(ev);
-    return { id, name: b.name, kind: 'manual', mode: b.mode, currency };
+    return { id, name: b.name, kind: 'manual', mode, currency };
   });
   app.get('/v1/admin/tables/manual', async (req) => {
     await requirePlatform(ctx, req, 'admin', 'ops');
@@ -456,28 +468,16 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     publish(ev);
     return out;
   });
-  app.post('/v1/admin/tables/:id/manual/flop', async (req) => {
+  app.post('/v1/admin/tables/:id/manual/flop', async (req, reply) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     const { id } = req.params as { id: string };
     const b = z.object({ hand_no: z.number().int().positive(), cards: z.array(z.string()).length(3) }).parse(req.body);
     const ev = new EventBatch();
-    const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ev));
+    const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ctx.timing, ev));
     publish(ev);
+    // The void above is committed; the answer still says the flop was not accepted.
+    if (out.state === 'VOID') return reply.code(409).type('application/problem+json').send({ type: 'round_expired', title: out.reason, status: 409, next_round_id: out.next_round_id });
     return out;
-  });
-
-  /**
-   * Webcam card recognition (docs/19): a photo of the dealt flop → the cards Claude can read. Only a
-   * suggestion for the picker; the operator still checks and settles. Off without ANTHROPIC_API_KEY.
-   */
-  app.post('/v1/admin/manual/read-flop', async (req) => {
-    await requirePlatform(ctx, req, 'admin', 'ops');
-    const b = z.object({
-      image_base64: z.string().min(64).max(MAX_IMAGE_BASE64).regex(/^[A-Za-z0-9+/]+=*$/, 'base64 without line breaks'),
-      media_type: z.enum(['image/jpeg', 'image/png', 'image/webp']),
-    }).parse(req.body);
-    if (!ctx.flopReader) throw new ApiError(503, 'provider_not_configured', 'card recognition needs ANTHROPIC_API_KEY on the API; enter the cards by hand');
-    return ctx.flopReader({ base64: b.image_base64, mediaType: b.media_type });
   });
 
   // ---------------------------------------------------------------- ledger & audit

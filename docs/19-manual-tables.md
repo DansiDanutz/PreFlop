@@ -3,15 +3,15 @@
 A manual table has no Table Box, stream or shuffler. A member of the PreFlop team closes betting and types the three flop cards in the console. Manual tables test camera-free play now. Webcam card recognition comes next (below).
 
 ## Rules
-- **Free play only.** Play money or free chips. Two places enforce it: the database (`poker_tables_manual_free_play`) and the API.
+- **Play money only.** Two places enforce it: the database (`poker_tables_manual_play_only`, migration 021) and the API. A manual table can never be approved for real money, and real-money tournaments cannot bet on it: a typed flop has no capture or review.
 - **Typed after betting closes.** The flop is accepted only once betting has closed, and never on a simulated or physical table.
-- **Result deadline.** A flop not entered before `RESULT_SLA_MS` (default 5 minutes) after betting closes is voided, and every bet is refunded.
+- **Result deadline.** A flop not entered before `RESULT_SLA_MS` (default 5 minutes) after betting closes is voided, and every bet is refunded. A flop typed after the deadline is refused (409 `round_expired`) and voids the hand the same way.
 - **Audited.** The audit log records who closed betting (`round.locked`, `manual: true`) and who typed which cards (`round.manual_flop`). Settled rounds carry `flop_source = 'manual'`.
-- **Its own switch.** `manual_tables_enabled` (Console → Settings) is on by default. Off: no round opens, and betting can't be closed. It is separate from `physical_play_enabled`, which stays off (`docs/06` #7).
+- **Its own switch.** `manual_tables_enabled` (Console → Settings) is on by default. Switching it off voids and refunds every open hand on a manual table at once, and no new hand opens; a hand already closed for betting can still be typed, or voids at the deadline. It is separate from `physical_play_enabled`, which stays off (`docs/06` #7).
 - **Players are told.** The table is labelled *Test table · Flop entered by the PreFlop team*.
 
 ## Running a hand (Console → Manual tables, PreFlop admin or ops)
-1. Create a table: a name, then *Play money* or *Free chips*. Betting opens at once.
+1. Create a table with a name. Betting opens at once.
 2. Players bet in the app as on any table.
 3. **Close betting** before the flop is dealt. A countdown shows the time left to enter the flop.
 4. Pick the three cards on the 52-card grid, then **Settle hand** → **Settle and pay**. Winning bets are paid at once, and the next hand opens.
@@ -19,18 +19,14 @@ A manual table has no Table Box, stream or shuffler. A member of the PreFlop tea
 ## API
 | Route | Who | What |
 |---|---|---|
-| `POST /v1/admin/tables/manual` `{name, mode?}` | admin, ops | Create a manual table (`mode`: `play` or `virtual-chips`) |
+| `POST /v1/admin/tables/manual` `{name}` | admin, ops | Create a manual table (play money) |
 | `GET /v1/admin/tables/manual` | admin, ops | Tables, the current hand, its bets, the last settled flop and the switch |
 | `POST /v1/admin/tables/:id/manual/lock` `{hand_no}` | admin, ops | Close betting (OPEN → LOCKED) |
-| `POST /v1/admin/tables/:id/manual/flop` `{hand_no, cards}` | admin, ops | Type the flop (LOCKED → SETTLED) and open the next hand |
+| `POST /v1/admin/tables/:id/manual/flop` `{hand_no, cards}` | admin, ops | Type the flop (LOCKED → SETTLED) and open the next hand; 409 `round_expired` past the deadline |
 
-## Webcam recognition
-The laptop running the console points its camera at the dealt cards. **Read flop** sends one still to the API, which asks Claude which face-up cards it sees and pre-fills the picker. A person still checks the cards and settles; nothing is paid from a reading alone, and typing stays as the fallback.
+## Webcam
+After *Close betting*, **Use webcam** shows the laptop camera beside the card picker, so the operator can point it at the dealt cards and pick what it shows. The picture stays on the laptop: nothing is uploaded, and no outside service is involved.
 
-- **Where:** Console → Manual tables → after *Close betting* → **Use webcam** → **Read flop**. Browsers allow the camera only over https (or localhost), which staging is.
-- **What is sent:** one JPEG, at most 1280 px on its long side, from the camera to the API (`POST /v1/admin/manual/read-flop`, admin or ops) and on to Anthropic's API. No video is streamed or stored; the API keeps nothing.
-- **Switch:** the API needs the secret `ANTHROPIC_API_KEY` (`fly secrets set ANTHROPIC_API_KEY=… -a preflop-staging-api`). Without it the button answers *card recognition needs ANTHROPIC_API_KEY* (503 `provider_not_configured`). `VISION_MODEL` picks the model (default `claude-opus-5-5`).
-- **What comes back:** up to three cards, left to right, a confidence (high, medium, low) and a note on anything it could not read. Only cards whose rank and suit were both clear are returned; the operator picks any missing card by hand.
-- **Cost:** one request per hand, roughly a cent at today's prices; see `lib/vision.ts`.
+**Next: recognition on the laptop.** Card recognition will run inside the console in the browser (OpenCV.js: find the white card rectangles on the felt, read each card's corner rank and suit, pre-fill the picker). No API key, no per-use cost, no photo leaves the machine. The operator still checks the cards and settles; typing stays the fallback. How well it reads depends on the deck, the camera and the light, so the first version is a test page that only reports what it reads, with no bet connected.
 
 Real-money or physical play from a camera needs the certified capture chain in `docs/12`, not this.

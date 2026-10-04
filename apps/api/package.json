@@ -15,7 +15,6 @@
     "soak": "tsx --conditions=preflop-source src/sim/soak.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.131.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/websocket": "^11.0.0",
     "@preflop/db": "workspace:*",

@@ -83,15 +83,19 @@ describe('manual tables', () => {
     expect(await walletOf(h, p.token)).toBe(before);
   });
 
-  it('free play only, PreFlop team only, and never on a simulated table', async () => {
-    expect((await create('Money table', 'real-fiat')).status).toBe(400);
-    await expect(h.db.query(`update poker_tables set mode = 'real-fiat' where kind = 'manual'`)).rejects.toThrow(/poker_tables_manual_free_play/);
-    const chips = await create('Chip table', 'virtual-chips');
-    expect(chips.body).toMatchObject({ mode: 'virtual-chips', currency: 'CHIP' });
+  it('play money only (migration 021), PreFlop team only, never real money, never on a simulated table', async () => {
+    const r = await create('Chip table', 'virtual-chips');
+    expect(r.body).toMatchObject({ mode: 'play', currency: 'PLAY' }); // a mode in the body is ignored
+    await expect(h.db.query(`update poker_tables set mode = 'virtual-chips' where kind = 'manual'`)).rejects.toThrow(/poker_tables_manual_play_only/);
+    // never approved for real money: a typed flop has no capture or review
+    const approve = await h.api('PUT', `/v1/admin/tables/${r.body.id}/real-money`, admin, { approved: true });
+    expect(approve.status).toBe(422);
+    expect(approve.body.type).toBe('manual_table');
+    expect((await h.db.query('select real_money_approved_at from poker_tables where id = $1', [r.body.id])).rows[0].real_money_approved_at).toBeNull();
 
     const p = await h.register('Not staff');
     expect((await h.api('POST', '/v1/admin/tables/manual', p.token, { name: 'Mine' })).status).toBe(403);
-    expect((await h.api('POST', `/v1/admin/tables/${chips.body.id}/manual/lock`, p.token, { hand_no: 1 })).status).toBe(403);
+    expect((await h.api('POST', `/v1/admin/tables/${r.body.id}/manual/lock`, p.token, { hand_no: 1 })).status).toBe(403);
 
     await h.sim.heartbeat();
     await h.work();
@@ -101,15 +105,38 @@ describe('manual tables', () => {
     expect(sim.body.type).toBe('not_manual_table');
   });
 
-  it('switching manual_tables_enabled off stops new rounds and closing betting', async () => {
+  it('a flop typed after the result deadline voids and refunds the hand instead of paying', async () => {
+    const id = (await create('Late table')).body.id;
+    const p = await h.register('Late player');
+    const before = await walletOf(h, p.token);
+    expect((await bet(h, p.token, `${id}:h1`, 'colour:mixed', 400)).status).toBe(201);
+    expect((await h.api('POST', `/v1/admin/tables/${id}/manual/lock`, admin, { hand_no: 1 })).status).toBe(200);
+    await h.db.query(`update rounds set locked_at = now() - interval '1 hour' where id = $1`, [`${id}:h1`]);
+    const late = await h.api('POST', `/v1/admin/tables/${id}/manual/flop`, admin, { hand_no: 1, cards: ['Ah', 'Kd', '7c'] });
+    expect(late.status).toBe(409);
+    expect(late.body).toMatchObject({ type: 'round_expired', next_round_id: `${id}:h2` });
+    expect((await h.db.query('select state, void_reason, flop from rounds where id = $1', [`${id}:h1`])).rows[0]).toMatchObject({ state: 'VOID', void_reason: 'result deadline passed', flop: null });
+    expect(await walletOf(h, p.token)).toBe(before);
+    for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
+  });
+
+  it('switching manual_tables_enabled off refunds open hands and stops new ones', async () => {
     const id = (await create('Switch table')).body.id;
-    expect((await h.api('PUT', '/v1/admin/settings/manual_tables_enabled', admin, { value: false })).status).toBe(200);
-    const r = await h.api('POST', `/v1/admin/tables/${id}/manual/lock`, admin, { hand_no: 1 });
-    expect(r.status).toBe(409);
-    expect(r.body.title).toMatch(/switched off/);
     const p = await h.register('Off player');
+    const before = await walletOf(h, p.token);
+    expect((await bet(h, p.token, `${id}:h1`, 'colour:mixed', 100)).status).toBe(201);
+    expect((await h.api('PUT', '/v1/admin/settings/manual_tables_enabled', admin, { value: false })).status).toBe(200);
+    // the open hand was voided and refunded by the switch, so no bet is stranded
+    expect((await h.db.query('select state, void_reason from rounds where id = $1', [`${id}:h1`])).rows[0]).toMatchObject({ state: 'VOID', void_reason: 'manual tables switched off' });
+    expect(await walletOf(h, p.token)).toBe(before);
     expect((await bet(h, p.token, `${id}:h1`, 'colour:mixed', 100)).status).toBe(409);
+    expect((await h.api('POST', `/v1/admin/tables/${id}/manual/lock`, admin, { hand_no: 1 })).status).toBe(409);
+    await h.work(); // no new hand opens while the switch is off
+    expect((await h.db.query('select count(*)::int as n from rounds where table_id = $1', [id])).rows[0].n).toBe(1);
     expect((await h.api('GET', '/v1/admin/tables/manual', admin)).body.enabled).toBe(false);
     expect((await h.api('PUT', '/v1/admin/settings/manual_tables_enabled', admin, { value: true })).status).toBe(200);
+    await h.work();
+    expect((await h.db.query(`select count(*)::int as n from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0].n).toBe(1);
+    for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
   });
 });
