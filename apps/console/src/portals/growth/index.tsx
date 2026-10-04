@@ -6,6 +6,7 @@ import { Plus, Trophy, Gift } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { useCanWrite, usePortal } from '../../components/Shell.tsx';
 import { DataTable } from '../../components/DataTable.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Section, Select, TextArea, TextInput, useAction } from '../../components/ui.tsx';
 
 /** Leaderboards and promotions for the PreFlop team, clubs and organizers (docs/16). */
@@ -268,6 +269,7 @@ export function Promotions() {
                           <div className="mt-1 font-semibold">{p.title}</div>
                           {p.body && <p className="mt-1 text-sm text-ink/80">{p.body}</p>}
                           {p.kind === 'org-drop' && <p className="mt-1 text-sm text-muted">{amount(p.amount_minor ?? 0, p.currency ?? '')} per player · budget {amount(p.budget_minor ?? 0, p.currency ?? '')}</p>}
+                          <div className="mt-2 flex items-center gap-2 text-xs text-muted">Suggested: <ChoiceHint hint={p.hint} question="decision" /></div>
                         </div>
                         {write && <div className="flex gap-2"><Button size="sm" onClick={() => decide.mutate({ id: p.id, decision: 'approve' })}>Approve</Button><Button size="sm" variant="secondary" onClick={() => setRejecting(p)}>Reject</Button></div>}
                       </li>

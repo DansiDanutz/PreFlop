@@ -186,6 +186,47 @@ export const REVIEW_HINT: Record<string, Question> = {
   },
 };
 
+/** Organization application (club, betting partner, organizer): approve, reject or ask for more before an org is created. */
+export const APPLICATION_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in, how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
+    criteria: {
+      approve: 'The details describe a real, specific operation of the kind applied for and nothing suggests a duplicate or a test: create the organization.',
+      ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind): write back before deciding.',
+      reject: 'Empty, nonsense or test content, a duplicate of an existing organization or open application, or an activity the platform does not offer.',
+    },
+  },
+  complete: { type: 'noul', instructions: 'Do the details contain enough concrete information (what, where, how big) to set this organization up without a follow-up question?' },
+};
+
+/** Promotion review: an organization's offer to players, before players see it. */
+export const PROMOTION_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'An organization submitted a promotion for players of a poker flop-betting platform; a PreFlop team member approves it before any player sees it. Judge the title and body as a player would read them, together with the kind, the value per claim, the budget and the period. Rules: no misleading or unverifiable claims (guaranteed wins, risk-free, best odds), no urgency pressure or targeting of vulnerable players, no promise that the platform does not keep (the value is per claim and bounded by the budget), nothing that reads as a chat message or spam, and the period must be sensible. Suggest what the reviewer does.',
+    criteria: {
+      approve: 'Clear, truthful, matches the kind and the numbers, sensible period: show it to players.',
+      edit: 'Acceptable offer with wording that must change first (an unverifiable claim, pressure, missing condition): reject with the exact words to fix.',
+      reject: 'Misleading, manipulative, off-platform, or the numbers and period do not make sense for the kind.',
+    },
+  },
+  misleading: { type: 'noul', instructions: 'Would a reasonable player be misled about what they get, how likely it is, or what it costs them?' },
+};
+
+/** Agent application: a player asking to recruit players for a share of net revenue. */
+export const AGENT_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote, the age of the account and of the application, whether a recruiting agent proposed them, and how many players already registered with their code before approval (which cannot happen legitimately). Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
+    criteria: {
+      approve: 'A credible note (who they are, where their players come from) and nothing odd about the account: activate the code.',
+      hold: 'No note or a vague one, or a very new account: ask what audience they bring before activating.',
+      reject: 'Spam, prohibited practices (buying traffic to minors, incentivising losses), or signs of a self-referral scheme.',
+    },
+  },
+};
+
 /** Card reading: is one recognised card sure enough to pre-fill the operator's picker? */
 export const READING_CHECK: Record<string, Question> = {
   accept: { type: 'noul', instructions: 'A camera read one playing card on a felt table and reports a match confidence (0..1, normalised correlation of the corner index) and the margin to the runner-up glyph. Should this card be pre-filled for the operator to confirm? Answer no when a mistake is plausible; the operator can always type the card.' },

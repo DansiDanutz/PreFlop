@@ -11,8 +11,9 @@ import { cardLabel } from '../lib/manualFlop.ts';
 const TONE: Record<string, 'accent' | 'muted' | 'live' | 'info' | 'warn' | 'danger'> = {
   dismiss: 'muted', watch: 'info', pause_table: 'warn', escalate: 'danger',
   settle: 'live', void: 'warn',
+  approve: 'live', ask_more: 'info', hold: 'info', edit: 'warn', reject: 'danger',
 };
-const LABEL: Record<string, string> = { dismiss: 'dismiss', watch: 'watch', pause_table: 'pause table', escalate: 'escalate', settle: 'settle', void: 'void' };
+const LABEL: Record<string, string> = { dismiss: 'dismiss', watch: 'watch', pause_table: 'pause table', escalate: 'escalate', settle: 'settle', void: 'void', approve: 'approve', ask_more: 'ask more', hold: 'hold', edit: 'edit wording', reject: 'reject' };
 
 /** The pick-one answer `question` of a stored hint, as a badge with its confidence. "—" when there is no hint. */
 export function ChoiceHint({ hint, question }: { hint: DecisionHint | null | undefined; question: string }) {

@@ -36,15 +36,17 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/admin/agents', async (req) => {
     await requirePlatform(ctx, req);
-    const agents = (await ctx.db.query<AgentRow & { display_name: string; email: string; players: number; parent_name: string | null }>(
-      `select a.*, u.display_name, u.email, (select count(*)::int from users p where p.referred_by_agent = a.user_id) as players, pu.display_name as parent_name
-         from agents a join users u on u.id = a.user_id left join users pu on pu.id = a.parent_agent_id
+    // `hint` is the decision model's suggestion (docs/20) for an application still awaiting a decision.
+    const agents = (await ctx.db.query<AgentRow & { display_name: string; email: string; players: number; parent_name: string | null; hint: unknown }>(
+      `select a.*, u.display_name, u.email, (select count(*)::int from users p where p.referred_by_agent = a.user_id) as players, pu.display_name as parent_name,
+              case when h.ref is null or h.error is not null then null else jsonb_build_object('model', h.model, 'answers', h.answers, 'at', h.created_at) end as hint
+         from agents a join users u on u.id = a.user_id left join users pu on pu.id = a.parent_agent_id left join decision_hints h on h.kind = 'agent' and h.ref = a.user_id
         order by (a.status = 'applied') desc, a.created_at desc`)).rows;
     const statements = (await ctx.db.query(`select ${statementCols}, u.display_name from agent_statements s join users u on u.id = s.agent_id
        order by s.month desc, u.display_name, s.currency, s.level limit 500`)).rows;
     return {
       caps: { rate_l1_bps: RATE_CAPS.l1, rate_l2_bps: RATE_CAPS.l2 },
-      agents: agents.map((a) => ({ ...agentView(a), display_name: a.display_name, email: a.email, players: a.players, parent_name: a.parent_name })),
+      agents: agents.map((a) => ({ ...agentView(a), display_name: a.display_name, email: a.email, players: a.players, parent_name: a.parent_name, hint: a.hint ?? null })),
       statements,
     };
   });

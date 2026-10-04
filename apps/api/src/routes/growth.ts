@@ -284,10 +284,13 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/v1/admin/promotions', async (req) => {
     await requirePlatform(ctx, req);
-    const rows = (await ctx.db.query<PromotionRow & { org_name: string | null }>(
-      `select p.*, o.name as org_name from promotions p left join organizations o on o.id = p.owner_org
+    // `hint` is the decision model's suggestion (docs/20) for a promotion still in review.
+    const rows = (await ctx.db.query<PromotionRow & { org_name: string | null; hint: unknown }>(
+      `select p.*, o.name as org_name,
+              case when h.ref is null or h.error is not null then null else jsonb_build_object('model', h.model, 'answers', h.answers, 'at', h.created_at) end as hint
+         from promotions p left join organizations o on o.id = p.owner_org left join decision_hints h on h.kind = 'promotion' and h.ref = p.id
         order by (p.status = 'pending_review') desc, p.created_at desc limit 300`)).rows;
-    return { promotions: rows.map((p) => ({ ...promoView(p), owner_name: p.org_name ?? 'PreFlop', live: isLive(p) })) };
+    return { promotions: rows.map((p) => ({ ...promoView(p), owner_name: p.org_name ?? 'PreFlop', live: isLive(p), hint: p.hint ?? null })) };
   });
   app.post('/v1/admin/promotions', async (req, reply) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');

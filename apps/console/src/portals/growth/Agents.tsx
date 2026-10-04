@@ -6,6 +6,7 @@ import { Network } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { useCanWrite, usePortal } from '../../components/Shell.tsx';
 import { DataTable } from '../../components/DataTable.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 
 /** The PreFlop team's view of agents: applications, the two-level tree, rates and monthly statements (docs/16 §4). */
@@ -104,6 +105,7 @@ export function Agents() {
                     { key: 'rates', header: 'Rates (L1 / L2)', cell: (a) => `${pct(a.rate_l1_bps)} / ${pct(a.rate_l2_bps)}` },
                     { key: 'players', header: 'Players', align: 'right', sort: (a) => a.players, cell: (a) => <span className="tabular-nums">{a.players}</span> },
                     { key: 'status', header: 'Status', cell: (a) => <Badge tone={tone(a.status)}>{a.status}</Badge> },
+                    { key: 'hint', header: 'Suggested', cell: (a) => a.status === 'applied' ? <ChoiceHint hint={a.hint} question="decision" /> : null },
                     { key: 'act', header: '', align: 'right', cell: (a) => write ? (
                       <div className="flex justify-end gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setEditing(a)}>Edit</Button>

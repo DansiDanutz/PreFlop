@@ -232,7 +232,7 @@ export interface TournamentBetInput {
 /** A single-use link that makes whoever redeems it (signed in) an owner of the organization. */
 export interface OwnerClaim { token: string; expires_at: string }
 
-export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null }
+export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null; hint?: DecisionHint | null }
 /** One typed answer of the decision model (docs/20). */
 export type DecisionAnswer =
   | { type: 'noul'; noul: number }  // probability of "yes", 0..1; at least 0.5 reads as yes
@@ -288,7 +288,7 @@ export type PromotionKind = 'announcement' | 'leaderboard' | 'free-chips' | 'org
 export interface Promotion {
   id: string; owner_org: string | null; owner_name?: string; kind: PromotionKind; title: string; body: string; link: string | null; leaderboard_id: string | null;
   mode: PlayMode | null; currency: string | null; amount_minor: number | null; budget_minor: number | null; claimed_minor: number;
-  starts_at: string; ends_at: string; status: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'ended'; review_note: string | null; claimed?: boolean; eligible?: boolean; live?: boolean;
+  starts_at: string; ends_at: string; status: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'ended'; review_note: string | null; claimed?: boolean; eligible?: boolean; live?: boolean; hint?: DecisionHint | null;
 }
 export interface PromotionInput {
   kind: PromotionKind; title: string; body?: string; link?: string | null; leaderboard_id?: string | null; mode?: PlayMode | null; currency?: string | null;
@@ -303,7 +303,7 @@ export interface AgentStatement {
 export interface MyAgent { agent: Agent | null; players?: number; sub_agents?: { user_id: string; display_name: string; code: string; status: AgentStatus; players: number }[]; statements?: AgentStatement[] }
 export interface AdminAgents {
   caps: { rate_l1_bps: number; rate_l2_bps: number };
-  agents: (Agent & { display_name: string; email: string; players: number; parent_name: string | null })[];
+  agents: (Agent & { display_name: string; email: string; players: number; parent_name: string | null; hint?: DecisionHint | null })[];
   statements: AgentStatement[];
 }
 // --- news (migration 015)

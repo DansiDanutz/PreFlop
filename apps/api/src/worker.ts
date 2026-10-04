@@ -4,7 +4,7 @@ import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
-import { ALERT_TRIAGE, type Decider, DecisionError, REVIEW_HINT, saveHint } from './lib/decisions.ts';
+import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -149,6 +149,39 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
   for (const r of reviews) {
     const state = { round: { state: r.state, mode: r.mode, review_reasons: r.review_reasons }, entries: r.entries, capture: r.capture };
     if (!(await ask('review', r.id, state, REVIEW_HINT))) return stored;
+  }
+  // Organization applications awaiting a decision. The applicant's name and email stay out of the
+  // state; what goes is the kind, the details they typed (minus contact fields) and duplicate signals.
+  const applications = (await db.query<{ id: string; kind: string; details: Record<string, unknown> | null; user_id: string | null; created_at: Date; same_email_orgs: number; same_email_open: number }>(
+    `select a.id, a.kind, a.details, a.user_id, a.created_at,
+            (select count(*)::int from organizations o where lower(o.settings->>'owner_email') = lower(a.email)) as same_email_orgs,
+            (select count(*)::int from applications b where b.id <> a.id and b.status = 'new' and lower(b.email) = lower(a.email)) as same_email_open
+       from applications a left join decision_hints h on h.kind = 'application' and h.ref = a.id
+      where a.status = 'new' and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;
+  for (const a of applications) {
+    const details = Object.fromEntries(Object.entries(a.details ?? {}).filter(([k]) => !/email|phone|name|address/i.test(k)));
+    const state = { application: { kind: a.kind, details, applicant_signed_in: a.user_id !== null, age_hours: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000) }, organizations_with_same_contact: a.same_email_orgs, other_open_applications_same_contact: a.same_email_open };
+    if (!(await ask('application', a.id, state, APPLICATION_HINT))) return stored;
+  }
+  // Promotions from organizations waiting for PreFlop's review.
+  const promotions = (await db.query<{ id: string; kind: string; title: string; body: string; link: string | null; mode: string | null; currency: string | null; amount_minor: string | null; budget_minor: string | null; starts_at: Date; ends_at: Date; org_kind: string | null }>(
+    `select p.id, p.kind, p.title, p.body, p.link, p.mode, p.currency, p.amount_minor, p.budget_minor, p.starts_at, p.ends_at, o.kind as org_kind
+       from promotions p left join organizations o on o.id = p.owner_org left join decision_hints h on h.kind = 'promotion' and h.ref = p.id
+      where p.status = 'pending_review' and ${HINT_WANTED} order by p.created_at limit $1`, [limit])).rows;
+  for (const p of promotions) {
+    const days = Math.round((p.ends_at.getTime() - p.starts_at.getTime()) / 86_400_000);
+    const state = { promotion: { kind: p.kind, title: p.title, body: p.body, has_link: p.link !== null, mode: p.mode, currency: p.currency, amount_minor: p.amount_minor === null ? null : Number(p.amount_minor), budget_minor: p.budget_minor === null ? null : Number(p.budget_minor), runs_days: days, starts_in_days: Math.round((p.starts_at.getTime() - Date.now()) / 86_400_000), owner_kind: p.org_kind } };
+    if (!(await ask('promotion', p.id, state, PROMOTION_HINT))) return stored;
+  }
+  // Agent applications. No names: the note, the account's age, the proposed parent and early referrals.
+  const agents = (await db.query<{ user_id: string; note: string | null; created_at: Date; user_created_at: Date; parent_status: string | null; early_referrals: number }>(
+    `select a.user_id, a.note, a.created_at, u.created_at as user_created_at, p.status as parent_status,
+            (select count(*)::int from users r where r.referred_by_agent = a.user_id) as early_referrals
+       from agents a join users u on u.id = a.user_id left join agents p on p.user_id = a.parent_agent_id left join decision_hints h on h.kind = 'agent' and h.ref = a.user_id
+      where a.status = 'applied' and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;
+  for (const a of agents) {
+    const state = { agent_application: { note: a.note, account_age_days: Math.round((Date.now() - a.user_created_at.getTime()) / 86_400_000), applied_hours_ago: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000), proposed_by_agent: a.parent_status, players_registered_with_code_before_approval: a.early_referrals } };
+    if (!(await ask('agent', a.user_id, state, AGENT_HINT))) return stored;
   }
   return stored;
 }

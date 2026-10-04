@@ -9,6 +9,7 @@ import { isEmail } from '../../lib/rules.ts';
 import { KIND_LABEL } from '../../lib/portals.ts';
 import { DataTable } from '../../components/DataTable.tsx';
 import { StatusBadge } from '../../components/domain.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { Callout, ConfirmDialog, CopyButton, Field, Modal, PageHeader, Pills, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 
 type OrgRow = Awaited<ReturnType<typeof api.adminOrgs>>['orgs'][number];
@@ -117,6 +118,7 @@ export function Orgs() {
                   { key: 'details', header: 'Details', cell: (a) => <code className="line-clamp-2 max-w-sm break-all font-mono text-[11.5px] text-muted">{JSON.stringify(a.details)}</code> },
                   { key: 'created', header: 'Received', sort: (a) => a.created_at, cell: (a) => <span className="text-xs text-muted">{fmtDate(a.created_at)}</span> },
                   { key: 'status', header: 'Status', sort: (a) => a.status, cell: (a) => <StatusBadge status={a.status} /> },
+                  { key: 'hint', header: 'Suggested', cell: (a) => a.status === 'new' ? <ChoiceHint hint={a.hint} question="decision" /> : null },
                   {
                     key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', cell: (a) => a.status === 'new' ? (
                       <div className="flex justify-end gap-2">

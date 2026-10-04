@@ -106,6 +106,9 @@ describe('decision hints in the worker and the console API', () => {
   const decider = fakeDecider((state) => {
     if ('card' in state) return { accept: { type: 'noul', noul: state.match_confidence >= 0.9 ? 0.8 : state.match_confidence >= 0.6 ? 0.55 : 0.2 } };
     if ('alert' in state) return { triage: { type: 'choice', choice: state.alert.severity === 'critical' ? 'escalate' : 'watch', confidence: 0.66 }, money_at_risk: { type: 'noul', noul: 0.1 } };
+    if ('application' in state) return { decision: { type: 'choice', choice: state.organizations_with_same_contact > 0 ? 'reject' : 'approve', confidence: 0.8 }, complete: { type: 'noul', noul: 0.85 } };
+    if ('promotion' in state) return { decision: { type: 'choice', choice: /guaranteed/i.test(state.promotion.body) ? 'edit' : 'approve', confidence: 0.7 }, misleading: { type: 'noul', noul: 0.75 } };
+    if ('agent_application' in state) return { decision: { type: 'choice', choice: state.agent_application.note ? 'approve' : 'hold', confidence: 0.6 } };
     return { outcome: { type: 'choice', choice: 'void', confidence: 0.55 } };
   });
   beforeAll(async () => {
@@ -144,6 +147,28 @@ describe('decision hints in the worker and the console API', () => {
     expect(asked).toMatchObject({ round: { state: 'REVIEW', review_reasons: ['cards_disagree'] }, entries: [{ source: 'dealer', cards: ['Ah', 'Kd', '7c'] }, { source: 'floor', cards: ['Ah', 'Kd', '7s'] }] });
     const q = (await h.api('GET', '/v1/admin/review-queue', admin)).body.rounds.find((r: any) => r.id === rid);
     expect(q.hint).toMatchObject({ model: 'fake-jev', answers: { outcome: { choice: 'void', confidence: 0.55 } } });
+  });
+
+  it('applications, promotions in review and agent applications get a decision hint; the admin routes carry it; contact fields never leave', async () => {
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint1', 'club', 'Hint Club', 'owner@hintclub.test', '{"city":"Valletta","tables":4,"contact_email":"owner@hintclub.test","phone":"+356 1"}')`);
+    await h.db.query(`insert into promotions (id, owner_org, kind, title, body, starts_at, ends_at, status, created_by) values ('promo_hint1', null, 'announcement', 'Friday night', 'Guaranteed wins every hand!', now(), now() + interval '7 days', 'pending_review', 'someone')`);
+    const applicant = await h.register('Would-be agent');
+    await h.db.query(`insert into agents (user_id, code, note) values ($1, 'PFHINT01', 'I run a poker club Discord with 300 members')`, [applicant.id]);
+    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(3);
+    expect(await decisionsOnce(h.db, decider)).toBe(0);
+    // What the model saw: the typed details without the contact fields, the promotion text and numbers, the agent's note.
+    const seenApp = decider.seen.find((s) => s.application);
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4 });
+    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club/);
+    expect(decider.seen.find((s) => s.promotion)?.promotion).toMatchObject({ kind: 'announcement', title: 'Friday night', runs_days: 7 });
+    expect(decider.seen.find((s) => s.agent_application)?.agent_application).toMatchObject({ note: 'I run a poker club Discord with 300 members', players_registered_with_code_before_approval: 0 });
+    // The routes carry the hints beside the rows the team decides on.
+    const app = (await h.api('GET', '/v1/admin/applications', admin)).body.applications.find((a: any) => a.id === 'app_hint1');
+    expect(app.hint).toMatchObject({ model: 'fake-jev', answers: { decision: { choice: 'approve' }, complete: { noul: 0.85 } } });
+    const promo = (await h.api('GET', '/v1/admin/promotions', admin)).body.promotions.find((p: any) => p.id === 'promo_hint1');
+    expect(promo.hint).toMatchObject({ answers: { decision: { choice: 'edit' }, misleading: { noul: 0.75 } } });
+    const agent = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
+    expect(agent.hint).toMatchObject({ answers: { decision: { choice: 'approve', confidence: 0.6 } } });
   });
 
   it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {
