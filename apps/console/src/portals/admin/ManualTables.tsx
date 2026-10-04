@@ -151,17 +151,31 @@ function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: strin
   const video = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
+  // arrives for a request the operator has since stopped or repeated, or after the hand is gone and
+  // this panel with it, is stopped at once instead of staying live with no view and no Stop button.
+  const request = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; request.current++; };
+  }, []);
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, [stream]);
 
+  const stop = () => { request.current++; setStream(null); };
   const start = async () => {
     setCameraError(null);
     if (!navigator.mediaDevices?.getUserMedia) { setCameraError('This browser gives no camera access here; the console must be opened over https.'); return; }
+    const id = ++request.current;
     try {
-      setStream(await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }));
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      if (!mounted.current || id !== request.current) { s.getTracks().forEach((t) => t.stop()); return; }
+      setStream((prev) => { prev?.getTracks().forEach((t) => t.stop()); return s; });
     } catch (e) {
+      if (!mounted.current || id !== request.current) return;
       setCameraError(e instanceof Error && e.name === 'NotAllowedError' ? 'Camera access was refused. Allow the camera for this site and try again.' : `Camera unavailable: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
@@ -170,7 +184,7 @@ function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: strin
     <div className="rounded-[10px] border border-line p-3">
       <div className="flex flex-wrap items-center gap-3">
         {stream
-          ? <Button size="sm" variant="secondary" onClick={() => setStream(null)}><CameraOff size={14} aria-hidden />Stop camera</Button>
+          ? <Button size="sm" variant="secondary" onClick={stop}><CameraOff size={14} aria-hidden />Stop camera</Button>
           : <Button size="sm" variant="secondary" onClick={() => void start()}><Camera size={14} aria-hidden />Use webcam</Button>}
         <span className="text-xs text-muted">Point the camera at the three cards and pick them below. Nothing leaves this laptop.</span>
       </div>
