@@ -6,6 +6,7 @@ import { CheckCheck } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { fmtDateTime, relTime } from '../../lib/format.ts';
 import { DataTable } from '../../components/DataTable.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { ConfirmDialog, PageHeader, Pills, QueryView, Section, Toggle, useAction } from '../../components/ui.tsx';
 
 const SEV = ['all', 'critical', 'warning', 'info'] as const;
@@ -20,7 +21,7 @@ export function Alerts() {
 
   return (
     <>
-      <PageHeader eyebrow="Integrity" title="Alerts" subtitle="Security, evidence, link and monitor alerts. Resolving records who closed it." />
+      <PageHeader eyebrow="Integrity" title="Alerts" subtitle="Security, evidence, link and monitor alerts. Resolving records who closed it. Suggested is the decision model's triage (docs/20): advice, not an action." />
       <Section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <Pills label="Severity" options={SEV} value={sev} onChange={setSev} />
@@ -38,6 +39,7 @@ export function Alerts() {
                   { key: 'kind', header: 'Kind', sort: (a) => a.kind, cell: (a) => <span className="font-mono text-[13px]">{a.kind}</span> },
                   { key: 'where', header: 'Table / round', cell: (a) => <span className="font-mono text-xs text-muted">{a.round_id ?? a.table_id ?? '—'}</span> },
                   { key: 'details', header: 'Details', cell: (a) => <code className="line-clamp-2 max-w-md break-all font-mono text-[11.5px] text-muted" title={JSON.stringify(a.details)}>{JSON.stringify(a.details)}</code> },
+                  { key: 'hint', header: 'Suggested', sort: (a) => (a.hint?.answers.triage?.type === 'choice' ? a.hint.answers.triage.choice : ''), cell: (a) => <ChoiceHint hint={a.hint} question="triage" /> },
                   { key: 'created', header: 'Raised', sort: (a) => a.created_at, cell: (a) => <span title={fmtDateTime(a.created_at)} className="text-xs">{relTime(a.created_at)}</span> },
                   { key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', cell: (a) => a.resolved_at ? <span className="text-xs text-muted">Resolved {relTime(a.resolved_at)}</span> : <Button size="sm" variant="secondary" onClick={() => setTarget(a)}><CheckCheck size={14} aria-hidden />Resolve</Button> },
                 ]} />

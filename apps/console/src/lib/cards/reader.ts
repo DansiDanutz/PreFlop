@@ -1,7 +1,7 @@
 import type { CV } from './opencv.ts';
 import {
   type CardGuess, type Point, type Reading, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
-  orderCorners, pickFlop, portraitCorners,
+  orderCorners, pickFlop, portraitCorners, runnerUpMargin,
 } from './vision.ts';
 
 /**
@@ -79,7 +79,7 @@ function correlate(cv: CV, a: Mat, b: Mat): number {
 }
 
 /** Reads the index in one corner of a straightened card: the rank and suit codes with their scores. */
-function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: string; score: number } | null {
+function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: string; score: number; margin: number } | null {
   const corner = card.roi(new cv.Rect(0, 0, CORNER_W, CORNER_H));
   const gray = new cv.Mat(); cv.cvtColor(corner, gray, cv.COLOR_RGBA2GRAY);
   const bin = new cv.Mat(); cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
@@ -103,10 +103,11 @@ function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: stri
     mats.push(suitRgba);
     const mean = cv.mean(suitRgba, suit.strip);
     const red = isRedInk({ r: mean[0] ?? 0, g: mean[1] ?? 0, b: mean[2] ?? 0 });
-    const r = bestMatch(t.rank.map((x) => ({ template: x, score: correlate(cv, rank.out, x.mat) })));
-    const s = bestMatch(t.suit.filter((x) => x.red === red).map((x) => ({ template: x, score: correlate(cv, suit.out, x.mat) })));
+    const rankScores = t.rank.map((x) => ({ template: x, score: correlate(cv, rank.out, x.mat) }));
+    const suitScores = t.suit.filter((x) => x.red === red).map((x) => ({ template: x, score: correlate(cv, suit.out, x.mat) }));
+    const r = bestMatch(rankScores), s = bestMatch(suitScores);
     if (!r || !s) return null;
-    return { rank: r.template.code, suit: s.template.code, score: Math.max(0, Math.min(r.score, s.score)) };
+    return { rank: r.template.code, suit: s.template.code, score: Math.max(0, Math.min(r.score, s.score)), margin: Math.min(runnerUpMargin(rankScores), runnerUpMargin(suitScores)) };
   } finally {
     for (const m of mats) m.delete();
   }
@@ -171,7 +172,7 @@ export function readCards(cv: CV, source: HTMLCanvasElement | HTMLImageElement |
         cv.rotate(card, flipped, cv.ROTATE_180);
         const a = readCorner(cv, card, t), b = readCorner(cv, flipped, t);
         const best = [a, b].filter((x): x is NonNullable<typeof x> => !!x).sort((x, y) => y.score - x.score)[0];
-        if (best) guesses.push({ card: `${best.rank}${best.suit}`, confidence: best.score, corners });
+        if (best) guesses.push({ card: `${best.rank}${best.suit}`, confidence: best.score, margin: best.margin, corners });
       } finally {
         card.delete(); flipped.delete();
       }

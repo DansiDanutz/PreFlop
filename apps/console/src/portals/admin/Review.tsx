@@ -7,6 +7,7 @@ import { api } from '../../lib/api.ts';
 import { fmtDateTime, pad3, relTime } from '../../lib/format.ts';
 import { byUrgency, sameCards, timeLeft, urgencyKey } from '../../lib/review.ts';
 import { DataTable } from '../../components/DataTable.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { Callout, ConfirmDialog, KeyVal, PageHeader, QueryView, Section, useAction } from '../../components/ui.tsx';
 import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
 
@@ -60,6 +61,7 @@ export function ReviewQueue() {
                     { key: 'hand', header: 'Hand', sort: (r) => r.hand_no, cell: (r) => `#${pad3(r.hand_no)}` },
                     { key: 'state', header: 'State', sort: (r) => r.state, cell: (r) => <RoundStateBadge state={r.state} /> },
                     { key: 'reasons', header: 'Reasons', cell: (r) => <span className="text-xs text-muted">{r.review_reasons?.join(' · ') || '—'}</span> },
+                    { key: 'hint', header: 'Suggested', cell: (r) => <ChoiceHint hint={r.hint} question="outcome" /> },
                     { key: 'locked', header: 'Locked', sort: (r) => r.locked_at, cell: (r) => <span title={fmtDateTime(r.locked_at)}>{relTime(r.locked_at, now)}</span> },
                     { key: 'mode', header: 'Mode', sort: (r) => r.mode, cell: (r) => <span className="text-xs text-muted">{r.mode}</span> },
                   ]} />

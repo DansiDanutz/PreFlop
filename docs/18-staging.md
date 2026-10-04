@@ -44,7 +44,8 @@ Staging runs the real product against **simulated tables**:
       fly secrets set -a preflop-staging-sim DATABASE_URL='…same…' ADMIN_EMAIL='you@example.com' ADMIN_PASSWORD='<16+ random chars>'
       ```
    5. Create a deploy token with `fly tokens create org`. Add it to GitHub as the repository secret **`FLY_API_TOKEN`** (Settings → Secrets and variables → Actions → New repository secret).
-   6. Without a local flyctl, the **Fly secrets** workflow (Actions → Fly secrets → Run workflow) sets one secret on the API, the simulator or both, using `FLY_API_TOKEN`. The value is masked in the log, but GitHub keeps a run's inputs readable in the Actions UI, so rotate a value set this way if the repository is ever shared. The **Fly logs** workflow prints an app's status, machines and recent logs.
+   6. Optional: `JEV_API_KEY` (docs/20, decision hints) on both apps, the same way. Without it the hints are simply off.
+   7. Without a local flyctl, the **Fly secrets** workflow (Actions → Fly secrets → Run workflow) sets one secret on the API, the simulator or both, using `FLY_API_TOKEN`. The value is masked in the log, but GitHub keeps a run's inputs readable in the Actions UI, so rotate a value set this way if the repository is ever shared. The **Fly logs** workflow prints an app's status, machines and recent logs.
 3. **Vercel**
    1. The three projects are linked to `DansiDanutz/PreFlop` (root directories `apps/web`, `apps/console` and `apps/table`).
    2. Each needs `VITE_API_URL=https://preflop-staging-api.fly.dev`; the console also needs `VITE_WEB_URL=https://preflop-staging-web.vercel.app`.

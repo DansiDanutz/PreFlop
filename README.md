@@ -97,6 +97,7 @@ Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database pl
 | [`docs/16`](docs/16-leaderboards-promotions-agents.md) · [`17`](docs/17-tournaments.md) | Leaderboards, prize pools, promotions and agents; tournaments |
 | [`docs/18`](docs/18-staging.md) | **Staging environment** (Vercel + Fly.io + Supabase Postgres): setup, deploys, operations |
 | [`docs/19`](docs/19-manual-tables.md) | **Manual tables**: the PreFlop team types each flop in the console (free play only), the base for webcam card recognition |
+| [`docs/20`](docs/20-decisions.md) | **Decision hints** (TypeSafe AI Jev): alert triage, review outcome and card-reading checks as advice beside the operator's controls; off without `JEV_API_KEY` |
 | [`docs/screens/`](docs/screens) | Screenshots of the web app, console and club tablet |
 | [`docs/odds-book.md`](docs/odds-book.md) · [`docs/profitability.md`](docs/profitability.md) | The generated odds book and P&L for each participant |
 

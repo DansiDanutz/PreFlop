@@ -233,7 +233,16 @@ export interface TournamentBetInput {
 export interface OwnerClaim { token: string; expires_at: string }
 
 export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null }
-export interface Alert { id: number; table_id: string | null; round_id: string | null; kind: string; severity: 'info' | 'warning' | 'critical'; details: Record<string, unknown>; created_at: string; resolved_at: string | null }
+/** One typed answer of the decision model (docs/20). */
+export type DecisionAnswer =
+  | { type: 'noul'; noul: boolean; confidence?: number }
+  | { type: 'choice'; choice: string; probabilities?: Record<string, number>; confidence?: number }
+  | { type: 'score'; score: number; confidence?: number };
+/** A stored hint of the decision model beside an alert or a round in review: advice, never an action. */
+export interface DecisionHint { model: string | null; answers: Record<string, DecisionAnswer>; at: string }
+export interface Alert { id: number; table_id: string | null; round_id: string | null; kind: string; severity: 'info' | 'warning' | 'critical'; details: Record<string, unknown>; created_at: string; resolved_at: string | null; hint?: DecisionHint | null }
+/** The decision model's verdict on cards the browser read (docs/19): pre-fill or let the operator type. */
+export interface ReadingCheck { enabled: boolean; model: string | null; cards: { card: string; accept: boolean; confidence: number | null }[] }
 export interface Evidence { round: Round & { review_reasons: string[] | null }; capture: Record<string, unknown> | null; image_data_url: string | null; entries: { source: string; person_id: string; cards: string[] }[]; events: { ord: number; step: string; at: string }[] }
 export interface Limits { deposit_day_minor?: number | null; loss_day_minor?: number | null; session_minutes?: number | null }
 export interface Payment { id: string; kind: 'deposit' | 'withdrawal' | 'purchase'; method: string; currency: string; amount_minor: number; status: string; created_at: string; address?: string | null }
@@ -499,12 +508,13 @@ export function createClient(o: ClientOptions) {
     adminManualTables: () => get<ManualTables>('/v1/admin/tables/manual'),
     adminCreateManualTable: (b: { name: string }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string }>('/v1/admin/tables/manual', b),
     adminManualLock: (tableId: string, handNo: number) => post<{ state: 'LOCKED' }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/lock`, { hand_no: handNo }),
+    adminReadingCheck: (cards: { card: string; confidence: number; margin?: number }[]) => post<ReadingCheck>('/v1/admin/manual/reading-check', { cards }),
     adminManualFlop: (tableId: string, handNo: number, cards: string[]) => post<{ state: 'SETTLED'; cards: string[]; next_round_id: string | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/flop`, { hand_no: handNo, cards }),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),
     adminAlerts: () => get<{ alerts: Alert[] }>('/v1/admin/alerts'),
     adminResolveAlert: (id: number) => post<{ ok: true }>(`/v1/admin/alerts/${id}/resolve`),
-    adminReviewQueue: () => get<{ rounds: (Round & { review_reasons: string[] | null; table_name: string })[] }>('/v1/admin/review-queue'),
+    adminReviewQueue: () => get<{ rounds: (Round & { review_reasons: string[] | null; table_name: string; hint?: DecisionHint | null })[] }>('/v1/admin/review-queue'),
     adminEvidence: (roundId: string) => get<Evidence>(`/v1/admin/rounds/${encodeURIComponent(roundId)}/evidence`),
     adminVoidRound: (roundId: string, reason: string) => post<{ state: string }>(`/v1/admin/rounds/${encodeURIComponent(roundId)}/void`, { reason }),
     adminRounds: (f: { table_id?: string; state?: string; limit?: number } = {}) => get<{ rounds: (Round & { bets: number; staked_minor: number; paid_minor: number; table_name: string })[] }>(`/v1/admin/rounds${q(f)}`),

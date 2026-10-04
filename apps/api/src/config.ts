@@ -26,6 +26,17 @@ export interface Config {
   workerHeartbeatMaxAgeMs: number;
   /** Outgoing email (verification and password-reset links). See lib/mailer.ts. */
   mail: MailConfig;
+  /** Decision model hints (docs/20): TypeSafe AI's Jev through JEV_API_KEY. Off without a key. */
+  decisions: DecisionsConfig;
+}
+
+export interface DecisionsConfig {
+  /** JEV_API_KEY, or null: every hint surface then says "off" and nothing else changes. */
+  apiKey: string | null;
+  /** JEV_API_URL: the System One endpoint. */
+  url: string;
+  /** JEV_MODEL, "jev-latest" by default. */
+  model: string;
 }
 
 export interface MailConfig {
@@ -115,6 +126,9 @@ const Env = z.object({
   WEB_URL: z.string().url().default('http://localhost:5173'),
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
   SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
+  JEV_API_KEY: z.string().min(16).optional(),
+  JEV_API_URL: z.string().url().default('https://api.typesafe.ai/v1/systemone'),
+  JEV_MODEL: z.string().min(1).max(80).default('jev-latest'),
 });
 type Env = z.infer<typeof Env>;
 
@@ -126,6 +140,8 @@ type Env = z.infer<typeof Env>;
 const SECRETS: { name: string; get: (e: Env) => string | undefined; min?: number }[] = [
   // Managed Postgres (e.g. Neon) generates ~16-character random passwords: strong, but shorter than 32.
   { name: 'DATABASE_URL password', min: 16, get: (e) => { try { return decodeURIComponent(new URL(e.DATABASE_URL).password) || undefined; } catch { return undefined; } } },
+  // TypeSafe AI issues the key; its length is theirs to choose, so only the demo check and a floor apply.
+  { name: 'JEV_API_KEY', min: 16, get: (e) => e.JEV_API_KEY },
 ];
 
 /**
@@ -194,6 +210,7 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
       } catch { /* malformed URLs are reported by the schema */ }
     }
   }
+  if (e.JEV_API_KEY && !/^https:\/\//i.test(e.JEV_API_URL)) problems.push('JEV_API_URL must be https: the key travels in the Authorization header');
   if (!e.RATE_LIMIT_ENABLED) problems.push('RATE_LIMIT_ENABLED=false is for tests and the soak only');
   if (e.WEBHOOK_ALLOW_PRIVATE) problems.push('WEBHOOK_ALLOW_PRIVATE=true is for local tests only; it lets webhooks reach private addresses (SSRF)');
   return problems;
@@ -234,6 +251,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
+    decisions: { apiKey: e.JEV_API_KEY ?? null, url: e.JEV_API_URL, model: e.JEV_MODEL },
   };
 }
 
