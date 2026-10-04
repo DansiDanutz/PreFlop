@@ -11,12 +11,16 @@ ENV VITE_API_URL=$VITE_API_URL VITE_WEB_URL=$VITE_WEB_URL
 RUN pnpm -r build
 # Production dependencies only, with workspace packages linked to their dist/ builds.
 RUN pnpm --filter @preflop/api deploy --legacy --prod /out/api
+# Supabase signs its Postgres certificates with its own CA (docs/18): the API verifies the database's
+# certificate against it (NODE_EXTRA_CA_CERTS in deploy/fly/*.toml). Fetched over TLS from supabase.com.
+ADD https://supabase.com/downloads/prod/supabase-prod-ca-2021.crt /certs/supabase-ca.crt
 
 # ---- API (+ worker in-process; set RUN_WORKER=false to run it separately)
 FROM node:22-bookworm-slim AS api
 WORKDIR /srv
 ENV NODE_ENV=production PORT=4000
 COPY --from=build /out/api /srv
+COPY --from=build /certs/supabase-ca.crt /srv/supabase-ca.crt
 USER node
 EXPOSE 4000
 CMD ["node", "dist/main.js"]
