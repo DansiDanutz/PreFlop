@@ -38,6 +38,16 @@ export function backAction(dialogOpen: boolean, canGoBack: boolean, atRoot: bool
   return canGoBack && !atRoot ? 'back' : 'minimize';
 }
 
+/**
+ * The origin to put in links shared outside the app (invitations, referral links). Inside the native
+ * app window.location.origin is the app's own internal origin (https://localhost on Android,
+ * capacitor://localhost on iOS), useless to anyone else: the public website's origin is used instead.
+ */
+export function publicOrigin(webUrl: string | undefined = import.meta.env.VITE_WEB_URL as string | undefined): string {
+  const own = (globalThis as { location?: { origin?: string } }).location?.origin ?? '';
+  return isNativeApp() && webUrl ? webUrl.replace(/\/+$/, '') : own;
+}
+
 let started = false;
 
 /** Native-only setup: status bar, splash screen, Back button, resume. Safe to call more than once. */

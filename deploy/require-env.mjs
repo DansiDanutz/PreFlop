@@ -34,7 +34,7 @@ export function requireBuildEnv(names = ['VITE_API_URL']) {
       const missing = missingBuildEnv(config.mode, { ...config.env, ...process.env }, names);
       if (missing.length) {
         throw new Error(`${missing.join(', ')} must be set for a deployable build (the localhost fallback is for development only). `
-          + 'Example: VITE_API_URL=https://api.example.com pnpm build');
+          + `Example: ${missing.map((n) => `${n}=https://${n === 'VITE_API_URL' ? 'api' : 'www'}.example.com`).join(' ')} pnpm build`);
       }
     },
   };

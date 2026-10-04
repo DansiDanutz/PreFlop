@@ -113,7 +113,11 @@ function requireStep(r: RoundRow, expected: Step): void {
  * Returns the opened round id, or null (not ready / already open / hand in progress).
  */
 export async function ensureOpenRound(c: Tx, tableId: string, ev: EventBatch): Promise<string | null> {
-  const t = await getTable(c, tableId);
+  // The table row is held (shared) while the decision is made: switching manual tables off locks the
+  // manual tables for update first, so a hand settling at that moment either opens its next hand
+  // before the switch-off sees (and refunds) it, or waits and then reads the switch as off.
+  const t = (await c.query<TableRow>('select * from poker_tables where id = $1 for share', [tableId])).rows[0];
+  if (!t) throw notFound('table');
   const latest = (await c.query<{ hand_no: number; state: RoundState }>(
     'select hand_no, state from rounds where table_id = $1 order by hand_no desc limit 1', [tableId])).rows[0];
   if (latest && (latest.state === 'OPEN' || latest.state === 'LOCKED')) return null;

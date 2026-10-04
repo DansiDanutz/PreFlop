@@ -1,0 +1,42 @@
+name: Fly logs
+
+# Run by hand: prints the status, machines and recent logs of a staging app on Fly.io, for
+# diagnosing a failed deploy without a local flyctl (docs/18-staging.md). Read-only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: Fly app
+        type: choice
+        options: [preflop-staging-api, preflop-staging-sim]
+        default: preflop-staging-api
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FLYCTL_VERSION: 0.4.111
+      FLYCTL_SHA256: 1878d7fb1f8a418039042cf0749e4b7216c6c7018b66ae10611a64c2b6d9aa9e
+    steps:
+      - name: Install flyctl
+        run: |
+          curl -fsSL -o /tmp/flyctl.tgz "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          echo "${FLYCTL_SHA256}  /tmp/flyctl.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.fly/bin" && tar -xzf /tmp/flyctl.tgz -C "$HOME/.fly/bin" flyctl
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+      - name: Status and machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl status -a "${{ inputs.app }}"
+          flyctl machine list -a "${{ inputs.app }}"
+          flyctl releases -a "${{ inputs.app }}" | head -20
+      - name: Recent logs
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl logs -a "${{ inputs.app }}" --no-tail | tail -400

@@ -243,6 +243,8 @@ export async function placeTournamentBet(db: Db, id: string, userId: string, i: 
     // Real money (the table's or the tournament's) is bet only on tables the PreFlop team approved
     // (docs/14): a real-money tournament can't route around the gate through a play-money table.
     if ((REAL_MODES.has(table.mode as PlayMode) || REAL_MODES.has(t.mode)) && !table.real_money_approved_at) throw tableNotApproved();
+    // A manual table's flop is typed, with no capture or review: never a real-money tournament's bets (docs/19).
+    if (table.kind === 'manual' && REAL_MODES.has(t.mode)) throw forbidden('manual_table', 'real-money tournaments cannot bet on a manual table');
     // Eligibility is rechecked on every bet, not only at registration: the mode may have been switched
     // off, or the account suspended, self-excluded or (real money) its identity check rejected since.
     if (!(await modeEnabled(c, t.mode))) throw forbidden('mode_disabled', `${t.mode} is switched off`);

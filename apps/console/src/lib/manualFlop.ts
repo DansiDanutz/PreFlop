@@ -25,3 +25,15 @@ export function secondsLeft(lockedAt: string | null, slaMs: number, now = Date.n
   if (!lockedAt) return null;
   return Math.max(0, Math.floor((Date.parse(lockedAt) + slaMs - now) / 1000));
 }
+
+/** Fit a webcam frame inside `max` pixels on its longer side, keeping the aspect ratio. */
+export function scaledSize(width: number, height: number, max = 1280): { width: number; height: number } {
+  const k = Math.min(1, max / Math.max(width, height));
+  return { width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) };
+}
+
+/** A canvas data URL → the media type and bare base64 the API takes. */
+export function splitDataUrl(url: string): { mediaType: 'image/jpeg' | 'image/png' | 'image/webp'; base64: string } | null {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+=*)$/.exec(url);
+  return m ? { mediaType: m[1] as 'image/jpeg' | 'image/png' | 'image/webp', base64: m[2]! } : null;
+}

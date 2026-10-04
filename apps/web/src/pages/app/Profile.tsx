@@ -9,6 +9,7 @@ import { Field, Notice, Select, Sheet, Skeleton, TextArea } from '../../componen
 import { api, setToken } from '../../lib/api.ts';
 import { countryOptions, dobProblem } from '../../lib/account.ts';
 import { type LimitsForm, limitsErrors, limitsForm, limitsPayload } from '../../lib/limits.ts';
+import { publicOrigin } from '../../lib/native.ts';
 import { errorText, isNotImplemented } from '../../lib/problems.ts';
 import { resolveOption } from '../../lib/bets.ts';
 import { qk, useBook, useFavorites, useMe, useRealMoney, useResetPlay } from '../../lib/queries.ts';
@@ -186,7 +187,7 @@ function AgentSection() {
   }
   if (a.status === 'applied') return <Notice tone="info">Your application is with the PreFlop team. We’ll set your rates and activate your code.</Notice>;
   if (a.status === 'suspended') return <Notice tone="warn">Your agent account is suspended. Contact support for details.</Notice>;
-  const link = `${window.location.origin}/register?ref=${a.code}`;
+  const link = `${publicOrigin()}/register?ref=${a.code}`;
   const copy = () => { void navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {}); };
   const dueBy = new Map<string, number>();
   for (const s of q.data?.statements ?? []) if (s.status !== 'paid' && s.amount_minor > 0) dueBy.set(s.currency, (dueBy.get(s.currency) ?? 0) + s.amount_minor);
