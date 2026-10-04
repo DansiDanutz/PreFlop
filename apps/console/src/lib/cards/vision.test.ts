@@ -1,10 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { type CardGuess, type Point, bestMatch, cardLike, runnerUpMargin, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
+import { type CardGuess, type Point, bestMatch, cardLike, crownAgreement, runnerUpMargin, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
 
 const quad = (x: number, y: number, w: number, h: number): [Point, Point, Point, Point] => [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 const guess = (card: string, confidence: number, x: number): CardGuess => ({ card, confidence, margin: 0.2, corners: quad(x, 100, 70, 100) });
 
 describe('card recognition helpers (docs/19)', () => {
+  it('crownAgreement: a tilted spade silhouette is clearly closer to the spade than to the club; a heart to the heart', () => {
+    // Ink widths per row (share of 32 px), dumped from the reader on the tilted 10♠ and from the Inter templates.
+    const w = (a: number[]) => a.map((n) => n / 32);
+    const sample = w([3, 4, 5, 7, 9, 10, 12, 14, 18, 20, 22, 26, 28, 29, 30, 32, 32, 32, 32, 32, 30, 28, 24, 9, 4, 4, 6, 6, 12, 15, 25, 22]);
+    const spade = w([2, 2, 4, 4, 8, 9, 10, 12, 16, 18, 21, 23, 26, 29, 30, 31, 32, 32, 32, 32, 32, 32, 30, 26, 20, 4, 5, 8, 10, 15, 21, 27]);
+    const club = w([8, 10, 12, 14, 14, 16, 16, 16, 16, 14, 24, 28, 30, 32, 32, 32, 32, 32, 32, 32, 32, 32, 30, 26, 20, 5, 6, 8, 10, 14, 20, 22]);
+    const toSpade = crownAgreement(sample, spade), toClub = crownAgreement(sample, club);
+    expect(toSpade).toBeGreaterThan(0.9);
+    expect(toSpade - toClub).toBeGreaterThan(0.05);
+    // a heart starts widest (two lobes), a diamond from a point
+    const heart = w([26, 28, 30, 30, 30, 30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2]);
+    const diamond = w([2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 1]);
+    const heartish = w([24, 27, 29, 30, 30, 29, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2]);
+    expect(crownAgreement(heartish, heart)).toBeGreaterThan(crownAgreement(heartish, diamond) + 0.3);
+    // identical silhouettes agree fully; the result is clamped to 0..1
+    expect(crownAgreement(spade, spade)).toBe(1);
+    expect(crownAgreement([1, 1, 1, 1, 1], [0, 0, 0, 0, 0])).toBe(0);
+  });
+
   it('runnerUpMargin: the gap to the second-best score, 0 when there is no runner-up', () => {
     expect(runnerUpMargin([{ score: 0.9 }, { score: 0.6 }, { score: 0.2 }])).toBeCloseTo(0.3);
     expect(runnerUpMargin([{ score: 0.9 }])).toBe(0);

@@ -1,7 +1,7 @@
 import type { CV } from './opencv.ts';
 import {
   type CardGuess, type Point, type Reading, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
-  orderCorners, pickFlop, portraitCorners, runnerUpMargin,
+  crownAgreement, orderCorners, pickFlop, portraitCorners, runnerUpMargin,
 } from './vision.ts';
 
 /**
@@ -22,13 +22,21 @@ const RANK_SIZE = { w: 32, h: 48 }, SUIT_SIZE = { w: 32, h: 32 };
 
 type Mat = InstanceType<CV['Mat']>;
 
-interface Templates { rank: { code: string; mat: Mat }[]; suit: { code: string; red: boolean; mat: Mat }[] }
+/**
+ * Each glyph is kept at several focus levels: crisp, and softened as a camera out of focus softens the
+ * card. A soft sample is compared with the soft templates too, and the best level counts, so a blurred
+ * spade meets a blurred spade rather than a crisp club (whose round top lobe is what a blurred point
+ * looks like). Sigmas in template pixels (the glyph is drawn at 120 px, then shrunk about 4×).
+ */
+const FOCUS_LEVELS = [0, 4, 8];
+
+interface Templates { rank: { code: string; mats: Mat[] }[]; suit: { code: string; red: boolean; mats: Mat[] }[] }
 let templates: Templates | null = null;
 
-/** Glyph templates drawn with the browser's own bold sans-serif, binarised and cut to their ink. */
+/** Glyph templates drawn with the browser's own bold sans-serif, binarised and cut to their ink, at each focus level. */
 function glyphTemplates(cv: CV): Templates {
   if (templates) return templates;
-  const draw = (text: string, w: number, h: number) => {
+  const draw = (text: string, w: number, h: number): Mat[] => {
     const c = document.createElement('canvas');
     c.width = 160; c.height = 200;
     const g = c.getContext('2d')!;
@@ -38,16 +46,23 @@ function glyphTemplates(cv: CV): Templates {
     g.fillText(text, c.width / 2, c.height / 2);
     const rgba = cv.imread(c);
     const gray = new cv.Mat(); cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
-    const bin = new cv.Mat(); cv.threshold(gray, bin, 128, 255, cv.THRESH_BINARY_INV);
-    const cut = inkBox(cv, bin);
-    const out = new cv.Mat();
-    cv.resize(cut, out, new cv.Size(w, h), 0, 0, cv.INTER_AREA);
-    for (const m of [rgba, gray, bin, cut]) m.delete();
-    return out;
+    const mats = FOCUS_LEVELS.map((sigma) => {
+      const soft = new cv.Mat();
+      if (sigma > 0) cv.GaussianBlur(gray, soft, new cv.Size(0, 0), sigma); else gray.copyTo(soft);
+      const bin = new cv.Mat(); cv.threshold(soft, bin, 128, 255, cv.THRESH_BINARY_INV);
+      const cut = inkBox(cv, bin);
+      const out = new cv.Mat();
+      cv.resize(cut, out, new cv.Size(w, h), 0, 0, cv.INTER_AREA);
+      cv.threshold(out, out, 100, 255, cv.THRESH_BINARY);
+      for (const m of [soft, bin, cut]) m.delete();
+      return out;
+    });
+    rgba.delete(); gray.delete();
+    return mats;
   };
   templates = {
-    rank: RANK_GLYPHS.map((r) => ({ code: r.code, mat: draw(r.glyph, RANK_SIZE.w, RANK_SIZE.h) })),
-    suit: SUIT_GLYPHS.map((s) => ({ code: s.code, red: s.red, mat: draw(s.glyph, SUIT_SIZE.w, SUIT_SIZE.h) })),
+    rank: RANK_GLYPHS.map((r) => ({ code: r.code, mats: draw(r.glyph, RANK_SIZE.w, RANK_SIZE.h) })),
+    suit: SUIT_GLYPHS.map((s) => ({ code: s.code, red: s.red, mats: draw(s.glyph, SUIT_SIZE.w, SUIT_SIZE.h) })),
   };
   return templates;
 }
@@ -78,6 +93,24 @@ function correlate(cv: CV, a: Mat, b: Mat): number {
   return v;
 }
 
+/** Ink width per row of a binary glyph, top to bottom, as a share of the width: the glyph's silhouette. */
+function widthProfile(bin: Mat): number[] {
+  const out = new Array<number>(bin.rows).fill(0);
+  const d = bin.data;
+  for (let y = 0; y < bin.rows; y++) { let n = 0; for (let x = 0; x < bin.cols; x++) if (d[y * bin.cols + x]) n++; out[y] = n / bin.cols; }
+  return out;
+}
+
+/**
+ * Suit pips are mostly one solid body, so whole-glyph correlation barely separates ♠ from ♣ (or ♥ from
+ * ♦): the bodies and stems agree, and the crown that differs is a small share of the pixels. The crown's
+ * silhouette does tell them apart (vision.ts crownAgreement), so the suit score is the mean of the pixel
+ * correlation and the crown agreement.
+ */
+function correlateSuit(cv: CV, sample: Mat, template: Mat): number {
+  return (correlate(cv, sample, template) + crownAgreement(widthProfile(sample), widthProfile(template))) / 2;
+}
+
 /** Reads the index in one corner of a straightened card: the rank and suit codes with their scores. */
 function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: string; score: number; margin: number } | null {
   const corner = card.roi(new cv.Rect(0, 0, CORNER_W, CORNER_H));
@@ -103,8 +136,8 @@ function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: stri
     mats.push(suitRgba);
     const mean = cv.mean(suitRgba, suit.strip);
     const red = isRedInk({ r: mean[0] ?? 0, g: mean[1] ?? 0, b: mean[2] ?? 0 });
-    const rankScores = t.rank.map((x) => ({ template: x, score: correlate(cv, rank.out, x.mat) }));
-    const suitScores = t.suit.filter((x) => x.red === red).map((x) => ({ template: x, score: correlate(cv, suit.out, x.mat) }));
+    const rankScores = t.rank.map((x) => ({ template: x, score: Math.max(...x.mats.map((m) => correlate(cv, rank.out, m))) }));
+    const suitScores = t.suit.filter((x) => x.red === red).map((x) => ({ template: x, score: Math.max(...x.mats.map((m) => correlateSuit(cv, suit.out, m))) }));
     const r = bestMatch(rankScores), s = bestMatch(suitScores);
     if (!r || !s) return null;
     return { rank: r.template.code, suit: s.template.code, score: Math.max(0, Math.min(r.score, s.score)), margin: Math.min(runnerUpMargin(rankScores), runnerUpMargin(suitScores)) };

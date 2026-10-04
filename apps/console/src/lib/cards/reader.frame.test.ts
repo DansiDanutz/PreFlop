@@ -14,10 +14,22 @@ import { MIN_CONFIDENCE, type Reading } from './vision.ts';
  */
 
 type Scene = { card: string; x: number; y: number; rot: number }[];
-const SCENES: { name: string; cards: Scene; flop: string[] }[] = [
-  { name: 'three upright cards', cards: [{ card: 'Ah', x: 350, y: 330, rot: 0 }, { card: 'Kd', x: 640, y: 330, rot: 0 }, { card: '7c', x: 930, y: 330, rot: 0 }], flop: ['Ah', 'Kd', '7c'] },
+/** What a real table does to a frame; see drawScene in test-harness/reader.html. */
+type Conditions = { felt?: string; light?: number; skew?: number; blur?: number; noise?: number };
+const THREE: Scene = [{ card: 'Ah', x: 350, y: 330, rot: 0 }, { card: 'Kd', x: 640, y: 330, rot: 0 }, { card: '7c', x: 930, y: 330, rot: 0 }];
+const SCENES: { name: string; cards: Scene; flop: string[]; conditions?: Conditions }[] = [
+  { name: 'three upright cards', cards: THREE, flop: ['Ah', 'Kd', '7c'] },
   { name: 'tilted, and one upside down', cards: [{ card: 'Ts', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2c', x: 930, y: 320, rot: 8 }], flop: ['Ts', 'Qh', '2c'] },
   { name: 'two landscape cards and one small turn', cards: [{ card: '9d', x: 300, y: 300, rot: 90 }, { card: 'Jc', x: 700, y: 300, rot: 5 }, { card: '5s', x: 1000, y: 300, rot: -90 }], flop: ['9d', 'Jc', '5s'] },
+  // realistic conditions, same three cards
+  { name: 'uneven light across the table', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { light: 0.55 } },
+  { name: 'camera not straight above (skewed view)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { skew: 0.18 } },
+  { name: 'soft focus (1.5 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 1.5 } },
+  { name: 'sensor noise', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { noise: 28 } },
+  { name: 'red felt, dim light, slight blur and noise together', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { felt: '#6b1d1d', light: 0.35, blur: 0.8, noise: 12 } },
+  // black suits at an angle, out of focus: a blurred spade's point rounds like a club's top lobe (focus-level templates)
+  { name: 'tilted black suits, 2 px blur and noise: spade stays a spade', cards: [{ card: 'Ts', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2c', x: 930, y: 320, rot: 8 }], flop: ['Ts', 'Qh', '2c'], conditions: { blur: 2, noise: 30 } },
+  { name: 'tilted black suits, 2 px blur and noise: club stays a club', cards: [{ card: 'Tc', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2s', x: 930, y: 320, rot: 8 }], flop: ['Tc', 'Qh', '2s'], conditions: { blur: 2, noise: 30 } },
 ];
 
 const chromiumPath = () => process.env.PLAYWRIGHT_CHROMIUM ?? (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
@@ -54,15 +66,15 @@ afterAll(async () => {
   await server?.close();
 });
 
-const read = async (cards: Scene): Promise<Reading> => {
-  await page.evaluate((c) => (window as unknown as { drawScene: (c: Scene) => void }).drawScene(c), cards);
+const read = async (cards: Scene, conditions: Conditions = {}): Promise<Reading> => {
+  await page.evaluate(([c, o]) => (window as unknown as { drawScene: (c: Scene, o: Conditions) => void }).drawScene(c, o), [cards, conditions] as const);
   return page.evaluate(() => (window as unknown as { runReader: () => Promise<Reading> }).runReader());
 };
 
 describe('card reader on synthetic frames (OpenCV.js in Chromium)', () => {
   for (const s of SCENES) {
     it(`reads ${s.name}: ${s.flop.join(' ')}`, async () => {
-      const r = await read(s.cards);
+      const r = await read(s.cards, s.conditions);
       // Printed so a CI log shows how much headroom each scene has over the confidence floor.
       console.info(`[reader.frame] ${s.name}: ${r.guesses.map((g) => `${g.card} ${(g.confidence * 100).toFixed(0)}% (margin ${(g.margin * 100).toFixed(0)}%)`).join(', ')} in ${r.ms} ms`);
       expect(r.flop).toEqual(s.flop);

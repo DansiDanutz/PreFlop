@@ -127,6 +127,23 @@ export function bestMatch<T extends { code: string }>(scores: readonly { templat
   return best;
 }
 
+/** The share of a suit glyph, from the top, whose silhouette tells the suits apart. */
+export const SUIT_CROWN = 0.4;
+
+/**
+ * How well two suit silhouettes agree in their crown (0..1). A silhouette is the ink width per row,
+ * top to bottom, as a share of the glyph's width. Suit pips share one solid body and a stem, so pixel
+ * correlation barely separates ♠ from ♣ or ♥ from ♦; their crowns differ: a spade or a diamond grows
+ * steadily from a point, a club starts wide at its round top lobe, a heart starts widest. One minus the
+ * mean width difference over the crown rows.
+ */
+export function crownAgreement(sample: readonly number[], template: readonly number[], share = SUIT_CROWN): number {
+  const rows = Math.max(1, Math.round(Math.min(sample.length, template.length) * share));
+  let diff = 0;
+  for (let y = 0; y < rows; y++) diff += Math.abs((sample[y] ?? 0) - (template[y] ?? 0));
+  return Math.max(0, Math.min(1, 1 - diff / rows));
+}
+
 /** The gap between the best and the second-best score (0..1); 0 with fewer than two finite scores. */
 export function runnerUpMargin(scores: readonly { score: number }[]): number {
   const sorted = scores.map((s) => s.score).filter(Number.isFinite).sort((a, b) => b - a);
