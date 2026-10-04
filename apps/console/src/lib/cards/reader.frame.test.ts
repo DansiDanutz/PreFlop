@@ -25,6 +25,7 @@ const SCENES: { name: string; cards: Scene; flop: string[]; conditions?: Conditi
   { name: 'uneven light across the table', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { light: 0.55 } },
   { name: 'camera not straight above (skewed view)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { skew: 0.18 } },
   { name: 'soft focus (1.5 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 1.5 } },
+  { name: 'badly out of focus (4 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 4 } },
   { name: 'sensor noise', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { noise: 28 } },
   { name: 'red felt, dim light, slight blur and noise together', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { felt: '#6b1d1d', light: 0.35, blur: 0.8, noise: 12 } },
   // black suits at an angle, out of focus: a blurred spade's point rounds like a club's top lobe (focus-level templates)
@@ -37,6 +38,8 @@ const chromiumPath = () => process.env.PLAYWRIGHT_CHROMIUM ?? (existsSync('/opt/
 let server: ViteDevServer;
 let browser: Browser;
 let page: Page;
+/** The very first reading: it draws every glyph template at every focus level, so it is the slowest. */
+let firstRead: Reading;
 
 beforeAll(async () => {
   server = await createServer({
@@ -57,7 +60,7 @@ beforeAll(async () => {
   await page.waitForFunction(() => (window as unknown as { harnessReady?: boolean }).harnessReady, null, { timeout: 30_000 });
   // The first reading loads the 15 MB OpenCV.js chunk and compiles its WebAssembly.
   await page.evaluate((cards) => (window as unknown as { drawScene: (c: Scene) => void }).drawScene(cards), SCENES[0]!.cards);
-  await page.evaluate(() => (window as unknown as { runReader: () => Promise<Reading> }).runReader());
+  firstRead = await page.evaluate(() => (window as unknown as { runReader: () => Promise<Reading> }).runReader());
   expect(errors).toEqual([]);
 }, 120_000);
 
@@ -89,6 +92,12 @@ describe('card reader on synthetic frames (OpenCV.js in Chromium)', () => {
       expect(r.ms).toBeLessThan(5_000);
     }, 30_000);
   }
+
+  it('the first reading, templates included, stays well under a second (the OpenCV load itself is not counted)', () => {
+    console.info(`[reader.frame] first read (templates drawn at ${3} focus levels): ${firstRead.ms} ms`);
+    expect(firstRead.flop).toEqual(SCENES[0]!.flop);
+    expect(firstRead.ms).toBeLessThan(1_000);
+  });
 
   it('two cards only: both read, no flop proposed', async () => {
     const r = await read([{ card: 'Ah', x: 400, y: 330, rot: 0 }, { card: 'Kd', x: 800, y: 330, rot: 0 }]);
