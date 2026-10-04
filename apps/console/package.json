@@ -17,6 +17,7 @@
     "@preflop/client": "workspace:*",
     "@preflop/ui": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
+    "@techstark/opencv-js": "5.0.0-release.1",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

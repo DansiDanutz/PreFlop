@@ -83,6 +83,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.104.0(react@19.3.0)
+      '@techstark/opencv-js':
+        specifier: 5.0.0-release.1
+        version: 5.0.0-release.1
       lucide-react:
         specifier: ^0.460.0
         version: 0.460.0(react@19.3.0)
@@ -958,6 +961,9 @@ packages:
     resolution: {integrity: sha512-e1TZmDCQnWIfiDVryIHeA6Idj+Lfx1hORLOhXS/l5wcgvtVD4yYqbTDl378sGQKIi2cSgb0TEMC9cKK8GGoJEw==}
     peerDependencies:
       react: ^18 || ^19
+
+  '@techstark/opencv-js@5.0.0-release.1':
+    resolution: {integrity: sha512-PIm+eB0MFtieXoNC2GRao0dv/02sehG+Nv2nSW5D6pQm6J/4WqvDHm0RyoqOmGYQm67jdGiaOdIeTShCY3PIUg==}
 
   '@trapezedev/gradle-parse@7.1.10':
     resolution: {integrity: sha512-muL6ptcxnqrgrYushL78pLF5GGJSWoo/kk8pb7mQ+Og8eef6zY6XI9iwhVS9bo8yCpuh6EZfq9odKWkGPVB4BQ==}
@@ -3044,6 +3050,8 @@ snapshots:
     dependencies:
       '@tanstack/query-core': 5.104.0
       react: 19.3.0
+
+  '@techstark/opencv-js@5.0.0-release.1': {}
 
   '@trapezedev/gradle-parse@7.1.10': {}
 
