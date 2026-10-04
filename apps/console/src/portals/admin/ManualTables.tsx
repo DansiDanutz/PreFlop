@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { ManualTable } from '@preflop/client';
+import type { FlopReading, ManualTable } from '@preflop/client';
 import { Badge, Button, formatMoney } from '@preflop/ui';
-import { Lock, Plus } from 'lucide-react';
+import { Camera, CameraOff, Lock, Plus, ScanLine } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { pad3 } from '../../lib/format.ts';
-import { RANKS, SUITS, cardLabel, secondsLeft, toggleCard } from '../../lib/manualFlop.ts';
+import { RANKS, SUITS, cardLabel, scaledSize, secondsLeft, splitDataUrl, toggleCard } from '../../lib/manualFlop.ts';
 import { Callout, ConfirmDialog, ErrorBox, Field, Loading, PageHeader, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
 
@@ -96,6 +96,7 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
 
           {r.state === 'LOCKED' && (
             <div className="space-y-3">
+              <WebcamReader onReading={(reading) => setPicked(reading.cards.slice(0, 3))} />
               <CardPicker picked={picked} onToggle={(c) => setPicked((p) => toggleCard(p, c))} />
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm text-muted">Flop: {picked.length ? <FlopText cards={picked} /> : 'pick three cards'}</span>
@@ -141,6 +142,67 @@ function CardPicker({ picked, onToggle }: { picked: readonly string[]; onToggle:
           })}
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Webcam card recognition (docs/19): a still from the laptop camera goes to the API, and the cards
+ * it reads pre-fill the picker. The operator still checks them and settles; nothing is paid from
+ * a reading alone. Works only over https or on localhost (the browser rule for cameras).
+ */
+function WebcamReader({ onReading }: { onReading: (r: FlopReading) => void }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [last, setLast] = useState<FlopReading | null>(null);
+  useEffect(() => {
+    if (video.current) video.current.srcObject = stream;
+    return () => stream?.getTracks().forEach((t) => t.stop());
+  }, [stream]);
+
+  const start = async () => {
+    setCameraError(null);
+    if (!navigator.mediaDevices?.getUserMedia) { setCameraError('This browser gives no camera access here; the console must be opened over https.'); return; }
+    try {
+      setStream(await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }));
+    } catch (e) {
+      setCameraError(e instanceof Error && e.name === 'NotAllowedError' ? 'Camera access was refused. Allow the camera for this site and try again.' : `Camera unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const read = useAction(async () => {
+    const v = video.current;
+    if (!v || !v.videoWidth) throw new Error('The camera has no picture yet.');
+    const { width, height } = scaledSize(v.videoWidth, v.videoHeight);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d')!.drawImage(v, 0, 0, width, height);
+    const img = splitDataUrl(canvas.toDataURL('image/jpeg', 0.85));
+    if (!img) throw new Error('Could not capture a frame from the camera.');
+    return api.adminReadFlop(img.base64, img.mediaType);
+  }, {
+    success: (r) => (r.cards.length === 3 ? `Read ${r.cards.map(cardLabel).join(' ')} (${r.confidence} confidence). Check the cards, then settle.` : `Read ${r.cards.length} of 3 cards; pick the rest by hand.`),
+    onSuccess: (r) => { setLast(r); onReading(r); },
+  });
+
+  return (
+    <div className="rounded-[10px] border border-line p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        {stream
+          ? <Button size="sm" variant="secondary" onClick={() => setStream(null)}><CameraOff size={14} aria-hidden />Stop camera</Button>
+          : <Button size="sm" variant="secondary" onClick={() => void start()}><Camera size={14} aria-hidden />Use webcam</Button>}
+        {stream && <Button size="sm" onClick={() => read.mutate(undefined)} disabled={read.isPending}><ScanLine size={14} aria-hidden />{read.isPending ? 'Reading…' : 'Read flop'}</Button>}
+        <span className="text-xs text-muted">Point the camera at the three cards, press Read flop, then check the picker before settling.</span>
+      </div>
+      {cameraError && <p className="mt-2 text-xs text-danger">{cameraError}</p>}
+      {read.isError && <p className="mt-2 text-xs text-danger">{read.error instanceof Error ? read.error.message : 'Reading failed; enter the cards by hand.'}</p>}
+      {stream && <video ref={video} autoPlay playsInline muted className="mt-3 aspect-video w-full max-w-md rounded-[8px] border border-line bg-black" aria-label="Webcam view of the table" />}
+      {last && (
+        <p className="mt-2 text-xs text-muted">
+          Last reading: {last.cards.length ? <FlopText cards={last.cards} /> : 'no card found'} · {last.confidence} confidence{last.notes ? ` · ${last.notes}` : ''}
+        </p>
+      )}
     </div>
   );
 }

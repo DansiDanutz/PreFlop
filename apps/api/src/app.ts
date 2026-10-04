@@ -9,6 +9,7 @@ import { type Config, corsOrigin } from './config.ts';
 import type { Db } from './lib/db.ts';
 import { ApiError, forbidden } from './lib/errors.ts';
 import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
+import { type FlopReader, createFlopReader } from './lib/vision.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { agentRoutes } from './routes/agents.ts';
@@ -49,6 +50,8 @@ export interface AppContext {
   };
   /** Live counters of this instance, for GET /v1/admin/metrics. */
   stats: { wsClients: number; startedAt: Date };
+  /** Webcam card recognition (lib/vision.ts); null when ANTHROPIC_API_KEY is unset. */
+  flopReader: FlopReader | null;
 }
 
 /** Accepted incoming request ids: short, printable, no spaces (no log injection). */
@@ -57,6 +60,8 @@ const REQUEST_ID = /^[A-Za-z0-9._:\-]{1,128}$/;
 export interface BuildOptions {
   /** Send the request log (JSON lines) to this stream, whatever LOG says (tests). */
   logStream?: NodeJS.WritableStream;
+  /** Replaces the Claude-backed card reader (tests). */
+  flopReader?: FlopReader;
 }
 
 /** Query parameters whose values never reach a log line (old clients may still send ?token=). */
@@ -165,6 +170,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
       otp: limiter('one-time codes', 10, 15 * 60_000),
     },
     stats: { wsClients: 0, startedAt: new Date() },
+    flopReader: opts.flopReader ?? (config.vision.apiKey ? createFlopReader(config.vision.apiKey, config.vision.model) : null),
   };
 
   await publicRoutes(app, ctx);

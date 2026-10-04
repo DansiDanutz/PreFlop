@@ -1,0 +1,14 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
+const page = await (await b.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+await page.goto('http://localhost:5174/login');
+await page.getByLabel('Email').fill('admin@preflop.local');
+await page.getByLabel('Password', { exact: true }).fill('E2e-Admin-Pass-42');
+await page.getByRole('button', { name: 'Sign in' }).click();
+await page.waitForURL((u) => !u.pathname.startsWith('/login'));
+await page.goto('http://localhost:5174/admin/manual'); await page.waitForTimeout(3000);
+await page.screenshot({ path: '/tmp/claude-0/run/manual/9a-page.png', fullPage: true });
+console.log('buttons:', await page.getByRole('button').allTextContents());
+console.log('errors:', errors);
+await b.close();

@@ -78,6 +78,8 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
 | `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails. **Required** (an address of your own domain) when `SMTP_URL` is set |
 | `SMTP_URL` | unset | `smtp://` or `smtps://user:pass@host:port`: account emails go out over SMTP (nodemailer), retried with backoff. With it, production also requires `MAIL_FROM` and a public `https` `WEB_URL`. Unset: in production emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
+| `ANTHROPIC_API_KEY` | unset | Turns on webcam card recognition for manual tables (`docs/19`). Unset: the console's *Read flop* answers 503 `provider_not_configured`; typing the flop still works |
+| `VISION_MODEL` | `claude-opus-5-5` | The model that reads the cards |
 
 Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
 

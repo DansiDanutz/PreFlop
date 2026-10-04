@@ -90,6 +90,8 @@ export interface ManualTable {
   last_settled: { hand_no: number; flop: string[]; settled_at: string } | null;
 }
 export interface ManualTables { enabled: boolean; result_sla_ms: number; tables: ManualTable[] }
+/** POST /v1/admin/manual/read-flop: the cards recognised in a webcam photo; a suggestion for the picker, never a settlement. */
+export interface FlopReading { cards: string[]; confidence: 'high' | 'medium' | 'low'; notes: string }
 export interface RoundHistoryItem { id: string; hand_no: number; state: RoundState; flop: string[] | null; settled_at: string | null; voided_at: string | null; void_reason: string | null }
 export interface TableDetail extends TableSummary { history: RoundHistoryItem[] }
 export interface ClubSummary { id: string; name: string; city: string | null; status: string | null; tables: number }
@@ -499,6 +501,7 @@ export function createClient(o: ClientOptions) {
     adminManualTables: () => get<ManualTables>('/v1/admin/tables/manual'),
     adminCreateManualTable: (b: { name: string; mode?: 'play' | 'virtual-chips' }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string }>('/v1/admin/tables/manual', b),
     adminManualLock: (tableId: string, handNo: number) => post<{ state: 'LOCKED' }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/lock`, { hand_no: handNo }),
+    adminReadFlop: (image_base64: string, media_type: 'image/jpeg' | 'image/png' | 'image/webp') => post<FlopReading>('/v1/admin/manual/read-flop', { image_base64, media_type }),
     adminManualFlop: (tableId: string, handNo: number, cards: string[]) => post<{ state: 'SETTLED'; cards: string[]; next_round_id: string | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/flop`, { hand_no: handNo, cards }),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),

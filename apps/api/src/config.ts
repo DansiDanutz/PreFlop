@@ -26,6 +26,15 @@ export interface Config {
   workerHeartbeatMaxAgeMs: number;
   /** Outgoing email (verification and password-reset links). See lib/mailer.ts. */
   mail: MailConfig;
+  /** Webcam card recognition for manual tables (lib/vision.ts, docs/19). */
+  vision: VisionConfig;
+}
+
+export interface VisionConfig {
+  /** ANTHROPIC_API_KEY. Null: the feature is off and the route answers 503 provider_not_configured. */
+  apiKey: string | null;
+  /** VISION_MODEL (default claude-opus-5-5). */
+  model: string;
 }
 
 export interface MailConfig {
@@ -115,6 +124,8 @@ const Env = z.object({
   WEB_URL: z.string().url().default('http://localhost:5173'),
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
   SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  VISION_MODEL: z.string().min(1).default('claude-opus-5-5'),
 });
 type Env = z.infer<typeof Env>;
 
@@ -126,6 +137,7 @@ type Env = z.infer<typeof Env>;
 const SECRETS: { name: string; get: (e: Env) => string | undefined; min?: number }[] = [
   // Managed Postgres (e.g. Neon) generates ~16-character random passwords: strong, but shorter than 32.
   { name: 'DATABASE_URL password', min: 16, get: (e) => { try { return decodeURIComponent(new URL(e.DATABASE_URL).password) || undefined; } catch { return undefined; } } },
+  { name: 'ANTHROPIC_API_KEY', get: (e) => e.ANTHROPIC_API_KEY },
 ];
 
 /**
@@ -234,6 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
+    vision: { apiKey: e.ANTHROPIC_API_KEY ?? null, model: e.VISION_MODEL },
   };
 }
 

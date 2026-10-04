@@ -6,7 +6,7 @@ import { statsOf } from '../bets/service.ts';
 import { audit, verifyAuditChain } from '../lib/audit.ts';
 import { type Tx, retryCount, retryStats, tx } from '../lib/db.ts';
 import { defaultRoundLossMinor } from '../lib/limits.ts';
-import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
+import { ApiError, conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
@@ -17,6 +17,7 @@ import { platformStatements } from '../lib/statements.ts';
 import { manualFlop, manualLock } from '../rounds/manual.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { manualTablesEnabled } from '../rounds/readiness.ts';
+import { MAX_IMAGE_BASE64 } from '../lib/vision.ts';
 import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound, withReviewDeadline } from '../rounds/service.ts';
 import { upsertClub } from '../seed.ts';
 import { readinessChecks, tableSummaries } from './public.ts';
@@ -463,6 +464,20 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ev));
     publish(ev);
     return out;
+  });
+
+  /**
+   * Webcam card recognition (docs/19): a photo of the dealt flop → the cards Claude can read. Only a
+   * suggestion for the picker; the operator still checks and settles. Off without ANTHROPIC_API_KEY.
+   */
+  app.post('/v1/admin/manual/read-flop', async (req) => {
+    await requirePlatform(ctx, req, 'admin', 'ops');
+    const b = z.object({
+      image_base64: z.string().min(64).max(MAX_IMAGE_BASE64).regex(/^[A-Za-z0-9+/]+=*$/, 'base64 without line breaks'),
+      media_type: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    }).parse(req.body);
+    if (!ctx.flopReader) throw new ApiError(503, 'provider_not_configured', 'card recognition needs ANTHROPIC_API_KEY on the API; enter the cards by hand');
+    return ctx.flopReader({ base64: b.image_base64, mediaType: b.media_type });
   });
 
   // ---------------------------------------------------------------- ledger & audit

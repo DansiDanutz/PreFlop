@@ -24,10 +24,13 @@ A manual table has no Table Box, stream or shuffler. A member of the PreFlop tea
 | `POST /v1/admin/tables/:id/manual/lock` `{hand_no}` | admin, ops | Close betting (OPEN → LOCKED) |
 | `POST /v1/admin/tables/:id/manual/flop` `{hand_no, cards}` | admin, ops | Type the flop (LOCKED → SETTLED) and open the next hand |
 
-## Next: webcam recognition
-The webcam fills the same three-card picker; a person still confirms before anything is paid.
-1. The Manual tables screen opens the laptop webcam in the browser (`getUserMedia`).
-2. **Read flop** takes a still and finds the three cards.
-3. The picker is pre-filled, and the operator checks it and settles as above.
+## Webcam recognition
+The laptop running the console points its camera at the dealt cards. **Read flop** sends one still to the API, which asks Claude which face-up cards it sees and pre-fills the picker. A person still checks the cards and settles; nothing is paid from a reading alone, and typing stays as the fallback.
 
-The typed path stays as the fallback. Real-money or physical play from a camera needs the certified capture chain in `docs/12`, not this.
+- **Where:** Console → Manual tables → after *Close betting* → **Use webcam** → **Read flop**. Browsers allow the camera only over https (or localhost), which staging is.
+- **What is sent:** one JPEG, at most 1280 px on its long side, from the camera to the API (`POST /v1/admin/manual/read-flop`, admin or ops) and on to Anthropic's API. No video is streamed or stored; the API keeps nothing.
+- **Switch:** the API needs the secret `ANTHROPIC_API_KEY` (`fly secrets set ANTHROPIC_API_KEY=… -a preflop-staging-api`). Without it the button answers *card recognition needs ANTHROPIC_API_KEY* (503 `provider_not_configured`). `VISION_MODEL` picks the model (default `claude-opus-5-5`).
+- **What comes back:** up to three cards, left to right, a confidence (high, medium, low) and a note on anything it could not read. Only cards whose rank and suit were both clear are returned; the operator picks any missing card by hand.
+- **Cost:** one request per hand, roughly a cent at today's prices; see `lib/vision.ts`.
+
+Real-money or physical play from a camera needs the certified capture chain in `docs/12`, not this.
