@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { createPool, retryStats, tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
@@ -92,15 +92,33 @@ describe('health', () => {
     expect(nextDelayMs(true, 1000, 5000)).toBe(1000);
     expect(nextDelayMs(false, 1000, 5000)).toBe(5000);
     expect(nextDelayMs(false, 1000, 10)).toBe(1000); // the idle wait is never shorter than the fast one
+    expect(nextDelayMs(true, 1000, 5000, 600)).toBe(400); // a busy pass's own duration counts towards the second
+    expect(nextDelayMs(true, 1000, 5000, 1500)).toBe(0);
     // Nothing to do here (no bets, the simulated table is idle): with a 20 ms fast tick and a 200 ms
     // idle tick, 700 ms holds a handful of passes, not thirty-odd.
     await h.db.query('delete from worker_heartbeats');
     const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
-    await new Promise((r) => setTimeout(r, 700));
-    const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
-    expect(ticks).toBeGreaterThanOrEqual(2);
-    expect(ticks).toBeLessThanOrEqual(8);
-    await stop();
+    try {
+      await new Promise((r) => setTimeout(r, 700));
+      const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
+      expect(ticks).toBeGreaterThanOrEqual(2);
+      expect(ticks).toBeLessThanOrEqual(8);
+    } finally {
+      await stop();
+    }
+    // A pass that fails (here: every query) keeps the fast cadence, so a transient database error is
+    // retried within the second, not after the idle wait.
+    let failures = 0;
+    const broken = { query: async () => { failures++; throw new Error('database away'); } } as unknown as typeof h.db;
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const stopBroken = startWorker(broken, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 5000);
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      expect(failures).toBeGreaterThanOrEqual(5); // ~1 failing query per 20 ms pass, never one per 5 s
+    } finally {
+      await stopBroken();
+      quiet.mockRestore();
+    }
   });
 
   it('the worker loop beats every tick and removes its row when stopped', async () => {

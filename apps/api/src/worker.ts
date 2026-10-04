@@ -92,12 +92,13 @@ export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).
 export interface WorkerMail { transport: MailTransport | null; from: string }
 
 /**
- * How long to wait before the next pass: `everyMs` after a pass that found work (more may be waiting),
- * `idleMs` after one that found none. A busy table keeps the one-second cadence; an idle platform
+ * How long to wait before the next pass: `everyMs` from the start of a pass that found work (more may
+ * be waiting; the pass's own duration counts), `idleMs` after one that found none. A busy table keeps the one-second cadence; an idle platform
  * polls a few times a minute instead of every second, which is what used up the database quota on
  * the free plan (docs/18). idleMs stays under the readiness heartbeat limit (WORKER_HEARTBEAT_MAX_AGE_MS).
  */
-export const nextDelayMs = (worked: boolean, everyMs: number, idleMs: number): number => (worked ? everyMs : Math.max(everyMs, idleMs));
+export const nextDelayMs = (worked: boolean, everyMs: number, idleMs: number, elapsedMs = 0): number =>
+  (worked ? Math.max(0, everyMs - elapsedMs) : Math.max(everyMs, idleMs));
 
 export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000): () => Promise<void> {
   let stopped = false;
@@ -128,7 +129,8 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
   const schedule = (ms: number) => {
     if (stopped) return;
     timer = setTimeout(() => {
-      current = tick().then((worked) => { current = null; schedule(nextDelayMs(worked, everyMs, idleMs)); });
+      const started = Date.now();
+      current = tick().then((worked) => { current = null; schedule(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
     }, ms);
   };
   schedule(everyMs);
@@ -139,9 +141,10 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
   const scheduleMail = (ms: number) => {
     if (stopped || !mail) return;
     mailTimer = setTimeout(() => {
+      const started = Date.now();
       mailing = deliverMail(db, mail.transport, mail.from)
         .then((sent) => sent > 0, (e) => { console.error('mail worker error', e); return true; })
-        .then((worked) => { mailing = null; scheduleMail(nextDelayMs(worked, everyMs, idleMs)); });
+        .then((worked) => { mailing = null; scheduleMail(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
     }, ms);
   };
   scheduleMail(everyMs);
