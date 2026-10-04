@@ -27,7 +27,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The card reader's frame test (apps/console/src/lib/cards/reader.frame.test.ts) runs OpenCV.js in a real Chromium.
+      # Browser tests: the card reader's frame test (apps/console/src/lib/cards/reader.frame.test.ts) and the
+      # manual-table flow end to end (apps/api/test/e2e-manual-table.test.ts) run in a real Chromium.
       - run: pnpm --filter @preflop/console exec playwright install --with-deps chromium
       - run: pnpm typecheck
       - run: pnpm test
