@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { missingBuildEnv } from '../../../deploy/require-env.mjs';
 import { NATIVE_START, backAction, isNativeApp, isRootPath, publicOrigin } from '../src/lib/native.ts';
 
 const g = globalThis as { Capacitor?: unknown };
@@ -25,6 +26,14 @@ describe('native app (Capacitor shell)', () => {
     } finally {
       if (had) loc.location = prev; else delete loc.location;
     }
+  });
+
+  it('a native build fails without the public website origin, so shared links never point at localhost', () => {
+    const native = ['VITE_API_URL', 'VITE_WEB_URL']; // what apps/web/vite.config.ts requires for `vite build --mode native`
+    expect(missingBuildEnv('native', { VITE_API_URL: 'https://api.example' }, native)).toEqual(['VITE_WEB_URL']);
+    expect(missingBuildEnv('native', { VITE_API_URL: 'https://api.example', VITE_WEB_URL: ' ' }, native)).toEqual(['VITE_WEB_URL']);
+    expect(missingBuildEnv('native', { VITE_API_URL: 'https://api.example', VITE_WEB_URL: 'https://preflop.example' }, native)).toEqual([]);
+    expect(missingBuildEnv('production', { VITE_API_URL: 'https://api.example' })).toEqual([]); // the website itself needs only the API
   });
 
   it('opens on the player app; top-level screens are the lobby and sign-in', () => {

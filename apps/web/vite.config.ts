@@ -5,9 +5,11 @@ import { defineConfig } from 'vitest/config';
 import { requireBuildEnv } from '../../deploy/require-env.mjs';
 import { cspMetaPlugin } from '../../deploy/security-headers.mjs';
 
-export default defineConfig({
-  // A production build without VITE_API_URL fails instead of shipping the localhost fallback.
-  plugins: [react(), tailwindcss(), cspMetaPlugin('web'), requireBuildEnv()],
+export default defineConfig(({ mode }) => ({
+  // A production build without VITE_API_URL fails instead of shipping the localhost fallback. The
+  // native apps (apps/mobile, `vite build --mode native`) also need VITE_WEB_URL: links shared from
+  // the app must carry the public website's origin, not the app's internal localhost.
+  plugins: [react(), tailwindcss(), cspMetaPlugin('web'), requireBuildEnv(mode === 'native' ? ['VITE_API_URL', 'VITE_WEB_URL'] : ['VITE_API_URL'])],
   // Workspace packages (the odds engine) are bundled from their TypeScript source.
   resolve: { conditions: ['preflop-source', ...defaultClientConditions] },
   ssr: { resolve: { conditions: ['preflop-source', ...defaultServerConditions], externalConditions: ['preflop-source'] } },
@@ -20,4 +22,4 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'test/**/*.test.{ts,tsx}'],
     environment: 'node',
   },
-});
+}));

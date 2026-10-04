@@ -35,7 +35,7 @@ VITE_API_URL=https://preflop-staging-api.fly.dev VITE_WEB_URL=https://preflop-st
 pnpm android   # opens Android Studio → Run on a device or emulator
 pnpm ios       # opens Xcode → pick your team under Signing & Capabilities → Run
 ```
-Run `pnpm sync` again after every web change. `pnpm assets` regenerates the icons and splash screens from `assets/`.
+Both variables are required: `pnpm sync` builds the web app with `--mode native`, which refuses a build without `VITE_API_URL` and `VITE_WEB_URL` (links shared from the app, such as agent invitations, carry the public website's origin). Run `pnpm sync` again after every web change. `pnpm assets` regenerates the icons and splash screens from `assets/`.
 
 ## Publishing to the stores (owner steps)
 | Store | What you need | Then |

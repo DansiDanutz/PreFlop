@@ -1,7 +1,12 @@
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { MIGRATIONS_DIR, migrate } from '@preflop/db';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { tx } from '../src/lib/db.ts';
+import { createPool, tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { type Harness, bet, harness, ledgerSums, walletOf } from './helpers.ts';
+import { BASE_URL, type Harness, bet, harness, ledgerSums, testDbName, walletOf } from './helpers.ts';
 
 /**
  * Manual tables (migration 020): the PreFlop team closes betting and types the flop in the
@@ -138,5 +143,39 @@ describe('manual tables', () => {
     await h.work();
     expect((await h.db.query(`select count(*)::int as n from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0].n).toBe(1);
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
+  });
+});
+
+describe('migration 021 on a database that already has a free-chip manual table (migration 020 allowed one)', () => {
+  it('turns it into a retired play-money table, voids its open hand, and the API still starts', async () => {
+    // A database migrated up to 020, as staging was between the two deploys.
+    const name = testDbName('manual_tables_021');
+    const admin = new pg.Client({ connectionString: BASE_URL });
+    await admin.connect();
+    await admin.query(`drop database if exists ${name} with (force)`);
+    await admin.query(`create database ${name}`);
+    await admin.end();
+    const u = new URL(BASE_URL);
+    u.pathname = `/${name}`;
+    const upTo020 = mkdtempSync(join(tmpdir(), 'preflop-migrations-'));
+    for (const f of readdirSync(MIGRATIONS_DIR)) if (f < '021') copyFileSync(join(MIGRATIONS_DIR, f), join(upTo020, f));
+    const db = createPool(u.toString(), 4);
+    try {
+      expect((await migrate(db, upTo020)).at(-1)).toBe('020_manual_tables.sql');
+      await db.query(`insert into clubs (id, name) values ('club_t', 'Test club')`);
+      await db.query(`insert into poker_tables (id, club_id, name, mode, currency, kind) values ('tbl_chips', 'club_t', 'Chip table', 'virtual-chips', 'CHIP', 'manual')`);
+      await db.query(`insert into rounds (id, table_id, hand_no, mode, currency, state) values ('tbl_chips:h1', 'tbl_chips', 1, 'virtual-chips', 'CHIP', 'OPEN')`);
+      // the rest of the migrations (021 onwards) apply instead of failing on the chip table
+      const applied = await migrate(db);
+      expect(applied[0]).toBe('021_manual_play_only.sql');
+      expect((await db.query(`select mode, currency, status, pause_reason from poker_tables where id = 'tbl_chips'`)).rows[0])
+        .toMatchObject({ mode: 'play', currency: 'PLAY', status: 'retired', pause_reason: expect.stringMatching(/play money only/) });
+      expect((await db.query(`select state, void_reason from rounds where id = 'tbl_chips:h1'`)).rows[0]).toMatchObject({ state: 'VOID', void_reason: expect.stringMatching(/play money only/) });
+      // a new chip manual table is now refused by the database itself
+      await expect(db.query(`update poker_tables set mode = 'virtual-chips' where id = 'tbl_chips'`)).rejects.toThrow(/poker_tables_manual_play_only/);
+    } finally {
+      await db.end();
+      rmSync(upTo020, { recursive: true, force: true });
+    }
   });
 });

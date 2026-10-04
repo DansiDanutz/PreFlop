@@ -5,7 +5,7 @@
   "type": "module",
   "description": "PreFlop native apps (iOS and Android): a Capacitor shell around the player web app (apps/web)",
   "scripts": {
-    "web": "pnpm --filter @preflop/web build",
+    "web": "pnpm --filter @preflop/web build -- --mode native",
     "sync": "pnpm run web && cap sync",
     "android": "cap open android",
     "ios": "cap open ios",
