@@ -99,7 +99,7 @@ describe('scrubContact', () => {
       venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: { email: 'm@x.test' } },
       notes: ['Call +356 2122 0000 after 6pm', 'Reach us at owner@hintclub.test or on site', 'Opened in 2019'],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
-      'manager_alice@example.test': 'yes', 'call +356 2122 0000': 'evenings', 'call +356 2122 0001': 'weekends', 'x'.repeat(70): 'a', 'x'.repeat(71): 'b',
+      'manager_alice@example.test': 'yes', 'call +356 2122 0000': 'evenings', 'call +356 2122 0001': 'weekends', ['x'.repeat(70)]: 'a', ['x'.repeat(71)]: 'b',
     });
     expect(scrubbed).toEqual({
       city: 'Valletta', tables: 4,
