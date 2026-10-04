@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { createPool, retryStats, tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { beat, startWorker, sweepOnce } from '../src/worker.ts';
+import { beat, nextDelayMs, startWorker, sweepOnce } from '../src/worker.ts';
 import { type Harness, harness } from './helpers.ts';
 
 let h: Harness;
@@ -88,9 +88,24 @@ describe('health', () => {
     await dead.end();
   });
 
+  it('an idle worker backs off to the idle cadence and returns to the fast one on the next error or job', async () => {
+    expect(nextDelayMs(true, 1000, 5000)).toBe(1000);
+    expect(nextDelayMs(false, 1000, 5000)).toBe(5000);
+    expect(nextDelayMs(false, 1000, 10)).toBe(1000); // the idle wait is never shorter than the fast one
+    // Nothing to do here (no bets, the simulated table is idle): with a 20 ms fast tick and a 200 ms
+    // idle tick, 700 ms holds a handful of passes, not thirty-odd.
+    await h.db.query('delete from worker_heartbeats');
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
+    await new Promise((r) => setTimeout(r, 700));
+    const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
+    expect(ticks).toBeGreaterThanOrEqual(2);
+    expect(ticks).toBeLessThanOrEqual(8);
+    await stop();
+  });
+
   it('the worker loop beats every tick and removes its row when stopped', async () => {
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30, undefined, 30);
     await new Promise((r) => setTimeout(r, 300));
     const rows = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows;
     expect(rows).toHaveLength(1);
