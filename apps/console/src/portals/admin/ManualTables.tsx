@@ -97,7 +97,8 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
 
           {r.state === 'LOCKED' && (
             <div className="space-y-3">
-              <WebcamReader onReading={(reading) => setPicked(reading.cards.slice(0, 3))} />
+              {/* Keyed by the round: a new hand gets a fresh reader, so a proposal read for the previous hand can never be applied to this one. */}
+              <WebcamReader key={r.id} onReading={(reading) => setPicked(reading.cards.slice(0, 3))} />
               <CardPicker picked={picked} onToggle={(c) => setPicked((p) => toggleCard(p, c))} />
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm text-muted">Flop: {picked.length ? <FlopText cards={picked} /> : 'pick three cards'}</span>
