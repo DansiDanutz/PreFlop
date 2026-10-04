@@ -162,6 +162,8 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
   const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
   const [reading, setReading] = useState<Reading | null>(null);
   const [check, setCheck] = useState<ReadingCheck | null>(null);
+  // Each reading gets a number; a verdict that comes back for an older reading is dropped, so the badges never describe other cards than the ones shown.
+  const readingNo = useRef(0);
   // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
   // arrives for a request the operator has since stopped or repeated, or after the hand is gone and
   // this panel with it, is stopped at once instead of staying live with no view and no Stop button.
@@ -176,7 +178,7 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, [stream]);
 
-  const stop = () => { request.current++; setStream(null); setReading(null); setCheck(null); };
+  const stop = () => { request.current++; readingNo.current++; setStream(null); setReading(null); setCheck(null); };
   /** Reads the current frame in this browser (OpenCV.js, loaded on first use); the result is a proposal, never applied by itself. */
   const read = async () => {
     const v = video.current;
@@ -193,10 +195,11 @@ function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => vo
       if (!mounted.current) return;
       setReading(r);
       setCheck(null);
+      const no = ++readingNo.current;
       // Second opinion (docs/20): the decision model says per card whether the reading is sure enough. Advice only; silent when off.
       if (r.guesses.length) {
         api.adminReadingCheck(r.guesses.map((g) => ({ card: g.card, confidence: g.confidence, margin: g.margin })))
-          .then((v) => { if (mounted.current) setCheck(v); }, () => { /* the reading stands on its own */ });
+          .then((v) => { if (mounted.current && no === readingNo.current) setCheck(v); }, () => { /* the reading stands on its own */ });
       }
     } catch (e) {
       if (mounted.current) setCameraError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);

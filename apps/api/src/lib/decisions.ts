@@ -99,6 +99,12 @@ export function jevDecider(o: JevOptions): Decider {
     stats.outputTokens += parsed.data.usage?.output_tokens ?? 0;
     return parsed.data.answers;
   };
+  /** Every question asked must be answered, with the type it asked for; otherwise the hint would be stored half-empty and never asked again. */
+  const complete = (answers: Answers, questions: Record<string, Question>): Answers => {
+    const missing = Object.entries(questions).filter(([k, q]) => answers[k]?.type !== q.type).map(([k]) => k);
+    if (missing.length) { stats.failures++; throw new DecisionError(502, `decision service left questions unanswered or mistyped: ${missing.join(', ')}`); }
+    return answers;
+  };
   return {
     enabled: true,
     model: o.model,
@@ -106,12 +112,12 @@ export function jevDecider(o: JevOptions): Decider {
     async decide(state, questions) {
       const body = JSON.stringify({ model: o.model, state, questions });
       try {
-        return await once(body);
+        return complete(await once(body), questions);
       } catch (e) {
         // One retry on a rate limit or an overloaded service; anything else is reported at once.
         if (e instanceof DecisionError && e.retryable) {
           await new Promise((r) => setTimeout(r, 400));
-          return once(body);
+          return complete(await once(body), questions);
         }
         throw e;
       }
@@ -130,7 +136,7 @@ export type Hint = { answers: Answers; model: string | null; created_at: string;
 export async function saveHint(c: Tx | Db, kind: string, ref: string, model: string | null, answers: Answers | null, error?: string): Promise<void> {
   await c.query(
     `insert into decision_hints (kind, ref, model, answers, error) values ($1, $2, $3, $4, $5)
-       on conflict (kind, ref) do update set model = excluded.model, answers = excluded.answers, error = excluded.error, created_at = now()`,
+       on conflict (kind, ref) do update set model = excluded.model, answers = excluded.answers, error = excluded.error, attempts = decision_hints.attempts + 1, created_at = now()`,
     [kind, ref, model, JSON.stringify(answers ?? {}), error ?? null]);
 }
 

@@ -24,7 +24,7 @@ Every use is a **hint**. No round is settled or voided, no table paused, no aler
 | **Round review** | For each round in `REVIEW` or `EVIDENCE_REJECTED`: `outcome` ∈ settle · void · escalate, from the dealer/floor entries and the capture record | Console → Integrity → **Review queue**, column *Suggested* |
 | **Card reading** (docs/19) | For each card the browser read: `accept`, from the match confidence and the margin to the runner-up glyph | Manual table webcam panel and the Card reader test page: *Adviser:* badges per card, and which cards to check by eye |
 
-The first two run in the **worker** (`decisionsOnce`, every tick with the other jobs): open alerts and rounds in review without a hint are asked about, a few per pass, and the answers stored in `decision_hints (kind, ref, model, answers, error, created_at)`. The console reads them with the alert or the round. Nothing is asked twice: a question the service refused (HTTP 422) is stored as an error and left alone; a rate limit or outage (429/529, or unreachable) ends the pass after one retry and the rest waits for the next pass.
+The first two run in the **worker** (`decisionsOnce`, on its own loop): open alerts and rounds in review without a hint are asked about, a few per pass, and the answers stored in `decision_hints (kind, ref, model, answers, error, created_at)`. The console reads them with the alert or the round. Nothing is asked twice while it has an answer. A question the service refused (HTTP 422, a bad key, or an answer that left a question out) is stored as an error and asked again at most four more times, ten minutes apart, in case the key or the service was fixed; a rate limit or outage (429/529, or unreachable) ends the pass after one retry and the rest waits for the next pass. The hint pass runs on its own loop in the worker, beside the game tick and the mail loop, so a slow adviser never delays a settlement, a refund or the heartbeat.
 
 The reading check runs on request: `POST /v1/admin/manual/reading-check` (admin or ops) with the cards and scores, one question per card. Without a key it answers `{ enabled: false }` and the console shows nothing; the reading stands on its own.
 
@@ -32,7 +32,7 @@ The reading check runs on request: `POST /v1/admin/manual/reading-check` (admin 
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JEV_API_KEY` | unset = off | The TypeSafe AI key. A secret: Fly secrets in staging (`Fly secrets` workflow, name `JEV_API_KEY`, both apps), never in the repository or a chat. At least 16 characters; production refuses demo values. |
+| `JEV_API_KEY` | unset = off | The TypeSafe AI key. A secret, never in the repository or a chat. Staging: add it as a GitHub repository secret named `JEV_API_KEY` (Settings → Secrets and variables → Actions), then run the `Fly secrets` workflow with name `JEV_API_KEY`, the value left empty and apps `both`; the run copies the encrypted secret to Fly. At least 16 characters; production refuses demo values. |
 | `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Must be https in production. |
 | `JEV_MODEL` | `jev-latest` | The model name sent with every request. |
 

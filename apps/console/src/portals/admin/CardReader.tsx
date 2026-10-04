@@ -26,6 +26,8 @@ export function CardReader() {
   const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
   const [reading, setReading] = useState<Reading | null>(null);
   const [check, setCheck] = useState<ReadingCheck | null>(null);
+  // Each reading gets a number; a verdict that comes back for an older reading is dropped, so the badges never describe other cards than the ones shown.
+  const readingNo = useRef(0);
   const [source, setSource] = useState<'camera' | 'photo' | null>(null);
   // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
   // arrives for a request the operator has since stopped or repeated, or after they left this page,
@@ -84,10 +86,11 @@ export function CardReader() {
       if (!mounted.current) return;
       setReading(r);
       setCheck(null);
+      const no = ++readingNo.current;
       // Second opinion (docs/20): the decision model says per card whether the reading is sure enough. Advice only; silent when off.
       if (r.guesses.length) {
         api.adminReadingCheck(r.guesses.map((g) => ({ card: g.card, confidence: g.confidence, margin: g.margin })))
-          .then((v) => { if (mounted.current) setCheck(v); }, () => { /* the reading stands on its own */ });
+          .then((v) => { if (mounted.current && no === readingNo.current) setCheck(v); }, () => { /* the reading stands on its own */ });
       }
     } catch (e) {
       if (mounted.current) setError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);

@@ -7,6 +7,8 @@ create table decision_hints (
   model      text,
   answers    jsonb not null default '{}'::jsonb,
   error      text,
+  -- how many times this question was asked; a failed one is retried a few times, ten minutes apart
+  attempts   int not null default 1,
   created_at timestamptz not null default now(),
   primary key (kind, ref)
 );

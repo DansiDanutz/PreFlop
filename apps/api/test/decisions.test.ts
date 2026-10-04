@@ -3,7 +3,7 @@ import { loadConfig } from '../src/config.ts';
 import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { decisionsOnce } from '../src/worker.ts';
+import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
 import { type Harness, harness } from './helpers.ts';
 
 /**
@@ -63,9 +63,16 @@ describe('the Jev decider', () => {
     await expect(unauthorized.decide({}, ALERT_TRIAGE)).rejects.toBeInstanceOf(DecisionError);
   });
 
-  it('refuses an answer body it does not understand, and an unreachable service is retryable', async () => {
+  it('refuses an answer body it does not understand or that leaves a question out; an unreachable service is retryable', async () => {
     const d = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: fakeFetch([json(200, { answers: { triage: { type: 'choice' } } })]).f });
     await expect(d.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 502 });
+    // Every question asked must come back answered with its type, otherwise a half-empty hint would be stored as final.
+    const partial = fakeFetch([json(200, { answers: { triage: ANSWER.answers.triage } })]);
+    const p = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: partial.f });
+    await expect(p.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 502, retryable: false, message: expect.stringContaining('money_at_risk') });
+    expect(partial.calls).toHaveLength(1);
+    const mistyped = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: fakeFetch([json(200, { answers: { triage: { type: 'noul', noul: true }, money_at_risk: { type: 'noul', noul: false } } })]).f });
+    await expect(mistyped.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 502, message: expect.stringContaining('triage') });
     const down = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch });
     await expect(down.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 0, retryable: true });
   });
@@ -139,21 +146,59 @@ describe('decision hints in the worker and the console API', () => {
     expect(q.hint).toMatchObject({ model: 'fake-jev', answers: { outcome: { choice: 'void', confidence: 0.55 } } });
   });
 
-  it('a refused question is remembered as an error (no hint, not asked again); an outage pauses the pass', async () => {
+  it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {
     const refusing = fakeDecider(() => new DecisionError(422, 'state too long'));
     await h.db.query(`insert into alerts (kind, severity) values ('weird', 'info')`);
+    const ref = `(select max(id)::text from alerts where kind = 'weird')`;
     expect(await decisionsOnce(h.db, refusing)).toBe(0);
-    expect((await h.db.query(`select error from decision_hints where kind = 'alert' and ref = (select max(id)::text from alerts)`)).rows[0]).toMatchObject({ error: 'state too long' });
+    expect((await h.db.query(`select error, attempts from decision_hints where kind = 'alert' and ref = ${ref}`)).rows[0]).toMatchObject({ error: 'state too long', attempts: 1 });
     expect(await decisionsOnce(h.db, refusing)).toBe(0);
-    expect(refusing.seen).toHaveLength(1);
+    expect(refusing.seen).toHaveLength(1); // not within ten minutes
     const alerts = (await h.api('GET', '/v1/admin/alerts', admin)).body.alerts;
     expect(alerts.find((a: any) => a.kind === 'weird').hint).toBeNull();
+    // Ten minutes later it is asked again (the key or the service may have been fixed) …
+    await h.db.query(`update decision_hints set created_at = now() - interval '11 minutes' where kind = 'alert' and ref = ${ref}`);
+    expect(await decisionsOnce(h.db, refusing)).toBe(0);
+    expect(refusing.seen).toHaveLength(2);
+    expect((await h.db.query(`select attempts from decision_hints where kind = 'alert' and ref = ${ref}`)).rows[0].attempts).toBe(2);
+    // … until the bound, after which it is left alone for good
+    await h.db.query(`update decision_hints set attempts = $1, created_at = now() - interval '1 day' where kind = 'alert' and ref = ${ref}`, [HINT_RETRY_MAX]);
+    expect(await decisionsOnce(h.db, refusing)).toBe(0);
+    expect(refusing.seen).toHaveLength(2);
+    // … and a fixed service answers it on the next due retry
+    await h.db.query(`update decision_hints set attempts = 2 where kind = 'alert' and ref = ${ref}`);
+    expect(await decisionsOnce(h.db, decider)).toBe(1);
+    expect((await h.api('GET', '/v1/admin/alerts', admin)).body.alerts.find((a: any) => a.kind === 'weird').hint.answers.triage.choice).toBe('watch');
     const down = fakeDecider(() => new DecisionError(529, 'overloaded', true));
     await h.db.query(`insert into alerts (kind, severity) values ('a1', 'info'), ('a2', 'info')`);
     expect(await decisionsOnce(h.db, down)).toBe(0);
     expect(down.seen).toHaveLength(1); // stopped after the first failure, nothing stored
     expect((await h.db.query(`select count(*)::int as n from decision_hints where ref in (select id::text from alerts where kind in ('a1','a2'))`)).rows[0].n).toBe(0);
     expect(await decisionsOnce(h.db, disabledDecider)).toBe(0);
+  });
+
+  it('a slow adviser never delays the game tick: hints run on their own loop', async () => {
+    await h.db.query(`insert into alerts (kind, severity) values ('slow1', 'info'), ('slow2', 'info'), ('slow3', 'info')`);
+    const slow = fakeDecider(() => ({ triage: { type: 'choice', choice: 'watch' }, money_at_risk: { type: 'noul', noul: false } }));
+    const slowDecider: Decider = { ...slow, decide: async (st, q) => { await new Promise((r) => setTimeout(r, 150)); return slow.decide(st, q); } };
+    await h.db.query('delete from worker_heartbeats');
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, slowDecider);
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      // three sequential 150 ms answers take ~450 ms; the tick (20/40 ms) must have beaten many times meanwhile
+      const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
+      expect(ticks).toBeGreaterThanOrEqual(5);
+      expect(slow.seen.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await stop();
+    }
+    // stop() waited for the pass in flight; hints stored so far are complete rows
+    const stored = (await h.db.query(`select count(*)::int as n from decision_hints where error is null and ref in (select id::text from alerts where kind like 'slow%')`)).rows[0].n;
+    expect(stored).toBeGreaterThanOrEqual(1);
+    // a disabled decider never schedules the loop
+    const stopOff = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, disabledDecider);
+    await new Promise((r) => setTimeout(r, 60));
+    await stopOff();
   });
 
   it('the reading check answers per card and says so when the adviser is off', async () => {
