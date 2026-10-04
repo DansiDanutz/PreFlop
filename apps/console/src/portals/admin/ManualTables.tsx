@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ManualTable } from '@preflop/client';
 import { Badge, Button, formatMoney } from '@preflop/ui';
-import { Camera, CameraOff, Lock, Plus } from 'lucide-react';
+import { Link, useNavigate } from 'react-router';
+import { Camera, CameraOff, Lock, Plus, ScanSearch } from 'lucide-react';
+import { loadCv } from '../../lib/cards/opencv.ts';
+import { readCards } from '../../lib/cards/reader.ts';
+import { MIN_CONFIDENCE, type Reading } from '../../lib/cards/vision.ts';
 import { api } from '../../lib/api.ts';
 import { pad3 } from '../../lib/format.ts';
 import { RANKS, SUITS, cardLabel, secondsLeft, toggleCard } from '../../lib/manualFlop.ts';
@@ -15,6 +19,7 @@ import { FlopText, RoundStateBadge } from '../../components/domain.tsx';
  * result deadline. Every step is in the audit log with who did it.
  */
 export function ManualTables() {
+  const nav = useNavigate();
   const q = useQuery({ queryKey: ['admin', 'manual-tables'], queryFn: api.adminManualTables, refetchInterval: 3000 });
   const [form, setForm] = useState({ name: '' });
   const create = useAction((b: typeof form) => api.adminCreateManualTable({ name: b.name.trim() }), {
@@ -26,7 +31,8 @@ export function ManualTables() {
   return (
     <>
       <PageHeader eyebrow="PreFlop team" title="Manual tables"
-        subtitle="Close betting, then type the three flop cards. Players bet with play money only; every entry is audited." />
+        subtitle="Close betting, then type the three flop cards. Players bet with play money only; every entry is audited."
+        actions={<Button variant="secondary" onClick={() => nav('/admin/manual/reader')}><ScanSearch size={16} aria-hidden />Card reader test</Button>} />
       {q.isPending ? <Loading rows={4} /> : q.isError ? <ErrorBox error={q.error} onRetry={() => void q.refetch()} /> : (
         <div className="space-y-6">
           {!q.data.enabled && (
@@ -142,15 +148,17 @@ function CardPicker({ picked, onToggle }: { picked: readonly string[]; onToggle:
 }
 
 /**
- * Camera preview (docs/19): the laptop camera pointed at the dealt cards, shown beside the picker so
- * the operator types what the camera sees. Card recognition will run in this browser, on this
- * laptop, with no outside service; until then the picker is filled by hand. Works only over https
- * or on localhost (the browser rule for cameras).
+ * Camera panel (docs/19): the laptop camera pointed at the dealt cards, beside the picker. "Read
+ * cards" runs the recognition in this browser (OpenCV.js, loaded on first use, no outside service)
+ * and proposes a flop; the operator applies it with one click or picks by hand. Works only over
+ * https or on localhost (the browser rule for cameras).
  */
-function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: string[] }) => void }) {
+function WebcamReader({ onReading }: { onReading: (r: { cards: string[] }) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
+  const [reading, setReading] = useState<Reading | null>(null);
   // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
   // arrives for a request the operator has since stopped or repeated, or after the hand is gone and
   // this panel with it, is stopped at once instead of staying live with no view and no Stop button.
@@ -165,7 +173,28 @@ function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: strin
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, [stream]);
 
-  const stop = () => { request.current++; setStream(null); };
+  const stop = () => { request.current++; setStream(null); setReading(null); };
+  /** Reads the current frame in this browser (OpenCV.js, loaded on first use); the result is a proposal, never applied by itself. */
+  const read = async () => {
+    const v = video.current;
+    if (!v || !v.videoWidth) return;
+    setCameraError(null);
+    try {
+      setBusy('loading');
+      const cv = await loadCv();
+      setBusy('reading');
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d')!.drawImage(v, 0, 0);
+      const r = readCards(cv, c);
+      if (!mounted.current) return;
+      setReading(r);
+    } catch (e) {
+      if (mounted.current) setCameraError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (mounted.current) setBusy(null);
+    }
+  };
   const start = async () => {
     setCameraError(null);
     if (!navigator.mediaDevices?.getUserMedia) { setCameraError('This browser gives no camera access here; the console must be opened over https.'); return; }
@@ -186,10 +215,19 @@ function WebcamReader({ onReading: _onReading }: { onReading: (r: { cards: strin
         {stream
           ? <Button size="sm" variant="secondary" onClick={stop}><CameraOff size={14} aria-hidden />Stop camera</Button>
           : <Button size="sm" variant="secondary" onClick={() => void start()}><Camera size={14} aria-hidden />Use webcam</Button>}
-        <span className="text-xs text-muted">Point the camera at the three cards and pick them below. Nothing leaves this laptop.</span>
+        {stream && <Button size="sm" onClick={() => void read()} disabled={!!busy}><ScanSearch size={14} aria-hidden />{busy === 'loading' ? 'Loading reader…' : busy === 'reading' ? 'Reading…' : 'Read cards'}</Button>}
+        <span className="text-xs text-muted">Point the camera at the three cards, read them or pick them below. Nothing leaves this laptop. <Link to="/admin/manual/reader" className="underline">Test the reader</Link></span>
       </div>
       {cameraError && <p className="mt-2 text-xs text-danger">{cameraError}</p>}
       {stream && <video ref={video} autoPlay playsInline muted className="mt-3 aspect-video w-full max-w-md rounded-[8px] border border-line bg-black" aria-label="Webcam view of the table" />}
+      {reading && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" data-testid="webcam-reading">
+          {reading.flop.length
+            ? <>Read: <FlopText cards={reading.flop} /><Button size="sm" variant="secondary" onClick={() => onReading({ cards: reading.flop })}>Use these cards</Button></>
+            : <span className="text-muted">{reading.guesses.length ? `${reading.guesses.length} card${reading.guesses.length === 1 ? '' : 's'} seen, not three sure ones` : 'No cards seen'}: pick them below.</span>}
+          {reading.guesses.filter((g) => g.confidence < MIN_CONFIDENCE).length > 0 && <span className="text-xs text-muted">({reading.guesses.filter((g) => g.confidence < MIN_CONFIDENCE).map((g) => cardLabel(g.card)).join(', ')} unsure)</span>}
+        </div>
+      )}
     </div>
   );
 }

@@ -94,7 +94,8 @@ describe('security headers', () => {
   it('allows no inline script or style, no eval, and only self-hosted fonts', () => {
     for (const app of ['web', 'console', 'table'] as const) {
       const c = cspFor(app);
-      expect(c).not.toMatch(/unsafe-inline|unsafe-eval|fonts\.g/);
+      // 'wasm-unsafe-eval' (console only, below) compiles WebAssembly; it never allows JavaScript eval.
+      expect(c).not.toMatch(/unsafe-inline|(?<!wasm-)unsafe-eval|fonts\.g/);
       expect(c).toContain("script-src 'self'");
       expect(c).toContain("img-src 'self' data:");
       expect(c).toContain("worker-src 'self'");
@@ -102,6 +103,17 @@ describe('security headers', () => {
         expect(headersFor(app).map((x) => x.key)).toContain(h);
       }
     }
+  });
+
+  it('only the console may run WebAssembly and open the camera (card recognition on manual tables, docs/19)', () => {
+    expect(cspFor('console')).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(cspFor('web')).toContain("script-src 'self';");
+    expect(cspFor('table')).toContain("script-src 'self';");
+    const permissions = (app: 'web' | 'console' | 'table') => headersFor(app).find((h) => h.key === 'Permissions-Policy')!.value;
+    expect(permissions('console')).toContain('camera=(self)');
+    expect(permissions('web')).toContain('camera=()');
+    expect(permissions('table')).toContain('camera=()');
+    for (const app of ['web', 'console', 'table'] as const) expect(permissions(app)).toContain('microphone=()');
   });
 
   it('narrows connect-src to the API origin at build time', () => {

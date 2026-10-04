@@ -51,13 +51,21 @@ export function cspFor(app, o = {}) {
     d['connect-src'] = ["'self'", 'https:', ...local.filter((s) => s.startsWith('http'))];
     // The partner portal previews the widget in an iframe from the web app.
     d['frame-src'] = ['https:', ...local.filter((s) => s.startsWith('http'))];
+    // Card recognition on manual tables runs OpenCV.js (WebAssembly) in the browser (docs/19). This
+    // allows compiling wasm from the console's own scripts only; JavaScript eval stays forbidden.
+    d['script-src'] = ["'self'", "'wasm-unsafe-eval'"];
   } else {
     d['connect-src'] = ["'self'", 'https:', ...local.filter((s) => s.startsWith('http'))];
   }
   return Object.entries(d).map(([k, v]) => `${k} ${v.join(' ')}`).join('; ');
 }
 
-const PERMISSIONS = 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()';
+/**
+ * Browser features the page may use. Only the console may open the camera, and only from its own
+ * origin: the webcam on manual tables (docs/19). Everything else stays off everywhere.
+ * @param {'web' | 'console' | 'table'} app
+ */
+const permissionsFor = (app) => `camera=(${app === 'console' ? 'self' : ''}), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()`;
 
 /**
  * @param {'web' | 'console' | 'table'} app
@@ -70,7 +78,7 @@ export function headersFor(app, o = {}) {
     { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-    { key: 'Permissions-Policy', value: PERMISSIONS },
+    { key: 'Permissions-Policy', value: permissionsFor(app) },
   ];
   if (!o.embed) {
     h.push({ key: 'X-Frame-Options', value: 'DENY' });
