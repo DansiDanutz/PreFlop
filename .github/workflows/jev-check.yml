@@ -1,8 +1,8 @@
 name: Jev check
 
 # Run by hand: asks the decision model (docs/20) one reading-check question with the repository
-# secret JEV_API_KEY, the same request shape the API sends, and prints the HTTP status and whether
-# the answer came back. Read-only, costs one call. The key never appears in the log.
+# secret JEV_API_KEY, the same request the API sends, and prints the HTTP status and a one-line
+# verdict. Read-only, costs one call. Neither the key nor the response body appears in the log.
 
 on:
   workflow_dispatch:
@@ -23,13 +23,23 @@ jobs:
           set -u
           if [ -z "$JEV_API_KEY" ]; then echo "No repository secret JEV_API_KEY (Settings → Secrets and variables → Actions)."; exit 1; fi
           echo "::add-mask::$JEV_API_KEY"
-          body='{"model":"jev-latest","state":{"card":"Ah","match_confidence":0.87,"runner_up_margin":0.12},"questions":[{"key":"accept","type":"noul","question":"Is a match of this confidence and runner-up margin sure enough to pre-fill the card?"}]}'
+          # The same request the API sends (apps/api/src/lib/decisions.ts: READING_CHECK): questions keyed
+          # by answer name, each with a type and instructions; a noul answer is {type:"noul", noul:boolean}.
+          body='{"model":"jev-latest","state":{"card":"Ah","match_confidence":0.87,"runner_up_margin":0.12},"questions":{"accept":{"type":"noul","instructions":"A camera read one playing card on a felt table and reports a match confidence (0..1, normalised correlation of the corner index) and the margin to the runner-up glyph. Should this card be pre-filled for the operator to confirm? Answer no when a mistake is plausible; the operator can always type the card."}}}'
           code=$(curl -sS -m 30 -o /tmp/jev.json -w '%{http_code}' -X POST "$JEV_API_URL" \
             -H "authorization: Bearer $JEV_API_KEY" -H 'content-type: application/json' -H 'accept: application/json' \
-            --data "$body") || { echo "request failed"; exit 1; }
+            --data "$body") || { echo "request failed (no HTTP response)"; exit 1; }
           echo "HTTP $code"
+          # Only the status and a verdict are printed; the response body never is.
           case "$code" in
-            200) if grep -q '"accept"' /tmp/jev.json; then echo "answer present: the key works"; else echo "200 but no 'accept' answer:"; head -c 400 /tmp/jev.json; echo; exit 1; fi ;;
-            401|403) echo "the key is refused"; exit 1 ;;
-            *) head -c 400 /tmp/jev.json; echo; exit 1 ;;
+            200)
+              if jq -e '.answers.accept.type == "noul" and (.answers.accept.noul | type) == "boolean"' /tmp/jev.json >/dev/null 2>&1; then
+                echo "verdict: the key works and the answer is one the API accepts"
+              else
+                echo "verdict: 200 but the answer is missing or not a noul answer; the API would reject it"; exit 1
+              fi ;;
+            401|403) echo "verdict: the key is refused"; exit 1 ;;
+            422) echo "verdict: the request was rejected; the question format in this workflow no longer matches the service"; exit 1 ;;
+            429|529) echo "verdict: rate limited or overloaded; run again later"; exit 1 ;;
+            *) echo "verdict: unexpected status"; exit 1 ;;
           esac
