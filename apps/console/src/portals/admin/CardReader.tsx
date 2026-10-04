@@ -23,7 +23,15 @@ export function CardReader() {
   const [busy, setBusy] = useState<'loading' | 'reading' | null>(null);
   const [reading, setReading] = useState<Reading | null>(null);
   const [source, setSource] = useState<'camera' | 'photo' | null>(null);
-
+  // The browser may grant the camera long after it was asked for (a permission prompt). A stream that
+  // arrives for a request the operator has since stopped or repeated, or after they left this page,
+  // is stopped at once instead of staying live with no view and no Stop button.
+  const request = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; request.current++; };
+  }, []);
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
     return () => stream?.getTracks().forEach((t) => t.stop());
@@ -32,15 +40,18 @@ export function CardReader() {
   const startCamera = async () => {
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia) { setError('This browser gives no camera access here; the console must be opened over https.'); return; }
+    const id = ++request.current;
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      if (!mounted.current || id !== request.current) { s.getTracks().forEach((t) => t.stop()); return; }
       setStream((prev) => { prev?.getTracks().forEach((t) => t.stop()); return s; });
       setSource('camera');
     } catch (e) {
+      if (!mounted.current || id !== request.current) return;
       setError(e instanceof Error && e.name === 'NotAllowedError' ? 'Camera access was refused. Allow the camera for this site and try again.' : `Camera unavailable: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  const stopCamera = () => { setStream(null); if (source === 'camera') setSource(null); };
+  const stopCamera = () => { request.current++; setStream(null); if (source === 'camera') setSource(null); };
 
   /** Draws the frame (video or image) on the canvas and runs the reader on it. */
   const run = async (draw: (ctx: CanvasRenderingContext2D, c: HTMLCanvasElement) => void) => {
@@ -66,11 +77,11 @@ export function CardReader() {
         ctx.fillStyle = ctx.strokeStyle; ctx.textAlign = 'center';
         ctx.fillText(`${cardLabel(g.card)} ${Math.round(g.confidence * 100)}%`, mid.x, mid.y);
       }
-      setReading(r);
+      if (mounted.current) setReading(r);
     } catch (e) {
-      setError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (mounted.current) setError(`Reading failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
 
@@ -80,15 +91,26 @@ export function CardReader() {
     ctx.drawImage(v, 0, 0, c.width, c.height);
   });
 
-  const readFromFile = (file: File) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      void run((ctx, c) => { c.width = img.naturalWidth; c.height = img.naturalHeight; ctx.drawImage(img, 0, 0); }).finally(() => URL.revokeObjectURL(url));
-      setSource('photo');
-    };
-    img.onerror = () => { setError('That file is not an image this browser can open.'); URL.revokeObjectURL(url); };
-    img.src = url;
+  /**
+   * The photo is decoded straight from the file (createImageBitmap), never through a blob: URL: the
+   * console's CSP allows images from 'self' and data: only, so an <img src="blob:…"> would be blocked.
+   */
+  const readFromFile = async (file: File) => {
+    setError(null);
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      if (mounted.current) setError('That file is not an image this browser can open.');
+      return;
+    }
+    if (!mounted.current) { bitmap.close(); return; }
+    setSource('photo');
+    try {
+      await run((ctx, c) => { c.width = bitmap.width; c.height = bitmap.height; ctx.drawImage(bitmap, 0, 0); });
+    } finally {
+      bitmap.close();
+    }
   };
 
   return (
@@ -109,7 +131,7 @@ export function CardReader() {
               : <Button size="sm" variant="secondary" onClick={() => void startCamera()}><Camera size={14} aria-hidden />Use webcam</Button>}
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-line-strong px-3 py-1.5 text-sm font-medium hover:border-accent">
               <ImageUp size={14} aria-hidden />Read a photo
-              <input type="file" accept="image/*" className="sr-only" data-testid="card-photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) readFromFile(f); e.target.value = ''; }} />
+              <input type="file" accept="image/*" className="sr-only" data-testid="card-photo" onChange={(e) => { const f = e.target.files?.[0]; if (f) void readFromFile(f); e.target.value = ''; }} />
             </label>
             {stream && <Button size="sm" onClick={() => void readFromCamera()} disabled={!!busy}><ScanSearch size={14} aria-hidden />{busy === 'loading' ? 'Loading reader…' : busy === 'reading' ? 'Reading…' : 'Read cards'}</Button>}
           </>
