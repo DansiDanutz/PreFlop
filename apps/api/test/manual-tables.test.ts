@@ -6,6 +6,9 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool, tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
+import { EventBatch } from '../src/lib/events.ts';
+import { ensureOpenRound } from '../src/rounds/service.ts';
+import { runOutboxOnce } from '../src/worker.ts';
 import { BASE_URL, type Harness, bet, harness, ledgerSums, testDbName, walletOf } from './helpers.ts';
 
 /**
@@ -125,6 +128,27 @@ describe('manual tables', () => {
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
   });
 
+  it('a hand settling while the switch goes off cannot open a new hand behind it', async () => {
+    const id = (await create('Race table')).body.id;
+    // the first hand is over; the next ensureOpenRound would open hand 2
+    await h.db.query(`update rounds set state = 'SETTLED', settled_at = now() where id = $1`, [`${id}:h1`]);
+    // the switch-off transaction: locks the manual tables, flips the setting, but has not committed yet
+    const off = await h.db.connect();
+    await off.query('begin');
+    await off.query(`select id from poker_tables where kind = 'manual' order by id for update`);
+    await off.query(`update settings set value = 'false' where key = 'manual_tables_enabled'`);
+    // a settlement's ensureOpenRound now has to wait for it
+    let opened: string | null | undefined;
+    const settle = tx(h.db, (c) => ensureOpenRound(c, id, new EventBatch())).then((r) => { opened = r; return r; });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(opened).toBeUndefined(); // still blocked on the table lock
+    await off.query('commit');
+    off.release();
+    expect(await settle).toBeNull(); // after the commit it reads the switch as off: no hand opens
+    expect((await h.db.query(`select count(*)::int as n from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0].n).toBe(0);
+    expect((await h.api('PUT', '/v1/admin/settings/manual_tables_enabled', admin, { value: true })).status).toBe(200);
+  });
+
   it('switching manual_tables_enabled off refunds open hands and stops new ones', async () => {
     const id = (await create('Switch table')).body.id;
     const p = await h.register('Off player');
@@ -170,7 +194,14 @@ describe('migration 021 on a database that already has a free-chip manual table 
       expect(applied[0]).toBe('021_manual_play_only.sql');
       expect((await db.query(`select mode, currency, status, pause_reason from poker_tables where id = 'tbl_chips'`)).rows[0])
         .toMatchObject({ mode: 'play', currency: 'PLAY', status: 'retired', pause_reason: expect.stringMatching(/play money only/) });
-      expect((await db.query(`select state, void_reason from rounds where id = 'tbl_chips:h1'`)).rows[0]).toMatchObject({ state: 'VOID', void_reason: expect.stringMatching(/play money only/) });
+      // the hand is not voided by a raw update: the worker voids it through voidRound (bets and
+      // tournament bets refunded, audit, events), from the outbox job the migration enqueued
+      expect((await db.query(`select state from rounds where id = 'tbl_chips:h1'`)).rows[0]).toMatchObject({ state: 'OPEN' });
+      expect((await db.query(`select kind from outbox where ref = 'tbl_chips:h1' and done_at is null`)).rows).toEqual([{ kind: 'void_round_migrated' }]);
+      expect(await runOutboxOnce(db, { resultSlaMs: 300_000, reviewSlaMs: 300_000, maxCaptureDelayMs: 60_000 })).toBe(1);
+      expect((await db.query(`select state, void_reason, voided_by from rounds where id = 'tbl_chips:h1'`)).rows[0])
+        .toMatchObject({ state: 'VOID', void_reason: expect.stringMatching(/play money only/), voided_by: 'system:migration' });
+      expect((await db.query(`select count(*)::int as n from audit_log where event::jsonb->>'type' = 'round.voided' and event::jsonb->>'roundId' = 'tbl_chips:h1'`)).rows[0].n).toBe(1);
       // a new chip manual table is now refused by the database itself
       await expect(db.query(`update poker_tables set mode = 'virtual-chips' where id = 'tbl_chips'`)).rejects.toThrow(/poker_tables_manual_play_only/);
     } finally {

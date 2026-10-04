@@ -31,6 +31,10 @@ export async function runOutboxOnce(db: Db, t: Timing, limit = 50): Promise<numb
       } else if (job.kind === 'void_paused') {
         const r = await lockRound(c, job.ref);
         await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev, ['OPEN', 'LOCKED', 'DEALT', 'REVIEW']);
+      } else if (job.kind === 'void_round_migrated') {
+        // Migration 021: the hand of a free-chip manual table that became play money only.
+        const r = await lockRound(c, job.ref);
+        await voidRound(c, r, 'manual tables are play money only (migration 021)', 'system:migration', ev, ['OPEN', 'LOCKED']);
       }
       await c.query('update outbox set done_at = now() where id = $1', [job.id]);
       return true;

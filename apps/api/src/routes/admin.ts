@@ -143,6 +143,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       // Manual tables off: no hand can be closed or typed any more, so open hands are refunded now
       // rather than left with bets nobody can settle (locked hands still reach the result deadline).
       if (key === 'manual_tables_enabled' && stored === false) {
+        // Lock the manual tables first: a hand settling right now (ensureOpenRound holds the table row
+        // shared) either commits its next hand before this list is taken, or waits and sees the switch off.
+        await c.query(`select id from poker_tables where kind = 'manual' order by id for update`);
         const open = (await c.query<{ id: string }>(`select r.id from rounds r join poker_tables t on t.id = r.table_id where t.kind = 'manual' and r.state = 'OPEN' order by r.id`)).rows;
         for (const o of open) await voidRound(c, await lockRound(c, o.id), 'manual tables switched off', `user:${u.id}`, ev, ['OPEN']);
       }
