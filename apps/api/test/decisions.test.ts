@@ -99,14 +99,17 @@ describe('scrubContact', () => {
       venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: { email: 'm@x.test' } },
       notes: ['Call +356 2122 0000 after 6pm', 'Reach us at owner@hintclub.test or on site', 'Opened in 2019'],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
+      'manager_alice@example.test': 'yes', 'call +356 2122 0000': 'evenings',
     });
     expect(scrubbed).toEqual({
       city: 'Valletta', tables: 4,
       venue: { street_address: '1 Republic St', capacity: 80 },
       notes: ['Call [phone] after 6pm', 'Reach us at [email] or on site', 'Opened in 2019'],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
+      'call [phone]': 'evenings',
     });
-    expect(withheld).toEqual(['contact_email', 'phone', 'venue.name', 'venue.manager']);
+    // Keys are applicant text too: an email in a withheld key is redacted in the path, a phone in a kept key is redacted in the key.
+    expect(withheld).toEqual(['contact_email', 'phone', 'venue.name', 'venue.manager', '[email]']);
     expect(scrubContact('plain text with a year 2019 and 12 tables')).toBe('plain text with a year 2019 and 12 tables');
     expect(scrubContact(null)).toBeNull();
   });

@@ -193,20 +193,24 @@ export const REVIEW_HINT: Record<string, Question> = {
  * string that looks like an email address or a phone number is redacted wherever it sits. Business
  * facts stay: a venue's street address, capacity, tables or website. So the adviser still knows a
  * venue name was given, the paths of the withheld fields travel with the details (`withheld`), never
- * their values.
+ * their values. Keys are applicant text as well, so they get the same redaction before they travel.
  */
 const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|name|surname|applicant|person|owner|manager|director|ceo|founder|representative/i;
 const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
 const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
+const scrubText = (text: string): string =>
+  text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
 export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
-  if (typeof value === 'string') return value.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
+  if (typeof value === 'string') return scrubText(value);
   if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`));
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const here = path ? `${path}.${k}` : k;
+      // Keys are applicant-controlled text too: the same redaction applies to them, kept or withheld.
+      const key = scrubText(k).slice(0, 64);
+      const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
-      else out[k] = scrubContact(v, withheld, here);
+      else out[key] = scrubContact(v, withheld, here);
     }
     return out;
   }
