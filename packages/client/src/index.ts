@@ -235,13 +235,13 @@ export interface OwnerClaim { token: string; expires_at: string }
 export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null }
 /** One typed answer of the decision model (docs/20). */
 export type DecisionAnswer =
-  | { type: 'noul'; noul: boolean; confidence?: number }
+  | { type: 'noul'; noul: number }  // probability of "yes", 0..1; at least 0.5 reads as yes
   | { type: 'choice'; choice: string; probabilities?: Record<string, number>; confidence?: number }
   | { type: 'score'; score: number; confidence?: number };
 /** A stored hint of the decision model beside an alert or a round in review: advice, never an action. */
 export interface DecisionHint { model: string | null; answers: Record<string, DecisionAnswer>; at: string }
 export interface Alert { id: number; table_id: string | null; round_id: string | null; kind: string; severity: 'info' | 'warning' | 'critical'; details: Record<string, unknown>; created_at: string; resolved_at: string | null; hint?: DecisionHint | null }
-/** The decision model's verdict on cards the browser read (docs/19): pre-fill or let the operator type. */
+/** The decision model's verdict on cards the browser read (docs/19): pre-fill or let the operator type. `confidence` is the model's probability (0..1) that pre-filling the card is safe; `accept` is true from 0.7 up. */
 export interface ReadingCheck { enabled: boolean; model: string | null; cards: { card: string; accept: boolean; confidence: number | null }[] }
 export interface Evidence { round: Round & { review_reasons: string[] | null }; capture: Record<string, unknown> | null; image_data_url: string | null; entries: { source: string; person_id: string; cards: string[] }[]; events: { ord: number; step: string; at: string }[] }
 export interface Limits { deposit_day_minor?: number | null; loss_day_minor?: number | null; session_minutes?: number | null }

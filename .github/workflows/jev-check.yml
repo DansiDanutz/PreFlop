@@ -24,7 +24,7 @@ jobs:
           if [ -z "$JEV_API_KEY" ]; then echo "No repository secret JEV_API_KEY (Settings → Secrets and variables → Actions)."; exit 1; fi
           echo "::add-mask::$JEV_API_KEY"
           # The same request the API sends (apps/api/src/lib/decisions.ts: READING_CHECK): questions keyed
-          # by answer name, each with a type and instructions; a noul answer is {type:"noul", noul:boolean}.
+          # by answer name, each with a type and instructions; a noul answer is {type:"noul", noul:<probability 0..1>}.
           body='{"model":"jev-latest","state":{"card":"Ah","match_confidence":0.87,"runner_up_margin":0.12},"questions":{"accept":{"type":"noul","instructions":"A camera read one playing card on a felt table and reports a match confidence (0..1, normalised correlation of the corner index) and the margin to the runner-up glyph. Should this card be pre-filled for the operator to confirm? Answer no when a mistake is plausible; the operator can always type the card."}}}'
           code=$(curl -sS -m 30 -o /tmp/jev.json -w '%{http_code}' -X POST "$JEV_API_URL" \
             -H "authorization: Bearer $JEV_API_KEY" -H 'content-type: application/json' -H 'accept: application/json' \
@@ -33,10 +33,15 @@ jobs:
           # Only the status and a verdict are printed; the response body never is.
           case "$code" in
             200)
-              if jq -e '.answers.accept.type == "noul" and (.answers.accept.noul | type) == "boolean"' /tmp/jev.json >/dev/null 2>&1; then
+              if jq -e '.answers.accept.type == "noul" and (.answers.accept.noul | type) == "number" and .answers.accept.noul >= 0 and .answers.accept.noul <= 1' /tmp/jev.json >/dev/null 2>&1; then
                 echo "verdict: the key works and the answer is one the API accepts"
               else
-                echo "verdict: 200 but the answer is missing or not a noul answer; the API would reject it"; exit 1
+                echo "verdict: 200 but the answer is missing or not a noul answer; the API would reject it"
+                # The outline of the response: key paths and value types only, never the values, so the
+                # mismatch can be fixed in decisions.ts without anything from the model reaching the log.
+                echo "response outline (paths and types, no values):"
+                jq -r 'paths(scalars) as $p | ($p | map(tostring) | join(".")) + ": " + (getpath($p) | type)' /tmp/jev.json
+                exit 1
               fi ;;
             401|403) echo "verdict: the key is refused"; exit 1 ;;
             422) echo "verdict: the request was rejected; the question format in this workflow no longer matches the service"; exit 1 ;;
