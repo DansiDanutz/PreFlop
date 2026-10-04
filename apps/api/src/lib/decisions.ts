@@ -207,7 +207,10 @@ export function scrubContact(value: unknown, withheld?: string[], path = ''): un
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       // Keys are applicant-controlled text too: the same redaction applies to them, kept or withheld.
-      const key = scrubText(k).slice(0, 64);
+      // Two keys that redact (or truncate) to the same text stay distinct, so no value is lost.
+      const base = scrubText(k).slice(0, 64);
+      let key = base;
+      for (let n = 2; key in out || withheld?.includes(path ? `${path}.${key}` : key); n++) key = `${base} (${n})`;
       const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
       else out[key] = scrubContact(v, withheld, here);
