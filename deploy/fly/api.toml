@@ -15,7 +15,10 @@ primary_region = "fra"
   # The three staging sites, each Vercel preview deployment's unique URL (<project>-<hash>-<team>.vercel.app),
   # and the native apps (apps/mobile): capacitor://localhost on iOS, https://localhost on Android.
   CORS_ORIGINS = "capacitor://localhost,https://localhost,https://preflop-staging-web.vercel.app,https://preflop-staging-console.vercel.app,https://preflop-staging-table.vercel.app,https://preflop-staging-web-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-console-*-irises-projects-ce549f63.vercel.app,https://preflop-staging-table-*-irises-projects-ce549f63.vercel.app"
-  # Secrets (fly secrets set): DATABASE_URL — Neon *direct* endpoint with ?sslmode=verify-full
+  # The database's TLS certificate (Supabase) is verified against Supabase's CA, baked into the image.
+  NODE_EXTRA_CA_CERTS = "/srv/supabase-ca.crt"
+  # Secrets (set by the "Fly secrets" workflow, never committed): DATABASE_URL — the Supabase *direct*
+  # connection (db.<ref>.supabase.co:5432, IPv6) with ?sslmode=verify-full.
 
 [http_service]
   internal_port = 4000

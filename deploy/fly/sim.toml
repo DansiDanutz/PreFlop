@@ -10,8 +10,9 @@ primary_region = "fra"
 [env]
   API_URL = "https://preflop-staging-api.fly.dev"
   BETTING_WINDOW_MS = "20000"
-  # Secrets (fly secrets set): DATABASE_URL (same Neon URL as the API),
-  # ADMIN_EMAIL and ADMIN_PASSWORD (the first console admin, seeded on first run).
+  NODE_EXTRA_CA_CERTS = "/certs/supabase-ca.crt"
+  # Secrets (fly secrets set, or the "Fly secrets" workflow): DATABASE_URL (the same Supabase URL as
+  # the API), ADMIN_EMAIL and ADMIN_PASSWORD (the first console admin, seeded on first run).
 
 [[vm]]
   memory = "512mb"
