@@ -10,3 +10,4 @@ export { Ledger, Audit, Statements, Payments } from './Money.tsx';
 export { Book } from './Book.tsx';
 export { Settings } from './Settings.tsx';
 export { News } from './News.tsx';
+export { ManualTables } from './ManualTables.tsx';

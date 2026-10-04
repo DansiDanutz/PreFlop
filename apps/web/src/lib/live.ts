@@ -5,9 +5,10 @@ import { handNoFromRoundId } from './flop.ts';
 /** Lobby / table status line (screen 2, screen 3). */
 export interface TableStatus { tone: 'accent' | 'info' | 'muted' | 'warn'; label: string; open: boolean }
 
-export function tableStatus(t: Pick<TableSummary, 'status' | 'ready' | 'stream_live' | 'open_round_id' | 'current_round'>): TableStatus {
+export function tableStatus(t: Pick<TableSummary, 'status' | 'ready' | 'stream_live' | 'open_round_id' | 'current_round'> & { kind?: TableSummary['kind'] }): TableStatus {
   if (t.status === 'paused') return { tone: 'warn', label: 'Paused', open: false };
-  if (t.status !== 'active' || !t.stream_live) return { tone: 'muted', label: 'Stream unavailable', open: false };
+  // A manual table has no stream: the PreFlop team types each flop (migration 020).
+  if (t.status !== 'active' || (!t.stream_live && t.kind !== 'manual')) return { tone: 'muted', label: 'Stream unavailable', open: false };
   // An open round wins over the readiness snapshot: `ready` comes from the last poll and can be
   // stale between heartbeats, and the server still refuses bets with `table_not_ready` if needed.
   if (t.open_round_id) return { tone: 'accent', label: 'Predictions open', open: true };

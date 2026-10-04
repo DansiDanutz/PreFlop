@@ -168,7 +168,7 @@ export function feltLabel(name: string | null | undefined): string | null {
  * real flop data on a CSS felt with a SIMULATED TABLE tag, never a fake video.
  */
 export function Felt({
-  cards, size = 'md', revealKey, unavailable = false, onExpand, className, badge = true, watermark = true, theme = 'green', label, action,
+  cards, size = 'md', revealKey, unavailable = false, onExpand, className, badge = true, badgeText = 'SIMULATED TABLE', watermark = true, theme = 'green', label, action,
 }: {
   cards: readonly string[] | null | undefined;
   size?: 'sm' | 'md' | 'lg';
@@ -178,6 +178,8 @@ export function Felt({
   onExpand?: () => void;
   className?: string;
   badge?: boolean;
+  /** The corner tag: SIMULATED TABLE, or TEST TABLE on a manual table. */
+  badgeText?: string;
   watermark?: boolean;
   theme?: FeltTheme;
   /** Small embossed label, e.g. TABLE 04. */
@@ -211,7 +213,7 @@ export function Felt({
         <div className="absolute inset-x-3 top-3 z-[5] flex items-start justify-between">
           {badge ? (
             <span className={cx('inline-flex items-center gap-1.5 rounded-[4px] border border-[#6c8a6f]/25 bg-[#101a15]/75 px-2 py-[5px] text-[8.5px] font-medium tracking-[0.09em] text-[#c4d3c8]', unavailable && 'opacity-50')}>
-              <span className="h-1 w-1 rounded-full bg-[#bccdbb]" /> SIMULATED TABLE
+              <span className="h-1 w-1 rounded-full bg-[#bccdbb]" /> {badgeText}
             </span>
           ) : <span />}
           {action}

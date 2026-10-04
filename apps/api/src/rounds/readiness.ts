@@ -23,7 +23,7 @@ export interface TableRow {
   name: string;
   mode: string;
   currency: string;
-  kind: 'physical' | 'simulated';
+  kind: 'physical' | 'simulated' | 'manual';
   status: 'active' | 'paused' | 'retired';
   pause_reason: string | null;
   /** Machine-readable cause of a pause (migration 014): monitor | evidence | floor | platform; null while active. */
@@ -43,6 +43,14 @@ export async function physicalPlayEnabled(c: Db | Tx): Promise<boolean> {
   return r.rows[0]?.value === true;
 }
 
+export async function manualTablesEnabled(c: Db | Tx): Promise<boolean> {
+  const r = await c.query<{ value: unknown }>("select value from settings where key = 'manual_tables_enabled'");
+  return r.rows[0]?.value === true;
+}
+
+/** Manual tables take play money and free chips only (migration 020). */
+export const MANUAL_MODES: readonly string[] = ['play', 'virtual-chips'];
+
 /**
  * Whether betting may open at this table now: table active, physical play allowed for physical
  * tables (owner decision: OFF), every certification item valid, a fresh heartbeat with a healthy
@@ -51,6 +59,13 @@ export async function physicalPlayEnabled(c: Db | Tx): Promise<boolean> {
 export async function tableReadiness(c: Db | Tx, t: TableRow, now = Date.now()): Promise<{ ok: boolean; problems: string[] }> {
   const problems: string[] = [];
   if (t.status !== 'active') problems.push(`table is ${t.status}${t.pause_reason ? `: ${t.pause_reason}` : ''}`);
+  // A manual table has no Table Box, stream or shuffler: the PreFlop team types each flop after
+  // betting closes. Its own switch, free play only.
+  if (t.kind === 'manual') {
+    if (!(await manualTablesEnabled(c))) problems.push('manual tables are switched off (setting manual_tables_enabled)');
+    if (!MANUAL_MODES.includes(t.mode)) problems.push('a manual table takes play money or free chips only');
+    return { ok: problems.length === 0, problems };
+  }
   if (t.kind === 'physical' && !(await physicalPlayEnabled(c))) problems.push('physical-table play is disabled (owner decision, docs/06 #7)');
   if (!t.link || !t.link_at) problems.push('no heartbeat received');
   else {

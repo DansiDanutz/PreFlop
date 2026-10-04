@@ -147,6 +147,8 @@ describe('live table status', () => {
     expect(tableStatus(table()).label).toBe('Predictions open');
     expect(tableStatus(table({ open_round_id: null, current_round: { id: 'x', hand_no: 1, state: 'LOCKED', step: 'locked' } })).label).toBe('Round in progress');
     expect(tableStatus(table({ stream_live: false })).label).toBe('Stream unavailable');
+    // a manual table has no stream: the PreFlop team types the flop
+    expect(tableStatus({ ...table({ stream_live: false, open_round_id: 'm:h1' }), kind: 'manual' }).label).toBe('Predictions open');
     expect(tableStatus(table({ status: 'paused' })).label).toBe('Paused');
     expect(tableStatus(table({ ready: false })).label).toBe('Predictions open');
     expect(tableStatus(table({ ready: false, open_round_id: null })).label).toBe('Table reconnecting');
