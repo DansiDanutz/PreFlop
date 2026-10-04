@@ -91,45 +91,67 @@ export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).
 /** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
 export interface WorkerMail { transport: MailTransport | null; from: string }
 
-export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail): () => Promise<void> {
+/**
+ * How long to wait before the next pass: `everyMs` from the start of a pass that found work (more may
+ * be waiting; the pass's own duration counts), `idleMs` after one that found none. A busy table keeps the one-second cadence; an idle platform
+ * polls a few times a minute instead of every second, which is what used up the database quota on
+ * the free plan (docs/18). idleMs stays under the readiness heartbeat limit (WORKER_HEARTBEAT_MAX_AGE_MS).
+ */
+export const nextDelayMs = (worked: boolean, everyMs: number, idleMs: number, elapsedMs = 0): number =>
+  (worked ? Math.max(0, everyMs - elapsedMs) : Math.max(everyMs, idleMs));
+
+export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000): () => Promise<void> {
   let stopped = false;
   let current: Promise<void> | null = null;
   const workerId = newWorkerId();
   let prunedAt = 0;
-  const tick = async () => {
+  /** One pass of everything; true when it found work to do. */
+  const tick = async (): Promise<boolean> => {
     try {
       // A tick that hangs stops the beats, so readiness reports the stuck worker.
       await beat(db, workerId);
-      await runOutboxOnce(db, t);
-      await sweepOnce(db, t);
-      await deliverDue(db);
+      const jobs = await runOutboxOnce(db, t);
+      const swept = await sweepOnce(db, t);
+      const delivered = await deliverDue(db);
       // Housekeeping once a minute: consumed request nonces past the replay window.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
         await pruneBetChanges(db);
       }
+      return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0 || delivered > 0;
     } catch (e) {
       console.error('worker error', e);
+      return true; // retry at the fast cadence
     }
   };
-  const timer = setInterval(() => {
-    if (current || stopped) return;
-    current = tick().finally(() => { current = null; });
-  }, everyMs);
+  let timer: NodeJS.Timeout | null = null;
+  const schedule = (ms: number) => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      const started = Date.now();
+      current = tick().then((worked) => { current = null; schedule(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
+    }, ms);
+  };
+  schedule(everyMs);
   // Email runs on its own loop: a slow provider or a backlog never holds up the game tick (settlement,
   // refunds, the heartbeat). One pass at a time, so a slow pass only delays the next email pass.
   let mailing: Promise<void> | null = null;
-  const mailTimer = mail ? setInterval(() => {
-    if (mailing || stopped) return;
-    mailing = deliverMail(db, mail.transport, mail.from)
-      .then(() => {}, (e) => { console.error('mail worker error', e); })
-      .finally(() => { mailing = null; });
-  }, everyMs) : null;
+  let mailTimer: NodeJS.Timeout | null = null;
+  const scheduleMail = (ms: number) => {
+    if (stopped || !mail) return;
+    mailTimer = setTimeout(() => {
+      const started = Date.now();
+      mailing = deliverMail(db, mail.transport, mail.from)
+        .then((sent) => sent > 0, (e) => { console.error('mail worker error', e); return true; })
+        .then((worked) => { mailing = null; scheduleMail(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
+    }, ms);
+  };
+  scheduleMail(everyMs);
   return async () => {
     stopped = true;
-    clearInterval(timer);
-    if (mailTimer) clearInterval(mailTimer);
+    if (timer) clearTimeout(timer);
+    if (mailTimer) clearTimeout(mailTimer);
     await Promise.all([current, mailing]);
     await db.query('delete from worker_heartbeats where worker_id = $1', [workerId]).catch(() => {});
   };
