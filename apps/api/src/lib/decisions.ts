@@ -188,10 +188,12 @@ export const REVIEW_HINT: Record<string, Question> = {
 
 /**
  * Contact fields never reach the adviser. Applicants type free-form details, so the scrub walks the
- * whole value: any key that names a contact field is dropped at every depth, and any string that
- * looks like an email address or a phone number is redacted wherever it sits.
+ * whole value: any key that names a way to reach a person (email, phone, messaging handles, a
+ * person's name) is dropped at every depth, and any string that looks like an email address or a
+ * phone number is redacted wherever it sits. Business facts stay: a venue's name, street address,
+ * capacity or website are what the reviewer and the adviser judge the application on.
  */
-const CONTACT_KEY = /email|phone|mobile|tel\b|telephone|whatsapp|name|address|contact|owner|manager|director/i;
+const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|first_?name|last_?name|full_?name|surname|applicant|person/i;
 const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
 const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
 export function scrubContact(value: unknown): unknown {

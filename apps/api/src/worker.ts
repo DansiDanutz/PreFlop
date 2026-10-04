@@ -153,13 +153,13 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
   // Organization applications awaiting a decision. The applicant's name and email stay out of the
   // state; what goes is the kind, the details they typed (contact fields scrubbed at every depth)
   // and duplicate signals: organizations this contact already owns (owner membership, an approved
-  // application, or an owner claim link issued to the address) and other open applications.
+  // application, or a live or redeemed owner claim link issued to the address) and other open applications.
   const applications = (await db.query<{ id: string; kind: string; details: unknown; user_id: string | null; created_at: Date; same_contact_orgs: number; same_email_open: number }>(
     `select a.id, a.kind, a.details, a.user_id, a.created_at,
             (select count(distinct x.org_id)::int from (
                select m.org_id from memberships m join users u on u.id = m.user_id where m.role = 'owner' and lower(u.email) = lower(a.email)
                union select o.id from organizations o join applications b on b.id = o.settings->>'application_id' where b.id <> a.id and lower(b.email) = lower(a.email)
-               union select c.org_id from org_owner_claims c where c.revoked_at is null and lower(c.email) = lower(a.email)) x) as same_contact_orgs,
+               union select c.org_id from org_owner_claims c where c.revoked_at is null and (c.claimed_at is not null or c.expires_at > now()) and lower(c.email) = lower(a.email)) x) as same_contact_orgs,
             (select count(*)::int from applications b where b.id <> a.id and b.status = 'new' and lower(b.email) = lower(a.email)) as same_email_open
        from applications a left join decision_hints h on h.kind = 'application' and h.ref = a.id
       where a.status = 'new' and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;

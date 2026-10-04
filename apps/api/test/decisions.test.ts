@@ -102,7 +102,7 @@ describe('scrubContact', () => {
     });
     expect(scrubbed).toEqual({
       city: 'Valletta', tables: 4,
-      venue: { capacity: 80 },
+      venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: {} },
       notes: ['Call [phone] after 6pm', 'Reach us at [email] or on site', 'Opened in 2019'],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
     });
@@ -175,20 +175,25 @@ describe('decision hints in the worker and the console API', () => {
     await h.db.query(`insert into applications (id, kind, name, email, details, status) values ('app_hint0', 'club', 'Twice Club', 'again@twice.test', '{}', 'approved')`);
     await h.db.query(`insert into organizations (id, kind, name, settings) values ('org_twice', 'club', 'Twice Club', '{"application_id":"app_hint0"}')`);
     await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint2', 'club', 'Twice Club again', 'Again@Twice.test', '{"city":"Sliema"}')`);
+    // An owner claim link that expired unredeemed never made this contact an owner; a live one counts.
+    await h.db.query(`insert into organizations (id, kind, name) values ('org_expired', 'club', 'Expired Club'), ('org_live', 'club', 'Live Club')`);
+    await h.db.query(`insert into org_owner_claims (token_hash, org_id, email, created_by, expires_at) values ('h_expired', 'org_expired', 'claim@hint.test', 'admin', now() - interval '1 day'), ('h_live', 'org_live', 'claim@hint.test', 'admin', now() + interval '1 day')`);
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint3', 'club', 'Claim Club', 'claim@hint.test', '{"city":"Gozo"}')`);
     await h.db.query(`insert into promotions (id, owner_org, kind, title, body, link, starts_at, ends_at, status, created_by) values ('promo_hint1', null, 'announcement', 'Friday night', 'Guaranteed wins every hand!', 'https://example.test/friday', now(), now() + interval '7 days', 'pending_review', 'someone')`);
     const applicant = await h.register('Would-be agent');
     await h.db.query(`insert into agents (user_id, code, note) values ($1, 'PFHINT01', 'I run a poker club Discord with 300 members')`, [applicant.id]);
-    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(4);
+    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(5);
     expect(await decisionsOnce(h.db, decider)).toBe(0);
     // What the model saw: the typed details with contact fields scrubbed at every depth, the promotion text,
     // link and numbers, the agent's note. Never the applicant's name, email or phone.
     const seenApps = decider.seen.filter((s) => s.application);
     const seenApp = seenApps.find((s) => s.application.details.city === 'Valletta');
-    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
     expect(seenApp.organizations_with_same_contact).toBe(0);
-    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club|356/);
+    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|356/);
     // The duplicate signal comes from the approved application behind an organization, matched case-insensitively.
     expect(seenApps.find((s) => s.application.details.city === 'Sliema')).toMatchObject({ organizations_with_same_contact: 1, other_open_applications_same_contact: 0 });
+    expect(seenApps.find((s) => s.application.details.city === 'Gozo')).toMatchObject({ organizations_with_same_contact: 1 });
     expect(decider.seen.find((s) => s.promotion)?.promotion).toMatchObject({ kind: 'announcement', title: 'Friday night', link: 'https://example.test/friday', runs_days: 7 });
     expect(decider.seen.find((s) => s.agent_application)?.agent_application).toMatchObject({ note: 'I run a poker club Discord with 300 members', was_active_before: false, players_registered_with_code: 0 });
     // The routes carry the hints beside the rows the team decides on.
