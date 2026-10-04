@@ -4,7 +4,7 @@ import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
-import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubContact } from './lib/decisions.ts';
+import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubDetails } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -151,7 +151,7 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
     if (!(await ask('review', r.id, state, REVIEW_HINT))) return stored;
   }
   // Organization applications awaiting a decision. The applicant's name and email stay out of the
-  // state; what goes is the kind, the details they typed (contact fields scrubbed at every depth)
+  // state; what goes is the kind, the details they typed (names and contact fields withheld at every depth, their paths listed)
   // and duplicate signals: organizations this contact already owns (owner membership, an approved
   // application, or a live or redeemed owner claim link issued to the address) and other open applications.
   const applications = (await db.query<{ id: string; kind: string; details: unknown; user_id: string | null; created_at: Date; same_contact_orgs: number; same_email_open: number }>(
@@ -164,8 +164,8 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
        from applications a left join decision_hints h on h.kind = 'application' and h.ref = a.id
       where a.status = 'new' and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;
   for (const a of applications) {
-    const details = scrubContact(a.details ?? {});
-    const state = { application: { kind: a.kind, details, applicant_signed_in: a.user_id !== null, age_hours: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000) }, organizations_with_same_contact: a.same_contact_orgs, other_open_applications_same_contact: a.same_email_open };
+    const { details, withheld } = scrubDetails(a.details ?? {});
+    const state = { application: { kind: a.kind, details, withheld_fields: withheld, applicant_signed_in: a.user_id !== null, age_hours: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000) }, organizations_with_same_contact: a.same_contact_orgs, other_open_applications_same_contact: a.same_email_open };
     if (!(await ask('application', a.id, state, APPLICATION_HINT))) return stored;
   }
   // Promotions from organizations waiting for PreFlop's review.

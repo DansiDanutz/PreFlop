@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , scrubContact } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , scrubContact, scrubDetails } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -93,8 +93,8 @@ describe('the Jev decider', () => {
 
 /** A scripted decider for the worker and route tests: answers from a function of the questions asked. */
 describe('scrubContact', () => {
-  it('drops contact keys at every depth and redacts email- and phone-shaped text wherever it sits', () => {
-    const scrubbed = scrubContact({
+  it('withholds names and contact keys at every depth, lists their paths, and redacts email- and phone-shaped text wherever it sits', () => {
+    const { details: scrubbed, withheld } = scrubDetails({
       city: 'Valletta', tables: 4, contact_email: 'owner@hintclub.test', phone: '+356 2122 0000',
       venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: { email: 'm@x.test' } },
       notes: ['Call +356 2122 0000 after 6pm', 'Reach us at owner@hintclub.test or on site', 'Opened in 2019'],
@@ -102,10 +102,11 @@ describe('scrubContact', () => {
     });
     expect(scrubbed).toEqual({
       city: 'Valletta', tables: 4,
-      venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: {} },
+      venue: { street_address: '1 Republic St', capacity: 80 },
       notes: ['Call [phone] after 6pm', 'Reach us at [email] or on site', 'Opened in 2019'],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
     });
+    expect(withheld).toEqual(['contact_email', 'phone', 'venue.name', 'venue.manager']);
     expect(scrubContact('plain text with a year 2019 and 12 tables')).toBe('plain text with a year 2019 and 12 tables');
     expect(scrubContact(null)).toBeNull();
   });
@@ -188,9 +189,10 @@ describe('decision hints in the worker and the console API', () => {
     // link and numbers, the agent's note. Never the applicant's name, email or phone.
     const seenApps = decider.seen.filter((s) => s.application);
     const seenApp = seenApps.find((s) => s.application.details.city === 'Valletta');
-    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { street_address: '1 Republic St', capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
+    expect([...seenApp.application.withheld_fields].sort()).toEqual(['contact_email', 'phone', 'venue.name']);
     expect(seenApp.organizations_with_same_contact).toBe(0);
-    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|356/);
+    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club|356/);
     // The duplicate signal comes from the approved application behind an organization, matched case-insensitively.
     expect(seenApps.find((s) => s.application.details.city === 'Sliema')).toMatchObject({ organizations_with_same_contact: 1, other_open_applications_same_contact: 0 });
     expect(seenApps.find((s) => s.application.details.city === 'Gozo')).toMatchObject({ organizations_with_same_contact: 1 });

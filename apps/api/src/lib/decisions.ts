@@ -187,36 +187,49 @@ export const REVIEW_HINT: Record<string, Question> = {
 };
 
 /**
- * Contact fields never reach the adviser. Applicants type free-form details, so the scrub walks the
- * whole value: any key that names a way to reach a person (email, phone, messaging handles, a
- * person's name) is dropped at every depth, and any string that looks like an email address or a
- * phone number is redacted wherever it sits. Business facts stay: a venue's name, street address,
- * capacity or website are what the reviewer and the adviser judge the application on.
+ * Contact fields and names never reach the adviser. Applicants type free-form details, so the scrub
+ * walks the whole value: a key that names a way to reach a person, or a name of any kind (a venue
+ * name and a manager's name are indistinguishable in free text), is withheld at every depth, and any
+ * string that looks like an email address or a phone number is redacted wherever it sits. Business
+ * facts stay: a venue's street address, capacity, tables or website. So the adviser still knows a
+ * venue name was given, the paths of the withheld fields travel with the details (`withheld`), never
+ * their values.
  */
-const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|first_?name|last_?name|full_?name|surname|applicant|person/i;
+const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|name|surname|applicant|person|owner|manager|director|ceo|founder|representative/i;
 const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
 const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
-export function scrubContact(value: unknown): unknown {
+export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
   if (typeof value === 'string') return value.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
-  if (Array.isArray(value)) return value.map(scrubContact);
+  if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`));
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([k]) => !CONTACT_KEY.test(k)).map(([k, v]) => [k, scrubContact(v)]));
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const here = path ? `${path}.${k}` : k;
+      if (CONTACT_KEY.test(k)) withheld?.push(here);
+      else out[k] = scrubContact(v, withheld, here);
+    }
+    return out;
   }
   return value;
+}
+/** The details an application's adviser sees, and the paths of the fields it was not shown. */
+export function scrubDetails(details: unknown): { details: unknown; withheld: string[] } {
+  const withheld: string[] = [];
+  return { details: scrubContact(details, withheld), withheld };
 }
 
 /** Organization application (club, betting partner, organizer): approve, reject or ask for more before an org is created. */
 export const APPLICATION_HINT: Record<string, Question> = {
   decision: {
     type: 'choice',
-    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in, how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
+    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in (names and contact fields are withheld; the paths of withheld fields are listed so you know they were provided), how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
     criteria: {
       approve: 'The details describe a real, specific operation of the kind applied for and nothing suggests a duplicate or a test: create the organization.',
       ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind): write back before deciding.',
       reject: 'Empty, nonsense or test content, a duplicate of an existing organization or open application, or an activity the platform does not offer.',
     },
   },
-  complete: { type: 'noul', instructions: 'Do the details contain enough concrete information (what, where, how big) to set this organization up without a follow-up question?' },
+  complete: { type: 'noul', instructions: 'Do the details, counting the withheld fields as provided, contain enough concrete information (what, where, how big) to set this organization up without a follow-up question?' },
 };
 
 /** Promotion review: an organization's offer to players, before players see it. */
