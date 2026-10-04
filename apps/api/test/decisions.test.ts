@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , scrubContact } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -92,6 +92,25 @@ describe('the Jev decider', () => {
 });
 
 /** A scripted decider for the worker and route tests: answers from a function of the questions asked. */
+describe('scrubContact', () => {
+  it('drops contact keys at every depth and redacts email- and phone-shaped text wherever it sits', () => {
+    const scrubbed = scrubContact({
+      city: 'Valletta', tables: 4, contact_email: 'owner@hintclub.test', phone: '+356 2122 0000',
+      venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: { email: 'm@x.test' } },
+      notes: ['Call +356 2122 0000 after 6pm', 'Reach us at owner@hintclub.test or on site', 'Opened in 2019'],
+      links: [{ url: 'https://hintclub.test', label: 'site' }],
+    });
+    expect(scrubbed).toEqual({
+      city: 'Valletta', tables: 4,
+      venue: { capacity: 80 },
+      notes: ['Call [phone] after 6pm', 'Reach us at [email] or on site', 'Opened in 2019'],
+      links: [{ url: 'https://hintclub.test', label: 'site' }],
+    });
+    expect(scrubContact('plain text with a year 2019 and 12 tables')).toBe('plain text with a year 2019 and 12 tables');
+    expect(scrubContact(null)).toBeNull();
+  });
+});
+
 function fakeDecider(answer: (state: any, questions: Record<string, Question>) => Answers | Error): Decider & { seen: any[] } {
   const seen: any[] = [];
   return {
@@ -150,25 +169,44 @@ describe('decision hints in the worker and the console API', () => {
   });
 
   it('applications, promotions in review and agent applications get a decision hint; the admin routes carry it; contact fields never leave', async () => {
-    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint1', 'club', 'Hint Club', 'owner@hintclub.test', '{"city":"Valletta","tables":4,"contact_email":"owner@hintclub.test","phone":"+356 1"}')`);
-    await h.db.query(`insert into promotions (id, owner_org, kind, title, body, starts_at, ends_at, status, created_by) values ('promo_hint1', null, 'announcement', 'Friday night', 'Guaranteed wins every hand!', now(), now() + interval '7 days', 'pending_review', 'someone')`);
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint1', 'club', 'Hint Club', 'owner@hintclub.test',
+      '{"city":"Valletta","tables":4,"contact_email":"owner@hintclub.test","phone":"+356 1","venue":{"name":"Hint Club","street_address":"1 Republic St","capacity":80},"notes":["Reach us at owner@hintclub.test or +356 2122 0000"]}')`);
+    // A second applicant whose contact already had an application approved (and so owns an organization).
+    await h.db.query(`insert into applications (id, kind, name, email, details, status) values ('app_hint0', 'club', 'Twice Club', 'again@twice.test', '{}', 'approved')`);
+    await h.db.query(`insert into organizations (id, kind, name, settings) values ('org_twice', 'club', 'Twice Club', '{"application_id":"app_hint0"}')`);
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint2', 'club', 'Twice Club again', 'Again@Twice.test', '{"city":"Sliema"}')`);
+    await h.db.query(`insert into promotions (id, owner_org, kind, title, body, link, starts_at, ends_at, status, created_by) values ('promo_hint1', null, 'announcement', 'Friday night', 'Guaranteed wins every hand!', 'https://example.test/friday', now(), now() + interval '7 days', 'pending_review', 'someone')`);
     const applicant = await h.register('Would-be agent');
     await h.db.query(`insert into agents (user_id, code, note) values ($1, 'PFHINT01', 'I run a poker club Discord with 300 members')`, [applicant.id]);
-    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(3);
+    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(4);
     expect(await decisionsOnce(h.db, decider)).toBe(0);
-    // What the model saw: the typed details without the contact fields, the promotion text and numbers, the agent's note.
-    const seenApp = decider.seen.find((s) => s.application);
-    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4 });
-    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club/);
-    expect(decider.seen.find((s) => s.promotion)?.promotion).toMatchObject({ kind: 'announcement', title: 'Friday night', runs_days: 7 });
-    expect(decider.seen.find((s) => s.agent_application)?.agent_application).toMatchObject({ note: 'I run a poker club Discord with 300 members', players_registered_with_code_before_approval: 0 });
+    // What the model saw: the typed details with contact fields scrubbed at every depth, the promotion text,
+    // link and numbers, the agent's note. Never the applicant's name, email or phone.
+    const seenApps = decider.seen.filter((s) => s.application);
+    const seenApp = seenApps.find((s) => s.application.details.city === 'Valletta');
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
+    expect(seenApp.organizations_with_same_contact).toBe(0);
+    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club|356/);
+    // The duplicate signal comes from the approved application behind an organization, matched case-insensitively.
+    expect(seenApps.find((s) => s.application.details.city === 'Sliema')).toMatchObject({ organizations_with_same_contact: 1, other_open_applications_same_contact: 0 });
+    expect(decider.seen.find((s) => s.promotion)?.promotion).toMatchObject({ kind: 'announcement', title: 'Friday night', link: 'https://example.test/friday', runs_days: 7 });
+    expect(decider.seen.find((s) => s.agent_application)?.agent_application).toMatchObject({ note: 'I run a poker club Discord with 300 members', was_active_before: false, players_registered_with_code: 0 });
     // The routes carry the hints beside the rows the team decides on.
     const app = (await h.api('GET', '/v1/admin/applications', admin)).body.applications.find((a: any) => a.id === 'app_hint1');
     expect(app.hint).toMatchObject({ model: 'fake-jev', answers: { decision: { choice: 'approve' }, complete: { noul: 0.85 } } });
     const promo = (await h.api('GET', '/v1/admin/promotions', admin)).body.promotions.find((p: any) => p.id === 'promo_hint1');
     expect(promo.hint).toMatchObject({ answers: { decision: { choice: 'edit' }, misleading: { noul: 0.75 } } });
+    expect((await h.api('GET', '/v1/admin/applications', admin)).body.applications.find((a: any) => a.id === 'app_hint2').hint.answers.decision.choice).toBe('reject');
     const agent = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
     expect(agent.hint).toMatchObject({ answers: { decision: { choice: 'approve', confidence: 0.6 } } });
+    // A rejected agent who applies again is a new case: the old hint goes, and the next pass asks afresh about the new note.
+    await h.db.query(`update agents set status = 'rejected' where user_id = $1`, [applicant.id]);
+    expect((await h.api('POST', '/v1/me/agent/apply', applicant.token, {})).status).toBe(201);
+    const reapplied = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
+    expect(reapplied.status).toBe('applied');
+    expect(reapplied.hint ?? null).toBeNull();
+    expect(await decisionsOnce(h.db, decider)).toBe(1);
+    expect((await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id).hint).toMatchObject({ answers: { decision: { choice: 'hold' } } });
   });
 
   it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {

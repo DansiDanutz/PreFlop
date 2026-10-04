@@ -88,6 +88,7 @@ export function Agents() {
                         <div className="min-w-0 max-w-2xl">
                           <div className="font-semibold">{a.display_name} <span className="text-sm font-normal text-muted">· {a.email}</span></div>
                           {a.note && <p className="mt-1 text-sm text-ink/80">{a.note}</p>}
+                          <div className="mt-2 flex items-center gap-2 text-xs text-muted">Suggested: <ChoiceHint hint={a.hint} question="decision" /></div>
                         </div>
                         {write && <div className="flex gap-2"><Button size="sm" onClick={() => setEditing(a)}>Review &amp; approve</Button><Button size="sm" variant="secondary" onClick={() => setConfirm({ kind: 'rejected', agent: a })}>Reject</Button></div>}
                       </li>
@@ -105,7 +106,6 @@ export function Agents() {
                     { key: 'rates', header: 'Rates (L1 / L2)', cell: (a) => `${pct(a.rate_l1_bps)} / ${pct(a.rate_l2_bps)}` },
                     { key: 'players', header: 'Players', align: 'right', sort: (a) => a.players, cell: (a) => <span className="tabular-nums">{a.players}</span> },
                     { key: 'status', header: 'Status', cell: (a) => <Badge tone={tone(a.status)}>{a.status}</Badge> },
-                    { key: 'hint', header: 'Suggested', cell: (a) => a.status === 'applied' ? <ChoiceHint hint={a.hint} question="decision" /> : null },
                     { key: 'act', header: '', align: 'right', cell: (a) => write ? (
                       <div className="flex justify-end gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setEditing(a)}>Edit</Button>

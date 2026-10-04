@@ -186,6 +186,23 @@ export const REVIEW_HINT: Record<string, Question> = {
   },
 };
 
+/**
+ * Contact fields never reach the adviser. Applicants type free-form details, so the scrub walks the
+ * whole value: any key that names a contact field is dropped at every depth, and any string that
+ * looks like an email address or a phone number is redacted wherever it sits.
+ */
+const CONTACT_KEY = /email|phone|mobile|tel\b|telephone|whatsapp|name|address|contact|owner|manager|director/i;
+const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
+const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
+export function scrubContact(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
+  if (Array.isArray(value)) return value.map(scrubContact);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([k]) => !CONTACT_KEY.test(k)).map(([k, v]) => [k, scrubContact(v)]));
+  }
+  return value;
+}
+
 /** Organization application (club, betting partner, organizer): approve, reject or ask for more before an org is created. */
 export const APPLICATION_HINT: Record<string, Question> = {
   decision: {
@@ -218,11 +235,11 @@ export const PROMOTION_HINT: Record<string, Question> = {
 export const AGENT_HINT: Record<string, Question> = {
   decision: {
     type: 'choice',
-    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote, the age of the account and of the application, whether a recruiting agent proposed them, and how many players already registered with their code before approval (which cannot happen legitimately). Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
+    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote, the age of the account and of the application, whether a recruiting agent proposed them, whether this account was an agent before (a re-application after a rejection or suspension), and how many players registered with their code. The code of a first-time applicant has never been shown to players, so registrations with it before approval point to a code shared outside the platform; a former agent may legitimately still have players. Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
     criteria: {
       approve: 'A credible note (who they are, where their players come from) and nothing odd about the account: activate the code.',
       hold: 'No note or a vague one, or a very new account: ask what audience they bring before activating.',
-      reject: 'Spam, prohibited practices (buying traffic to minors, incentivising losses), or signs of a self-referral scheme.',
+      reject: 'Spam, prohibited practices (buying traffic to minors, incentivising losses), signs of a self-referral scheme, or a first application whose code already has registrations.',
     },
   },
 };

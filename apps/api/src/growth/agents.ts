@@ -31,6 +31,8 @@ export function newCode(): string {
 export async function apply(c: Tx, userId: string, note: string | null): Promise<AgentRow> {
   const existing = (await c.query<AgentRow>('select * from agents where user_id = $1', [userId])).rows[0];
   if (existing && existing.status !== 'rejected') throw conflict('already_applied', `your agent account is ${existing.status}`);
+  // A re-application is a new case: the hint stored for the rejected one must not be shown for it.
+  if (existing) await c.query(`delete from decision_hints where kind = 'agent' and ref = $1`, [userId]);
   const row = existing
     ? (await c.query<AgentRow>(`update agents set status = 'applied', note = $2 where user_id = $1 returning *`, [userId, note])).rows[0]!
     : (await c.query<AgentRow>('insert into agents (user_id, code, note) values ($1, $2, $3) returning *', [userId, newCode(), note])).rows[0]!;
