@@ -235,7 +235,7 @@ export interface OwnerClaim { token: string; expires_at: string }
 export interface Application { id: string; kind: OrgKind; name: string; email: string; details: Record<string, unknown>; status: 'new' | 'approved' | 'rejected'; created_at: string; user_id: string | null }
 /** One typed answer of the decision model (docs/20). */
 export type DecisionAnswer =
-  | { type: 'noul'; noul: boolean; confidence?: number }
+  | { type: 'noul'; noul: number }  // probability of "yes", 0..1; at least 0.5 reads as yes
   | { type: 'choice'; choice: string; probabilities?: Record<string, number>; confidence?: number }
   | { type: 'score'; score: number; confidence?: number };
 /** A stored hint of the decision model beside an alert or a round in review: advice, never an action. */

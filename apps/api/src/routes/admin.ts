@@ -10,7 +10,7 @@ import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
-import { READING_CHECK } from '../lib/decisions.ts';
+import { READING_CHECK, noulVerdict } from '../lib/decisions.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
@@ -486,7 +486,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const out: { card: string; accept: boolean; confidence: number | null }[] = [];
     for (const c of cards) {
       const a = (await ctx.decider.decide({ card: c.card, match_confidence: c.confidence, runner_up_margin: c.margin ?? null }, READING_CHECK)).accept;
-      out.push({ card: c.card, accept: a?.type === 'noul' ? a.noul : false, confidence: a?.confidence ?? null });
+      const v = noulVerdict(a);
+      out.push({ card: c.card, accept: v?.yes ?? false, confidence: v?.confidence ?? null });
     }
     return { enabled: true as const, model: ctx.decider.model, cards: out };
   });

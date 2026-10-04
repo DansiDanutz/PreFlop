@@ -11,18 +11,28 @@ import type { Db, Tx } from './db.ts';
  * to "no hint" and nothing else changes.
  */
 
+/**
+ * The System One wire contract (api.typesafe.ai/openapi.json, as mirrored by the typesafe-sdk models):
+ * questions are keyed by a name of our choosing; a noul answer is a probability of "yes" from 0 to 1
+ * (not a boolean), a choice answer names the most likely criteria key with a confidence and the
+ * probability of every key, a score answer is the probability-weighted level with a legend.
+ */
 export type Question =
-  | { type: 'noul'; instructions: string }
+  | { type: 'noul'; instructions: string; criteria?: { true?: string; false?: string } }
   | { type: 'choice'; instructions: string; criteria: Record<string, string> }
-  | { type: 'score'; instructions: string; criteria?: Record<string, string> };
+  | { type: 'score'; instructions: string; criteria: string[] };
 
 export const Answer = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('noul'), noul: z.boolean(), confidence: z.number().min(0).max(1).optional() }),
+  z.object({ type: z.literal('noul'), noul: z.number().min(0).max(1) }),
   z.object({ type: z.literal('choice'), choice: z.string(), probabilities: z.record(z.string(), z.number()).optional(), confidence: z.number().min(0).max(1).optional() }),
   z.object({ type: z.literal('score'), score: z.number(), legend: z.unknown().optional(), probabilities: z.record(z.string(), z.number()).optional(), confidence: z.number().min(0).max(1).optional() }),
 ]);
 export type Answer = z.infer<typeof Answer>;
 export type Answers = Record<string, Answer>;
+
+/** A noul answer read as a verdict: yes when the probability is at least one half, with the confidence in that verdict. */
+export const noulVerdict = (a: Answer | undefined): { yes: boolean; confidence: number } | null =>
+  a?.type === 'noul' ? { yes: a.noul >= 0.5, confidence: Math.max(a.noul, 1 - a.noul) } : null;
 
 const Response = z.object({
   model: z.string().optional(),

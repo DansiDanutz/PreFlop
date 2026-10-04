@@ -8,7 +8,7 @@ PreFlop asks TypeSafe AI's **Jev** decision model (the System One API) small, ty
 
 | Question type | Answer |
 |---|---|
-| `noul` | yes / no (`noul: true|false`) |
+| `noul` | the probability that the answer is yes, `noul: 0..1` (at least 0.5 reads as yes; near 0.5 means unsure) |
 | `choice` | one of the given `criteria` keys, with a probability per key |
 | `score` | a number on a legend |
 

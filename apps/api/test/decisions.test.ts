@@ -24,7 +24,7 @@ function fakeFetch(script: (() => Response)[]) {
   return { f, calls };
 }
 const json = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const ANSWER = { model: 'jev-latest', answers: { triage: { type: 'choice', choice: 'watch', probabilities: { dismiss: 0.1, watch: 0.7, pause_table: 0.15, escalate: 0.05 }, confidence: 0.7 }, money_at_risk: { type: 'noul', noul: false, confidence: 0.9 } }, usage: { input_tokens: 120, output_tokens: 8 } };
+const ANSWER = { model: 'jev-latest', answers: { triage: { type: 'choice', choice: 'watch', probabilities: { dismiss: 0.1, watch: 0.7, pause_table: 0.15, escalate: 0.05 }, confidence: 0.7 }, money_at_risk: { type: 'noul', noul: 0.1 } }, usage: { input_tokens: 120, output_tokens: 8 } };
 
 describe('the Jev decider', () => {
   it('posts the model, state and questions with the bearer key and parses the typed answers', async () => {
@@ -32,7 +32,7 @@ describe('the Jev decider', () => {
     const d = jevDecider({ url: 'https://api.typesafe.ai/v1/systemone', key: 'k'.repeat(24), model: 'jev-latest', fetch: f });
     const answers = await d.decide({ alert: { kind: 'device_flagged' } }, ALERT_TRIAGE);
     expect(answers.triage).toMatchObject({ type: 'choice', choice: 'watch', confidence: 0.7 });
-    expect(answers.money_at_risk).toMatchObject({ type: 'noul', noul: false });
+    expect(answers.money_at_risk).toMatchObject({ type: 'noul', noul: 0.1 });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('https://api.typesafe.ai/v1/systemone');
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -71,7 +71,7 @@ describe('the Jev decider', () => {
     const p = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: partial.f });
     await expect(p.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 502, retryable: false, message: expect.stringContaining('money_at_risk') });
     expect(partial.calls).toHaveLength(1);
-    const mistyped = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: fakeFetch([json(200, { answers: { triage: { type: 'noul', noul: true }, money_at_risk: { type: 'noul', noul: false } } })]).f });
+    const mistyped = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: fakeFetch([json(200, { answers: { triage: { type: 'noul', noul: 0.9 }, money_at_risk: { type: 'noul', noul: 0.1 } } })]).f });
     await expect(mistyped.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 502, message: expect.stringContaining('triage') });
     const down = jevDecider({ url: 'https://x.test/s1', key: 'k'.repeat(24), model: 'jev-latest', fetch: (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch });
     await expect(down.decide({}, ALERT_TRIAGE)).rejects.toMatchObject({ status: 0, retryable: true });
@@ -104,8 +104,8 @@ describe('decision hints in the worker and the console API', () => {
   let h: Harness;
   let admin: string;
   const decider = fakeDecider((state) => {
-    if ('card' in state) return { accept: { type: 'noul', noul: state.match_confidence >= 0.6, confidence: 0.8 } };
-    if ('alert' in state) return { triage: { type: 'choice', choice: state.alert.severity === 'critical' ? 'escalate' : 'watch', confidence: 0.66 }, money_at_risk: { type: 'noul', noul: false } };
+    if ('card' in state) return { accept: { type: 'noul', noul: state.match_confidence >= 0.6 ? 0.8 : 0.2 } };
+    if ('alert' in state) return { triage: { type: 'choice', choice: state.alert.severity === 'critical' ? 'escalate' : 'watch', confidence: 0.66 }, money_at_risk: { type: 'noul', noul: 0.1 } };
     return { outcome: { type: 'choice', choice: 'void', confidence: 0.55 } };
   });
   beforeAll(async () => {
@@ -123,7 +123,7 @@ describe('decision hints in the worker and the console API', () => {
     expect(decider.seen.find((s) => s.alert?.kind === 'device_flagged')).toMatchObject({ alert: { severity: 'warning', details: { why: 'clock skew' }, table_id: 'sim-1' }, other_open_alerts_on_table: 1 });
     const { alerts } = (await h.api('GET', '/v1/admin/alerts', admin)).body;
     const flagged = alerts.find((a: any) => a.kind === 'device_flagged');
-    expect(flagged.hint).toMatchObject({ model: 'fake-jev', answers: { triage: { choice: 'watch' }, money_at_risk: { noul: false } } });
+    expect(flagged.hint).toMatchObject({ model: 'fake-jev', answers: { triage: { choice: 'watch' }, money_at_risk: { noul: 0.1 } } });
     expect(alerts.find((a: any) => a.kind === 'capture_conflict').hint.answers.triage.choice).toBe('escalate');
     // a resolved alert is never asked about
     await h.db.query(`insert into alerts (kind, severity, resolved_at) values ('old', 'info', now())`);
@@ -179,7 +179,7 @@ describe('decision hints in the worker and the console API', () => {
 
   it('a slow adviser never delays the game tick: hints run on their own loop', async () => {
     await h.db.query(`insert into alerts (kind, severity) values ('slow1', 'info'), ('slow2', 'info'), ('slow3', 'info')`);
-    const slow = fakeDecider(() => ({ triage: { type: 'choice', choice: 'watch' }, money_at_risk: { type: 'noul', noul: false } }));
+    const slow = fakeDecider(() => ({ triage: { type: 'choice', choice: 'watch' }, money_at_risk: { type: 'noul', noul: 0.1 } }));
     const slowDecider: Decider = { ...slow, decide: async (st, q) => { await new Promise((r) => setTimeout(r, 150)); return slow.decide(st, q); } };
     await h.db.query('delete from worker_heartbeats');
     const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, slowDecider);

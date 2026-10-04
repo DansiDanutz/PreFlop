@@ -4,7 +4,7 @@ import { ChoiceHint, ReadingVerdicts } from './decisions.tsx';
 
 /** Decision hints (docs/20) render as advice, and as nothing at all when there is none. */
 describe('decision hint components', () => {
-  const hint = { model: 'jev-latest', at: '2026-10-04T13:00:00Z', answers: { triage: { type: 'choice' as const, choice: 'pause_table', confidence: 0.82 }, money_at_risk: { type: 'noul' as const, noul: true } } };
+  const hint = { model: 'jev-latest', at: '2026-10-04T13:00:00Z', answers: { triage: { type: 'choice' as const, choice: 'pause_table', confidence: 0.82 }, money_at_risk: { type: 'noul' as const, noul: 0.9 } } };
 
   it('ChoiceHint shows the choice with its confidence, named as advice from the model', () => {
     const html = renderToStaticMarkup(<ChoiceHint hint={hint} question="triage" />);
