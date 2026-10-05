@@ -32,6 +32,11 @@ export async function issueOwnerClaim(c: Tx, orgId: string, email: string | null
  * with that address: a leaked or forwarded link is useless to anyone else.
  */
 export async function redeemOwnerClaim(c: Tx, token: string, userId: string): Promise<{ org_id: string; kind: string }> {
+  // Lock order as in issueOwnerClaim: the organization row first, then the claim. The organization
+  // lock also serialises this redemption with the "does it have an owner yet" check at issuance.
+  const target = (await c.query<{ org_id: string }>('select org_id from org_owner_claims where token_hash = $1', [hash(token)])).rows[0];
+  if (!target) throw notFound('claim link');
+  await c.query('select 1 from organizations where id = $1 for update', [target.org_id]);
   const row = (await c.query<{ org_id: string; kind: string; email: string | null; expires_at: Date; claimed_at: Date | null; revoked_at: Date | null }>(
     `select k.org_id, o.kind, k.email, k.expires_at, k.claimed_at, k.revoked_at from org_owner_claims k join organizations o on o.id = k.org_id
       where k.token_hash = $1 for update of k`, [hash(token)])).rows[0];

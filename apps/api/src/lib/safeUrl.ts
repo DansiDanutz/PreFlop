@@ -115,14 +115,19 @@ export const guardedLookup: LookupFunction = (hostname, options, callback) => {
  * socket: a destination that accepts the connection and then trickles bytes cannot hold the sender.
  */
 export async function postWebhook(raw: string, headers: Record<string, string>, body: string, timeoutMs = 5000): Promise<number> {
+  const started = Date.now();
   const u = await withDeadline(assertPublicUrl(raw), timeoutMs, 'URL check');
+  // The request gets what is left of the budget, not a fresh one: a slow URL check and a slow
+  // destination together still end within timeoutMs.
+  const remaining = timeoutMs - (Date.now() - started);
+  if (remaining <= 0) throw new Error('timeout');
   const send = u.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise<number>((resolve, reject) => {
-    const req = send(u, { method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(body) }, lookup: guardedLookup, timeout: timeoutMs }, (res) => {
+    const req = send(u, { method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(body) }, lookup: guardedLookup, timeout: remaining }, (res) => {
       res.resume();
       resolve(res.statusCode ?? 0);
     });
-    const deadline = setTimeout(() => req.destroy(new Error('timeout')), timeoutMs);
+    const deadline = setTimeout(() => req.destroy(new Error('timeout')), remaining);
     deadline.unref?.();
     req.on('close', () => clearTimeout(deadline));
     req.on('timeout', () => req.destroy(new Error('timeout')));

@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { assertEligibleInTx } from '../src/bets/service.ts';
 import { tx } from '../src/lib/db.ts';
 import { tableReadiness } from '../src/rounds/readiness.ts';
 import { seedAdmin } from '../src/seed.ts';
@@ -147,6 +148,9 @@ describe('security review pass', () => {
     expect((await h.api('POST', `/v1/admin/rounds/${round}/void`, ops.token, { reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
     expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', ops.token, { approved: false })).body.type).toBe('conflict_of_interest');
     expect((await h.api('POST', `/v1/admin/rounds/${round}/review`, ops.token, { action: 'void', reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('PUT', '/v1/admin/tables/sim-1/status', ops.token, { status: 'paused', reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('PUT', '/v1/admin/tables/sim-1/status', ops.token, { status: 'active' })).body.type).toBe('conflict_of_interest');
+    expect((await h.db.query(`select status from poker_tables where id = 'sim-1'`)).rows[0].status).toBe('active');
     expect((await h.api('POST', `/v1/admin/rounds/${round}/void`, admin, { reason: 'no conflict' })).body).toMatchObject({ state: 'VOID' });
     await h.db.query(`delete from memberships where user_id = $1 and org_id = 'club-sim'`, [ops.id]);
   });
@@ -233,6 +237,32 @@ describe('security review pass', () => {
     expect(a.status).toBe(201);
     expect(a.body.id).not.toBe(`cred_${createHash('sha256').update(pem).digest('hex').slice(0, 12)}`);
     expect((await h.api('POST', `/v1/org/${club}/staff`, owner.token, { table_id: t.id, person_id: 'bob', role: 'floor', public_key_pem: pem })).body.type).toBe('credential_exists');
+    // Concurrent enrolments of one key: exactly one succeeds (the club row serialises them).
+    const pem2 = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const race = await Promise.all(['p1', 'p2', 'p3', 'p4'].map((person) =>
+      h.api('POST', `/v1/org/${club}/staff`, owner.token, { table_id: t.id, person_id: person, role: 'dealer', public_key_pem: pem2 })));
+    expect(race.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
+    expect((await h.db.query('select count(*)::int as n from staff_credentials where public_key_pem = $1', [pem2])).rows[0].n).toBe(1);
+  });
+
+  it('a club suspension that lands between the readiness pre-check and the bet transaction refuses the bet', async () => {
+    const p = await user('race-bettor');
+    await h.sim.heartbeat();
+    await h.work();
+    const n = await h.sim.openHand();
+    const round = `sim-1:h${n}`;
+    // The share lock on the club row inside the bet transaction is what makes the pre-check safe:
+    // suspending (an exclusive update) and betting cannot interleave. Exercise both orders.
+    await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'suspended' });
+    try {
+      const r = await h.api('POST', '/v1/bets', p.token, { round_id: round, selection_id: 'colour:mixed', stake_minor: 10, odds_centi: 100, accept_price_change: true }, idemKey());
+      expect([r.status, r.body.type]).toEqual([409, 'table_not_ready']);
+      const inTx = await tx(h.db, (c) => assertEligibleInTx(c, p.id, 'sim-1').then(() => 'ok', (e) => (e as { type: string }).type));
+      expect(inTx).toBe('table_not_ready');
+    } finally {
+      await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'active' });
+    }
+    expect(await tx(h.db, (c) => assertEligibleInTx(c, p.id, 'sim-1').then(() => 'ok'))).toBe('ok');
   });
 
   it('public and member input is bounded: application size and nesting, organization settings, partner bet fields', async () => {

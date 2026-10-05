@@ -290,6 +290,9 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     // enrol it first elsewhere and block the real enrolment.
     const id = newId('cred');
     const row = await tx(ctx.db, async (c) => {
+      // Enrolments of one club run one at a time (its organization row), so two concurrent
+      // enrolments of the same key cannot both pass the check below.
+      await c.query('select 1 from organizations where id = $1 for update', [org.id]);
       const dup = (await c.query(
         'select 1 from staff_credentials s join poker_tables t on t.id = s.table_id where t.club_id = $1 and s.public_key_pem = $2 and not s.revoked', [org.id, b.public_key_pem])).rowCount;
       if (dup) throw conflict('credential_exists', 'this key is already enrolled at one of your tables');

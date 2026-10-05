@@ -162,9 +162,13 @@ export async function assertEligibleInTx(c: Tx, userId: string, tableId: string,
     const o = (await c.query<{ status: string }>('select status from organizations where id = $1 for share', [u.partner_id])).rows[0];
     if (o?.status !== 'active') throw partnerSuspended();
   }
-  const t = (await c.query<{ status: string; real_money_approved_at: Date | null }>('select status, real_money_approved_at from poker_tables where id = $1 for share', [tableId])).rows[0];
+  const t = (await c.query<{ status: string; real_money_approved_at: Date | null; club_id: string }>('select status, real_money_approved_at, club_id from poker_tables where id = $1 for share', [tableId])).rows[0];
   if (!t || t.status !== 'active') throw conflict('table_not_ready', `table is ${t?.status ?? 'missing'}`);
   if (opts.realMoney && !t.real_money_approved_at) throw tableNotApproved();
+  // The club too, under a share lock: a suspension (an exclusive update of that row) commits strictly
+  // before or after this bet, never between the readiness pre-check and the commit.
+  const club = (await c.query<{ status: string }>('select status from organizations where id = $1 for share', [t.club_id])).rows[0];
+  if (club && club.status !== 'active') throw conflict('table_not_ready', `club is ${club.status}`);
 }
 
 /** The smallest stake; the largest depends on the currency (lib/limits.ts). */

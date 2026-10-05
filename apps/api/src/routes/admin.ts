@@ -369,7 +369,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const { id } = req.params as { id: string };
     const b = z.object({ email: z.string().email().optional() }).parse(req.body ?? {});
     return reply.code(201).send(await tx(ctx.db, async (c) => {
-      if (!(await c.query('select 1 from organizations where id = $1', [id])).rowCount) throw notFound('organization');
+      // The organization row lock serialises this check with issuance and with a redemption that
+      // creates the first owner (redeemOwnerClaim takes the same lock), so the check cannot go stale.
+      if (!(await c.query('select 1 from organizations where id = $1 for update', [id])).rowCount) throw notFound('organization');
       // Once an organization has an owner, a further owner link hands over its treasury and API
       // clients to whoever redeems it: an admin decision, not an ops one.
       const owners = (await c.query(`select 1 from memberships where org_id = $1 and role = 'owner'`, [id])).rowCount;
@@ -459,6 +461,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ status: z.enum(['active', 'paused']), reason: z.string().max(200).optional() }).parse(req.body);
     const ev = new EventBatch();
     await tx(ctx.db, async (c) => {
+      // Pausing voids the open round and refunds its bets: the same conflict-of-interest rule as a void.
+      await assertNoClubInterest(c, u.id, id);
       if (b.status === 'paused') {
         // Lock order: open round first, then the table; accepted bets on the open flop are refunded.
         const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0];
@@ -467,6 +471,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       // The PreFlop team lifts any hold (monitor, evidence, platform, floor); the audit keeps which one.
       const prev = (await c.query<{ pause_kind: string | null }>('select pause_kind from poker_tables where id = $1 for update', [id])).rows[0];
       if (!prev) throw notFound('table');
+      await assertNoClubInterest(c, u.id, id);
       const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, pause_kind = case when $2 = 'paused' then 'platform' end,
                                monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
       if (!r.rowCount) throw notFound('table');
