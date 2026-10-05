@@ -164,8 +164,17 @@ export async function saveHint(c: Tx | Db, kind: string, ref: string, model: str
  * team asks for new wording. A row that already has an outcome keeps it (first decision wins).
  */
 export async function recordOutcome(c: Tx | Db, kind: string, ref: string, outcome: string, by: string): Promise<void> {
-  await c.query(`update decision_hints set outcome = $3, outcome_by = $4, outcome_at = now() where kind = $1 and ref = $2 and outcome is null`, [kind, ref, outcome, by]);
+  // The team may decide while the worker is still asking about the case: the outcome is kept on a
+  // row of its own (no model, no answers, attempts 0) and the hint fills it in when it arrives.
+  // The record counts only rows the adviser actually answered (model is not null).
+  await c.query(
+    `insert into decision_hints (kind, ref, model, answers, attempts, outcome, outcome_by, outcome_at) values ($1, $2, null, '{}'::jsonb, 0, $3, $4, now())
+       on conflict (kind, ref) do update set outcome = coalesce(decision_hints.outcome, excluded.outcome),
+         outcome_by = coalesce(decision_hints.outcome_by, excluded.outcome_by), outcome_at = coalesce(decision_hints.outcome_at, excluded.outcome_at)`,
+    [kind, ref, outcome, by]);
 }
+/** Round states in which a review hint exists, so a void or settlement from them is a decision on that hint. */
+export const REVIEW_STATES: ReadonlySet<string> = new Set(['REVIEW', 'EVIDENCE_REJECTED']);
 /** The pick-one question whose answer is compared with the team's outcome, per hint kind. */
 export const HINT_QUESTION: Record<string, string> = { alert: 'triage', review: 'outcome', application: 'decision', promotion: 'decision', agent: 'decision' };
 /** SQL: the suggested choice of a decision_hints row `h`, and whether it agrees with `h.outcome`. */

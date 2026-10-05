@@ -77,8 +77,9 @@ export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: st
             approved_by = case when $2 = 'active' and status <> 'active' then $7 else approved_by end
       where user_id = $1 returning *`,
     [agentId, u.status ?? null, u.rate_l1_bps ?? null, u.rate_l2_bps ?? null, u.parent_agent_id ?? null, u.parent_agent_id !== undefined, by])).rows[0]!;
-  // The decision on an application: approve (activate) or reject. Suspending an active agent is not one.
-  if (a.status === 'applied' && (u.status === 'active' || u.status === 'rejected')) await recordOutcome(c, 'agent', agentId, u.status === 'active' ? 'approve' : 'reject', by);
+  // Leaving 'applied' is the decision on the application: activation approves it, anything else
+  // (rejected, or suspended straight from applied) declines it. Later status changes are not decisions.
+  if (a.status === 'applied' && u.status !== undefined) await recordOutcome(c, 'agent', agentId, u.status === 'active' ? 'approve' : 'reject', by);
   await audit(c, { type: 'agent.updated', agentId, by, ...u });
   return row;
 }

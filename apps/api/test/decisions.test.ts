@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider, PROSE_CHARS, recordOutcome, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider, PROSE_CHARS, recordOutcome, saveHint, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -258,6 +258,26 @@ describe('decision hints in the worker and the console API', () => {
     // A second decision on the same case never overwrites the first.
     await recordOutcome(h.db, 'agent', applicant, 'reject', 'someone');
     expect((await h.db.query(`select outcome from decision_hints where kind = 'agent' and ref = $1`, [applicant])).rows[0]!.outcome).toBe('approve');
+    // The team may decide while the adviser is still being asked: the outcome waits on its own row,
+    // is not counted as a hint, and the answer fills the row in when it arrives.
+    await recordOutcome(h.db, 'application', 'app_early', 'approve', admin);
+    let early = (await h.api('GET', '/v1/admin/decisions', admin)).body.kinds.find((k: any) => k.kind === 'application');
+    expect(early).toMatchObject({ hints: byKind.application.hints, decided: byKind.application.decided });
+    await saveHint(h.db, 'application', 'app_early', 'fake-jev', { decision: { type: 'choice', choice: 'approve' }, complete: { type: 'noul', noul: 0.9 } });
+    early = (await h.api('GET', '/v1/admin/decisions', admin)).body.kinds.find((k: any) => k.kind === 'application');
+    expect(early).toMatchObject({ hints: byKind.application.hints + 1, decided: byKind.application.decided + 1, agreed: byKind.application.agreed + 1 });
+    // A question the adviser could not answer is never "decided": it is counted as failed, not as a disagreement.
+    await saveHint(h.db, 'application', 'app_failed', 'fake-jev', null, 'state too long');
+    await recordOutcome(h.db, 'application', 'app_failed', 'reject', admin);
+    const after = (await h.api('GET', '/v1/admin/decisions', admin)).body;
+    expect(after.kinds.find((k: any) => k.kind === 'application')).toMatchObject({ decided: early.decided, failed: 1 });
+    expect(after.disagreements.some((d: any) => d.ref === 'app_failed')).toBe(false);
+    // Suspending an applicant straight from 'applied' declines the application.
+    const other = await h.register('Second applicant');
+    await h.db.query(`insert into agents (user_id, code, note) values ($1, 'PFHINT02', 'note')`, [other.id]);
+    await saveHint(h.db, 'agent', other.id, 'fake-jev', { decision: { type: 'choice', choice: 'approve' } });
+    expect((await h.api('PUT', `/v1/admin/agents/${other.id}`, admin, { status: 'suspended' })).status).toBe(200);
+    expect((await h.db.query(`select outcome from decision_hints where kind = 'agent' and ref = $1`, [other.id])).rows[0]!.outcome).toBe('reject');
   });
 
   it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {

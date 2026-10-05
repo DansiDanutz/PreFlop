@@ -10,7 +10,7 @@ import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { EventBatch, publish } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
-import { HINT_AGREES_SQL, HINT_CHOICE_SQL, READING_CHECK, READING_SURE, noulVerdict, recordOutcome } from '../lib/decisions.ts';
+import { HINT_AGREES_SQL, HINT_CHOICE_SQL, READING_CHECK, READING_SURE, REVIEW_STATES, noulVerdict, recordOutcome } from '../lib/decisions.ts';
 import { issueOwnerClaim } from '../lib/ownerClaims.ts';
 import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
@@ -169,8 +169,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/admin/alerts/:id/resolve', async (req) => {
     const u = await requirePlatform(ctx, req);
     const { id } = req.params as { id: string };
-    const r = await ctx.db.query('update alerts set resolved_at = now(), resolved_by = $2 where id = $1 and resolved_at is null', [id, u.id]);
-    if (r.rowCount) await recordOutcome(ctx.db, 'alert', id, 'dismiss', u.id);
+    await tx(ctx.db, async (c) => {
+      const r = await c.query('update alerts set resolved_at = now(), resolved_by = $2 where id = $1 and resolved_at is null', [id, u.id]);
+      if (r.rowCount) await recordOutcome(c, 'alert', id, 'dismiss', u.id);
+    });
     return { ok: true };
   });
 
@@ -178,14 +180,16 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/admin/decisions', async (req) => {
     await requirePlatform(ctx, req);
     const kinds = (await ctx.db.query(
-      `select h.kind, count(*)::int as hints, count(h.outcome)::int as decided, count(*) filter (where h.outcome is not null and ${HINT_AGREES_SQL})::int as agreed,
+      `select h.kind, count(*) filter (where h.model is not null)::int as hints,
+              count(*) filter (where h.outcome is not null and h.model is not null and h.error is null)::int as decided,
+              count(*) filter (where h.outcome is not null and h.error is null and ${HINT_AGREES_SQL})::int as agreed,
               count(*) filter (where h.error is not null)::int as failed
          from decision_hints h where h.kind <> 'reading' group by h.kind order by h.kind`)).rows;
     const disagreements = (await ctx.db.query(
       `select h.kind, h.ref, h.model, ${HINT_CHOICE_SQL} as suggested,
               (h.answers -> (case h.kind when 'alert' then 'triage' when 'review' then 'outcome' else 'decision' end) ->> 'confidence')::float as confidence,
               h.outcome, h.outcome_at
-         from decision_hints h where h.outcome is not null and h.error is null and not ${HINT_AGREES_SQL}
+         from decision_hints h where h.outcome is not null and h.model is not null and h.error is null and not ${HINT_AGREES_SQL}
         order by h.outcome_at desc limit 50`)).rows;
     return { kinds, disagreements };
   });
@@ -239,7 +243,10 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const ok = await tx(ctx.db, async (c) => {
       const r = await lockRound(c, id);
       const done = await voidRound(c, r, `PreFlop team: ${reason}`, `user:${u.id}`, ev);
-      if (done) { await recordOutcome(c, 'review', id, 'void', u.id); await ensureOpenRound(c, r.table_id, ev); }
+      if (done) {
+        if (REVIEW_STATES.has(r.state)) await recordOutcome(c, 'review', id, 'void', u.id);
+        await ensureOpenRound(c, r.table_id, ev);
+      }
       return done;
     });
     publish(ev);
