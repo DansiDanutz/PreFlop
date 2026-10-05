@@ -207,7 +207,11 @@ export const SCRUB_MAX_KEYS = 200;
  */
 const FREE_TEXT_KEY = /message|notes?|comments?|description|about|\btext|bio|story|pitch|\bwhy|summary|remarks?|background/i;
 export const PROSE_CHARS = 60;
-const prose = (v: unknown): unknown => (typeof v === 'string' ? { chars: v.length } : Array.isArray(v) ? v.map(prose) : v);
+const prose = (v: unknown, withheld: string[] | undefined, path: string): unknown =>
+  typeof v === 'string' ? { chars: v.length }
+    : Array.isArray(v) ? v.map((x, i) => prose(x, withheld, `${path}[${i}]`))
+      : v !== null && typeof v === 'object' ? scrubContact(v, withheld, path)
+        : v;
 const scrubText = (text: string): string =>
   text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
 export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
@@ -234,7 +238,7 @@ export function scrubContact(value: unknown, withheld?: string[], path = ''): un
       used.add(key);
       const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
-      else if (FREE_TEXT_KEY.test(k) || (typeof v === 'string' && v.length > PROSE_CHARS)) out[key] = typeof v === 'object' && v !== null && !Array.isArray(v) ? scrubContact(v, withheld, here) : prose(v);
+      else if (FREE_TEXT_KEY.test(k) || (typeof v === 'string' && v.length > PROSE_CHARS)) out[key] = prose(v, withheld, here);
       else out[key] = scrubContact(v, withheld, here);
     }
     if (entries.length > SCRUB_MAX_KEYS) withheld?.push(`${path ? `${path}.` : ''}… (${entries.length - SCRUB_MAX_KEYS} more fields not shown)`);

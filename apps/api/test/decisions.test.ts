@@ -116,6 +116,9 @@ describe('scrubContact', () => {
     // Prose never travels: a free-text key, or any string longer than PROSE_CHARS, becomes its length.
     expect(scrubDetails({ message: 'Please contact Alice Smith', city: 'Alice Smith lives here and this sentence is long enough to count as prose', website: 'https://x.test' }).details)
       .toEqual({ message: { chars: 26 }, city: { chars: 73 }, website: 'https://x.test' });
+    // Objects under a free-text key are scrubbed like any other object, never passed through.
+    expect(scrubDetails({ notes: [{ text: 'Call Alice', email: 'a@x.test', phone_hint: 'ring +356 2122 0000 twice', tables: 3 }, 'plain'] }))
+      .toEqual({ details: { notes: [{ text: { chars: 10 }, phone_hint: 'ring [phone] twice', tables: 3 }, { chars: 5 }] }, withheld: ['notes[0].email'] });
     // A flood of colliding keys is linear work and is cut at SCRUB_MAX_KEYS fields; the rest is counted, never sent.
     const flood = Object.fromEntries(Array.from({ length: 8000 }, (_, i) => [`${'k'.repeat(64)}${i}`, i]));
     const t0 = performance.now();
