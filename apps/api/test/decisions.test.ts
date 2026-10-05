@@ -232,6 +232,8 @@ describe('decision hints in the worker and the console API', () => {
     const reapplied = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
     expect(reapplied.status).toBe('applied');
     expect(reapplied.hint ?? null).toBeNull();
+    // The earlier case stays in the record under a dated reference; the new application has none yet.
+    expect((await h.db.query(`select ref from decision_hints where kind = 'agent' and ref like $1 || '@%'`, [applicant.id])).rowCount).toBe(1);
     expect(await decisionsOnce(h.db, decider)).toBe(1);
     expect((await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id).hint).toMatchObject({ answers: { decision: { choice: 'hold' } } });
   });
