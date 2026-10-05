@@ -80,7 +80,7 @@ Staging runs the real product against **simulated tables**:
 3. a fresh player registers (`smoke-<time>@preflop-smoke.test`) and holds the play starting balance;
 4. the WebSocket stream authenticates the player and delivers events for that table;
 5. a play bet is accepted on the open round, settles within the budget (3 minutes per wait), and the wallet moves by exactly stake and payout;
-6. the website, console and club tablet serve the app, and in the deploy workflow the build of the commit just deployed: every site carries `<meta name="build-commit">` (`deploy/build-commit.mjs`, from Vercel's `VERCEL_GIT_COMMIT_SHA`), and the test waits until it matches `EXPECTED_COMMIT`, since Vercel builds the sites separately from the Fly deploy.
+6. the website, console and club tablet serve the app, and in the deploy workflow the build of the commit just deployed: every site carries `<meta name="build-commit">` (`deploy/build-commit.mjs`, from Vercel's `VERCEL_GIT_COMMIT_SHA`), and the test waits until it matches `EXPECTED_COMMIT`, since Vercel builds the sites separately from the Fly deploy. The match is skipped (the sites are only checked for being up) for a manual deploy of another ref, and for a deploy that a newer push to main overtook while it ran, since that push's own run checks the sites.
 
 Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
 

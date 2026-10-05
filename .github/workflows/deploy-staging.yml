@@ -75,11 +75,27 @@ jobs:
         if: steps.token.outputs.ok == 'true'
         with:
           node-version: 22
+      # The sites must serve the build of this commit: Vercel builds them from every push to main.
+      # Two cases skip that exact match and check only that the sites are up: a manual run of
+      # another ref (the sites were never built from it), and a deploy that a newer push to main
+      # has overtaken while it ran (deploys queue, cancel-in-progress is off; Vercel already serves
+      # the newer build, and that push's own deploy run verifies it).
+      - name: Which commit the sites must serve
+        if: steps.token.outputs.ok == 'true'
+        id: expected
+        env:
+          DEPLOYED: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || (github.ref == 'refs/heads/main' && github.sha) || '' }}
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ -z "$DEPLOYED" ]; then
+            echo "not a deploy of main: the sites are checked for being up only"
+          elif [ "$head" != "$DEPLOYED" ]; then
+            echo "::notice::main moved on to $head while this run deployed $DEPLOYED; its own deploy run checks the sites, this one checks they are up"
+          else
+            echo "commit=$DEPLOYED" >> "$GITHUB_OUTPUT"
+          fi
       - name: End-to-end smoke test
         if: steps.token.outputs.ok == 'true'
         env:
-          # The sites must serve the build of this commit: Vercel builds them from every push to
-          # main. A manual run of another ref deploys only the Fly services, so the sites are then
-          # checked for being up, not for a commit they were never built from.
-          EXPECTED_COMMIT: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || (github.ref == 'refs/heads/main' && github.sha) || '' }}
+          EXPECTED_COMMIT: ${{ steps.expected.outputs.commit }}
         run: node scripts/staging-smoke.mjs
