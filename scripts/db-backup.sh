@@ -83,14 +83,19 @@ cmd_verify() {
 # its output. The drill opens a REPEATABLE READ transaction in it, exports its snapshot for pg_dump
 # and reads the expectations in the same transaction, so a write that lands between the dump and the
 # comparison cannot make a good restore look bad.
+# psql's errors go to $SRC_ERR, never into a result: a failed statement (psql stops on the first error,
+# so the session ends) makes the drill fail with that error, instead of handing the error text on as data.
 src_sql() {
+  if [ -z "${SRC_PID:-}" ] || ! kill -0 "$SRC_PID" 2>/dev/null; then die "source session is gone: $(cat "$SRC_ERR" 2>/dev/null)"; fi
   # Every statement is terminated here: psql would otherwise buffer one without a semicolon into the next.
   printf '%s;\n\\echo __PREFLOP_DONE__\n' "${1%;}" >&"${SRC[1]}"
-  local line out=""
+  local line out="" done=0
   while IFS= read -r line <&"${SRC[0]}"; do
-    [ "$line" = __PREFLOP_DONE__ ] && break
+    if [ "$line" = __PREFLOP_DONE__ ]; then done=1; break; fi
     out+="$line"$'\n'
   done
+  if [ -s "$SRC_ERR" ]; then die "source query failed: $(cat "$SRC_ERR")"; fi
+  [ "$done" = 1 ] || die "source session ended before answering"
   printf '%s' "${out%$'\n'}"
 }
 
@@ -106,10 +111,13 @@ cmd_drill() {
   local mark; mark=$(psql "$admin" -At -c "select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = '$name'")
   if [ -n "$mark" ] && [ "$mark" != "$DRILL_MARK" ]; then die "scratch database $name exists and was not created by this drill (comment: '$mark'); refusing to drop it"; fi
   if [ -z "$mark" ] && [ "$(psql "$admin" -At -c "select count(*) from pg_database where datname = '$name'")" != 0 ]; then die "scratch database $name exists without the drill marker; refusing to drop it"; fi
-  local tmp=""; if [ -z "$file" ]; then tmp=$(mktemp -t preflop-drill-XXXXXX.dump); file=$tmp; trap 'rm -f "$tmp"' EXIT; fi
+  DRILL_TMP=""; if [ -z "$file" ]; then DRILL_TMP=$(mktemp -t preflop-drill-XXXXXX.dump); file=$DRILL_TMP; fi
   local t0; t0=$(date +%s)
 
-  coproc SRC { psql "$src" -At -F $'\t' -q -v ON_ERROR_STOP=1 2>&1; }
+  SRC_ERR=$(mktemp -t preflop-drill-err-XXXXXX)
+  # Globals on purpose: the trap runs after this function's locals are gone.
+  trap 'rm -f "$SRC_ERR" ${DRILL_TMP:+"$DRILL_TMP"}' EXIT
+  coproc SRC { psql "$src" -At -F $'\t' -q -v ON_ERROR_STOP=1 2>"$SRC_ERR"; }
   src_sql "begin isolation level repeatable read read only;" >/dev/null
   local snapshot; snapshot=$(src_sql "select pg_export_snapshot();")
   [ -n "$snapshot" ] || die "could not export a snapshot from the source"
@@ -122,6 +130,7 @@ cmd_drill() {
   local wfd=${SRC[1]}
   exec {wfd}>&-
   wait "$SRC_PID" 2>/dev/null || true
+  [ -s "$SRC_ERR" ] && die "source session reported: $(cat "$SRC_ERR")"
 
   say "recreating scratch database $name"
   psql "$admin" -q -c "drop database if exists \"$name\" with (force)" -c "create database \"$name\"" -c "comment on database \"$name\" is '$DRILL_MARK'"
@@ -129,7 +138,6 @@ cmd_drill() {
   say "verifying $name against the source as of the dump's snapshot"
   verify_against "$scratch" "$migrations" "$counts"
   say "drill: restored and verified in $(( $(date +%s) - t0 ))s"
-  [ -n "$tmp" ] && rm -f "$tmp"
   return 0
 }
 
