@@ -16,6 +16,7 @@ export const NAV: Record<PortalKind, NavGroup[]> = {
       { to: 'rounds', label: 'Rounds explorer', icon: History },
       { to: 'risk', label: 'Risk', icon: ShieldAlert },
       { to: 'alerts', label: 'Alerts', icon: AlertTriangle },
+      { to: 'adviser', label: 'Adviser', icon: Activity },
     ] },
     { label: 'People & orgs', items: [
       { to: 'users', label: 'Users', icon: Users },

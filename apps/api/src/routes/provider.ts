@@ -1,3 +1,4 @@
+import { REVIEW_STATES, recordOutcome } from '../lib/decisions.ts';
 import { type LinkSample, MAX_TIMESTAMP_MS, captureShapeProblems } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -194,6 +195,8 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
       throw new ApiError(403, 'platform_review_required', 'after the deal, a real-money round is voided by the PreFlop team');
     }
     const ok = await voidRound(c, r, reason, s.id, ev, from);
+    // A void from REVIEW is the floor manager's decision on that review (docs/20 §Measuring the adviser).
+    if (ok && REVIEW_STATES.has(r.state)) await recordOutcome(c, 'review', r.id, 'void', `staff:${s.id}`);
     if (ok) await ensureOpenRound(c, r.table_id, ev);
     return ok ? { status: 200, body: { state: 'VOID' } } : { status: 409, body: { type: 'invalid_round_state', title: 'the round is already settled or voided', status: 409 } };
   }));
@@ -220,6 +223,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
       assertTableScope(p, r.table_id);
       return idempotent(c, p.id, key, req.method, req.url, req.rawBody ?? '', async () => {
         const out = await resolveReview(c, r, s, req.body as Parameters<typeof resolveReview>[3], ctx.timing, ev);
+        if (out.status === 200) await recordOutcome(c, 'review', r.id, (req.body as { action: string }).action, `staff:${s.id}`);
         await ensureOpenRound(c, r.table_id, ev);
         return out;
       });

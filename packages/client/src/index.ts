@@ -240,6 +240,11 @@ export type DecisionAnswer =
   | { type: 'score'; score: number; confidence?: number };
 /** A stored hint of the decision model beside an alert or a round in review: advice, never an action. */
 export interface DecisionHint { model: string | null; answers: Record<string, DecisionAnswer>; at: string }
+/** The adviser's record (docs/20): per kind, hints stored, decided by the team, and how many agreed; and the latest disagreements. */
+export interface AdviserRecord {
+  kinds: { kind: string; hints: number; decided: number; agreed: number; failed: number }[];
+  disagreements: { kind: string; ref: string; model: string | null; suggested: string | null; confidence: number | null; outcome: string; outcome_at: string }[];
+}
 export interface Alert { id: number; table_id: string | null; round_id: string | null; kind: string; severity: 'info' | 'warning' | 'critical'; details: Record<string, unknown>; created_at: string; resolved_at: string | null; hint?: DecisionHint | null }
 /** The decision model's verdict on cards the browser read (docs/19): pre-fill or let the operator type. `confidence` is the model's probability (0..1) that pre-filling the card is safe; `accept` is true from 0.7 up. */
 export interface ReadingCheck { enabled: boolean; model: string | null; cards: { card: string; accept: boolean; confidence: number | null }[] }
@@ -513,6 +518,7 @@ export function createClient(o: ClientOptions) {
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),
     adminAlerts: () => get<{ alerts: Alert[] }>('/v1/admin/alerts'),
+    adminDecisions: () => get<AdviserRecord>('/v1/admin/decisions'),
     adminResolveAlert: (id: number) => post<{ ok: true }>(`/v1/admin/alerts/${id}/resolve`),
     adminReviewQueue: () => get<{ rounds: (Round & { review_reasons: string[] | null; table_name: string; hint?: DecisionHint | null })[] }>('/v1/admin/review-queue'),
     adminEvidence: (roundId: string) => get<Evidence>(`/v1/admin/rounds/${encodeURIComponent(roundId)}/evidence`),

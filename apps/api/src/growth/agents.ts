@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type PlayMode } from '@preflop/odds-engine';
 import { audit } from '../lib/audit.ts';
+import { recordOutcome } from '../lib/decisions.ts';
 import type { Tx } from '../lib/db.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { newId } from '../lib/ids.ts';
@@ -31,8 +32,14 @@ export function newCode(): string {
 export async function apply(c: Tx, userId: string, note: string | null): Promise<AgentRow> {
   const existing = (await c.query<AgentRow>('select * from agents where user_id = $1', [userId])).rows[0];
   if (existing && existing.status !== 'rejected') throw conflict('already_applied', `your agent account is ${existing.status}`);
-  // A re-application is a new case: the hint stored for the rejected one must not be shown for it.
-  if (existing) await c.query(`delete from decision_hints where kind = 'agent' and ref = $1`, [userId]);
+  // A re-application is a new case: the hint stored for the rejected one must not be shown for it,
+  // but that case stays in the adviser's record (docs/20 §Measuring the adviser), so the row is
+  // archived under a dated reference rather than deleted. A row that never got an answer or a
+  // decision has nothing to keep.
+  if (existing) {
+    await c.query(`delete from decision_hints where kind = 'agent' and ref = $1 and model is null and outcome is null`, [userId]);
+    await c.query(`update decision_hints set ref = $1 || '@' || to_char(now(), 'YYYYMMDD"T"HH24MISSMS') where kind = 'agent' and ref = $1`, [userId]);
+  }
   const row = existing
     ? (await c.query<AgentRow>(`update agents set status = 'applied', note = $2 where user_id = $1 returning *`, [userId, note])).rows[0]!
     : (await c.query<AgentRow>('insert into agents (user_id, code, note) values ($1, $2, $3) returning *', [userId, newCode(), note])).rows[0]!;
@@ -76,6 +83,9 @@ export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: st
             approved_by = case when $2 = 'active' and status <> 'active' then $7 else approved_by end
       where user_id = $1 returning *`,
     [agentId, u.status ?? null, u.rate_l1_bps ?? null, u.rate_l2_bps ?? null, u.parent_agent_id ?? null, u.parent_agent_id !== undefined, by])).rows[0]!;
+  // Leaving 'applied' is the decision on the application: activation approves it, anything else
+  // (rejected, or suspended straight from applied) declines it. Later status changes are not decisions.
+  if (a.status === 'applied' && u.status !== undefined) await recordOutcome(c, 'agent', agentId, u.status === 'active' ? 'approve' : 'reject', by);
   await audit(c, { type: 'agent.updated', agentId, by, ...u });
   return row;
 }

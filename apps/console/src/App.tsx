@@ -22,7 +22,7 @@ const tournaments = () => import('./portals/growth/Tournaments.tsx');
 const DesignPage = lazyNamed(() => import('./pages/Design.tsx'), 'DesignPage');
 const A = {
   Overview: lazyNamed(admin, 'Overview'), Tables: lazyNamed(admin, 'Tables'), ReviewQueue: lazyNamed(admin, 'ReviewQueue'), ReviewDetail: lazyNamed(admin, 'ReviewDetail'),
-  Rounds: lazyNamed(admin, 'Rounds'), Risk: lazyNamed(admin, 'Risk'), Alerts: lazyNamed(admin, 'Alerts'), Users: lazyNamed(admin, 'Users'), Orgs: lazyNamed(admin, 'Orgs'),
+  Rounds: lazyNamed(admin, 'Rounds'), Risk: lazyNamed(admin, 'Risk'), Alerts: lazyNamed(admin, 'Alerts'), Adviser: lazyNamed(admin, 'Adviser'), Users: lazyNamed(admin, 'Users'), Orgs: lazyNamed(admin, 'Orgs'),
   Ledger: lazyNamed(admin, 'Ledger'), Audit: lazyNamed(admin, 'Audit'), Statements: lazyNamed(admin, 'Statements'), Book: lazyNamed(admin, 'Book'),
   Payments: lazyNamed(admin, 'Payments'), Settings: lazyNamed(admin, 'Settings'), News: lazyNamed(admin, 'News'), ManualTables: lazyNamed(admin, 'ManualTables'), CardReader: lazyNamed(admin, 'CardReader'),
 };
@@ -79,6 +79,7 @@ export function App() {
         <Route path="rounds" element={<A.Rounds />} />
         <Route path="risk" element={<A.Risk />} />
         <Route path="alerts" element={<A.Alerts />} />
+        <Route path="adviser" element={<A.Adviser />} />
         <Route path="users" element={<A.Users />} />
         <Route path="orgs" element={<A.Orgs />} />
         <Route path="ledger" element={<A.Ledger />} />
