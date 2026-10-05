@@ -9,7 +9,8 @@ primary_region = "fra"
 [env]
   NODE_ENV = "production"
   PORT = "4000"
-  TRUST_PROXY = "true"
+  # One proxy hop (Fly's edge): the client address is the last one it appended, never one the client sent.
+  TRUST_PROXY = "1"
   RUN_WORKER = "true"
   LOG = "1"
   # The three staging sites, each Vercel preview deployment's unique URL (<project>-<hash>-<team>.vercel.app),

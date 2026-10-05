@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import { type PlayMode } from '@preflop/odds-engine';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, LogController } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, LogController, type FastifyServerOptions } from 'fastify';
 import { ZodError } from 'zod';
 import { type SessionUser, bearer, userFromToken } from './auth/players.ts';
 import { type Config, corsOrigin } from './config.ts';
@@ -92,10 +92,21 @@ function securityHeaders(reply: FastifyReply) {
   if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
 }
 
+/**
+ * TRUST_PROXY as Fastify takes it. A hop count becomes a function (Fastify itself refuses plain
+ * numbers): the first `hops` addresses behind the socket are proxies, the next one is the client.
+ * Right only when the API is reachable through those proxies alone (Fly machines without a public
+ * IP); otherwise list the proxies' CIDRs instead.
+ */
+export function trustProxyOption(v: Config['trustProxy']): NonNullable<FastifyServerOptions['trustProxy']> {
+  if (typeof v === 'number') return (_address: string, hop: number) => hop < v;
+  return v;
+}
+
 export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: opts.logStream ? { stream: opts.logStream, serializers: logSerializers } : config.log ? { serializers: logSerializers } : false,
-    trustProxy: config.trustProxy,
+    trustProxy: trustProxyOption(config.trustProxy),
     bodyLimit: 12 * 1024 * 1024,
     // Every request carries an id: the caller's X-Request-Id when it is sane, otherwise a new
     // UUID. It is in every log line (request_id) and echoed back in the X-Request-Id header.

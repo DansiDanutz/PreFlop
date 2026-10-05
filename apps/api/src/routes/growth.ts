@@ -1,6 +1,7 @@
 import { MODES, type PlayMode } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import type { AppContext } from '../app.ts';
 import type { SessionUser } from '../auth/players.ts';
 import {
@@ -34,7 +35,7 @@ const BoardBody = z.object({
   ends_at: z.coerce.date(),
   margin_bps: z.number().int().min(0).max(5000).default(0),
   contribution_bps: z.number().int().min(0).max(500).default(0),
-  fund_minor: z.number().int().positive().optional(),
+  fund_minor: PositiveMinor.optional(),
 });
 type BoardInput = z.infer<typeof BoardBody>;
 
@@ -45,9 +46,9 @@ const PromoBody = z.object({
   link: z.string().trim().max(300).regex(/^(\/|https:\/\/)/, 'links are site paths or https URLs').nullable().optional(),
   leaderboard_id: z.string().nullable().optional(),
   mode: MODE.nullable().optional(),
-  currency: z.string().nullable().optional(),
-  amount_minor: z.number().int().positive().nullable().optional(),
-  budget_minor: z.number().int().positive().nullable().optional(),
+  currency: CurrencyCode.nullable().optional(),
+  amount_minor: PositiveMinor.nullable().optional(),
+  budget_minor: PositiveMinor.nullable().optional(),
   starts_at: z.coerce.date(),
   ends_at: z.coerce.date(),
   draft: z.boolean().optional(),
@@ -261,7 +262,7 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/admin/leaderboards/:id/fund', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     const { id } = req.params as { id: string };
-    const { amount_minor } = z.object({ amount_minor: z.number().int().positive() }).parse(req.body);
+    const { amount_minor } = z.object({ amount_minor: PositiveMinor }).parse(req.body);
     await tx(ctx.db, async (c) => {
       const lb = await lockBoard(c, id);
       if (!lb) throw notFound('leaderboard');
@@ -346,7 +347,7 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/org/:id/leaderboards/:lb/fund', async (req) => {
     const { id, lb: lbId } = req.params as { id: string; lb: string };
     const { user } = await requireOrg(ctx, req, id, { kinds: ['club', 'organizer'], write: true });
-    const { amount_minor } = z.object({ amount_minor: z.number().int().positive() }).parse(req.body);
+    const { amount_minor } = z.object({ amount_minor: PositiveMinor }).parse(req.body);
     await tx(ctx.db, async (c) => {
       const lb = await lockBoard(c, lbId);
       if (!lb || lb.owner_org !== id) throw notFound('leaderboard');

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { audit } from './audit.ts';
 import type { Tx } from './db.ts';
-import { conflict, notFound } from './errors.ts';
+import { conflict, forbidden, notFound } from './errors.ts';
 
 /**
  * Organization ownership is handed over with a single-use claim link (never by matching an
@@ -26,14 +26,22 @@ export async function issueOwnerClaim(c: Tx, orgId: string, email: string | null
   return { token, expires_at: expires.toISOString() };
 }
 
-/** Redeems a claim: the signed-in user becomes an owner of the organization. */
+/**
+ * Redeems a claim: the signed-in user becomes an owner of the organization. A link issued for an
+ * email address (an approved application's, or one the team typed) works only for the account
+ * with that address: a leaked or forwarded link is useless to anyone else.
+ */
 export async function redeemOwnerClaim(c: Tx, token: string, userId: string): Promise<{ org_id: string; kind: string }> {
-  const row = (await c.query<{ org_id: string; kind: string; expires_at: Date; claimed_at: Date | null; revoked_at: Date | null }>(
-    `select k.org_id, o.kind, k.expires_at, k.claimed_at, k.revoked_at from org_owner_claims k join organizations o on o.id = k.org_id
+  const row = (await c.query<{ org_id: string; kind: string; email: string | null; expires_at: Date; claimed_at: Date | null; revoked_at: Date | null }>(
+    `select k.org_id, o.kind, k.email, k.expires_at, k.claimed_at, k.revoked_at from org_owner_claims k join organizations o on o.id = k.org_id
       where k.token_hash = $1 for update of k`, [hash(token)])).rows[0];
   if (!row) throw notFound('claim link');
   if (row.claimed_at || row.revoked_at) throw conflict('claim_used', 'this link has already been used or replaced; ask PreFlop for a new one');
   if (row.expires_at.getTime() <= Date.now()) throw conflict('claim_expired', 'this link has expired; ask PreFlop for a new one');
+  if (row.email) {
+    const me = (await c.query<{ email: string }>('select lower(email) as email from users where id = $1', [userId])).rows[0];
+    if (me?.email !== row.email.toLowerCase()) throw forbidden('claim_email_mismatch', 'this link was issued for a different email address; sign in with that account or ask PreFlop for a new link');
+  }
   await c.query(`insert into memberships (user_id, org_id, role) values ($1, $2, 'owner') on conflict (user_id, org_id) do update set role = 'owner'`, [userId, row.org_id]);
   await c.query('update org_owner_claims set claimed_by = $2, claimed_at = now() where token_hash = $1', [hash(token), userId]);
   await audit(c, { type: 'org.owner_claimed', orgId: row.org_id, userId });

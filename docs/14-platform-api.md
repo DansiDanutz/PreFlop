@@ -153,7 +153,7 @@ Other provider routes:
 | `429 rate_limited` | More than 10 codes in 15 minutes to `mfa/enable` or `mfa/disable` | Per user, per API instance |
 | `429 login_locked` | 5 failed logins for one email within 15 minutes. A wrong one-time code and a wrong current password on `POST /v1/me/password` count as failures. The right password is refused too until the oldest of those failures is 15 minutes old; `Retry-After` says when. A successful login clears the count. Unknown emails behave the same | Per email, **all instances** (stored in Postgres) |
 
-The rate limits are fixed one-minute windows kept in each API process, so behind a load balancer with N instances a client can get up to N × the limit. Set `TRUST_PROXY=true` behind a load balancer, otherwise every client shares the balancer's address.
+The rate limits are fixed one-minute windows kept in each API process, so behind a load balancer with N instances a client can get up to N × the limit. Behind a load balancer set `TRUST_PROXY` to the number of proxy hops (`1` on Fly) or the proxies' CIDRs, otherwise every client shares the balancer's address; production refuses `TRUST_PROXY=true`, which would trust an `X-Forwarded-For` the client wrote itself.
 
 Betting limits and gates (`docs/04` §3):
 

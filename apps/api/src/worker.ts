@@ -204,14 +204,13 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       await beat(db, workerId);
       const jobs = await runOutboxOnce(db, t);
       const swept = await sweepOnce(db, t);
-      const delivered = await deliverDue(db);
       // Housekeeping once a minute: consumed request nonces past the replay window.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
         await pruneBetChanges(db);
       }
-      return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0 || delivered > 0;
+      return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0;
     } catch (e) {
       console.error('worker error', e);
       return true; // retry at the fast cadence
@@ -226,6 +225,20 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
     }, ms);
   };
   schedule(everyMs);
+  // Partner webhooks run on their own loop: a slow partner endpoint (each attempt has a 5 s deadline,
+  // up to 20 per pass) must never delay a settlement, a refund or the heartbeat.
+  let hooking: Promise<void> | null = null;
+  let hookTimer: NodeJS.Timeout | null = null;
+  const scheduleHooks = (ms: number) => {
+    if (stopped) return;
+    hookTimer = setTimeout(() => {
+      const started = Date.now();
+      hooking = deliverDue(db)
+        .then((sent) => sent > 0, (e) => { console.error('webhook worker error', e); return true; })
+        .then((worked) => { hooking = null; scheduleHooks(nextDelayMs(worked, everyMs, idleMs, Date.now() - started)); });
+    }, ms);
+  };
+  scheduleHooks(everyMs);
   // Email runs on its own loop: a slow provider or a backlog never holds up the game tick (settlement,
   // refunds, the heartbeat). One pass at a time, so a slow pass only delays the next email pass.
   let mailing: Promise<void> | null = null;
@@ -257,9 +270,10 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (hookTimer) clearTimeout(hookTimer);
     if (mailTimer) clearTimeout(mailTimer);
     if (hintTimer) clearTimeout(hintTimer);
-    await Promise.all([current, mailing, hinting]);
+    await Promise.all([current, hooking, mailing, hinting]);
     await db.query('delete from worker_heartbeats where worker_id = $1', [workerId]).catch(() => {});
   };
 }

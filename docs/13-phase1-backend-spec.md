@@ -551,3 +551,42 @@ Because a ledger transaction is unique on `(kind, ref)`, a retried settlement ca
 5. HTTP layer.
 6. Simulator.
 7. CI with a Postgres service container.
+
+## 10. Security review pass (October 2026)
+
+A second review of authorization, the signed envelope, sessions and input handling across `apps/api`. The rules below are enforced in code and each has a regression test (`test/security-review.test.ts`, `test/config.test.ts`, `test/review-fixes.test.ts`, `test/stream-health.test.ts`).
+
+**Team roles and conflicts of interest**
+
+- A team member who is also a member of a club (any role) does not review, void or approve for real money that club's tables (`403 conflict_of_interest`); a colleague does.
+- Support suspends, closes or self-excludes players. KYC decisions and re-activations are made by admin or risk only.
+- Alerts are resolved by admin, ops or risk.
+- Agent commissions need four eyes: the team member who approved a statement does not pay it (`paid_by` is recorded separately from `decided_by`), and nobody places an agent under their own agent account.
+- Once an organization has an owner, a further owner link is an admin decision. A link issued for an email address (an approved application's, or one the team typed) works only for the account with that address (`403 claim_email_mismatch`).
+
+**Clubs, tables and scoping**
+
+- A suspended club stops at once: the envelope refuses everything its devices and staff sign (`403 club_suspended`) and its tables are not ready, whatever their own state.
+- A club opens rooms on its own tables only; an organizer on the tables of active clubs.
+- A partner or organizer sees its own players' bets per round and per player, never the platform-wide totals; a club sees every bet at its tables.
+- Staff credential ids are random. A key is enrolled once per club, so another club cannot squat a tablet's key and block its enrolment.
+
+**Sessions and sign-in**
+
+- A sign-in with an unknown email costs one scrypt run, like a wrong password, so response time does not reveal which accounts exist.
+- A suspended or closed account's session is refused on use, even one issued in between; a partner gets no player session for a blocked player.
+- A WebSocket re-checks its session at every ping (30 s): a revoked session stops the per-user events without a reconnect.
+
+**Input bounds and outbound calls**
+
+- `POST /v1/applications` is public: per-IP rate limit (the registration limiter), a 32 KB body, details of at most 16,000 characters and 6 levels. Organization settings are capped at 16 KB, 50 keys, 4 levels and 500-character values. Minor-unit amounts are safe integers; currency codes are 3–8 characters; partner bet fields and the login password are bounded. The adviser scrub stops at 12 levels.
+- WebSocket topics are validated (`lobby`, `table:<id>`, `tournament:<id>`, `room:<id>`) and capped at 50 per socket.
+- Webhook delivery has a 5 s deadline for the whole attempt (DNS, connect, TLS, headers), DNS lookups in the URL check time out, and webhooks run on their own worker loop so a slow partner never delays settlement. The private-address check also covers IPv4-translated, NAT64 local-use, Teredo, ORCHID, documentation and discard IPv6 prefixes.
+- `TRUST_PROXY` is `false`, a hop count (`1` on Fly) or the proxies' CIDRs. Production refuses a bare `true`, under which a client can forge its own address and bypass every per-IP limit.
+
+**Accepted for now (documented, not changed)**
+
+- The login lockout is per email, so five wrong passwords from anywhere lock an account for 15 minutes (a nuisance, not a takeover). A CAPTCHA or per-device counter is the fix when it is needed.
+- Registration answers `409 email_taken`; the usual trade-off between account enumeration and a usable sign-up form.
+- Queued reset and verification emails hold their links in `email_outbox.body` until sent (up to 1 h / 48 h); the body is cleared once sent. Database read access is the boundary.
+- Vercel preview wildcards in `CORS_ORIGINS` are limited to one `-*-` inside a team-scoped host label; auth is a bearer token and no cookies are used.

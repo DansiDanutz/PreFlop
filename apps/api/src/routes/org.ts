@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, randomBytes } from 'node:crypto';
+import { createPublicKey, randomBytes } from 'node:crypto';
 import { MODES, type PlayMode, dilution } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.
 import { newId } from '../lib/ids.ts';
 import { defaultRoundLossMinor } from '../lib/limits.ts';
 import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.ts';
+import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import { limitParam } from '../lib/query.ts';
 import { orgStatements } from '../lib/statements.ts';
 import { buyChips, buyDiamonds, diamondPacks } from '../payments/sandbox.ts';
@@ -90,7 +91,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.put(`${P}`, async (req) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { write: true });
-    const b = z.object({ name: z.string().min(2).max(120).optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
+    const b = z.object({ name: z.string().min(2).max(120).optional(), settings: BoundedRecord({ maxChars: 16_384, maxDepth: 4, maxKeys: 50, maxString: 500 }).optional() }).parse(req.body);
     // Ownership and provenance keys are set only by the PreFlop team (admin org creation / applications).
     const reserved = Object.keys(b.settings ?? {}).filter((k) => RESERVED_SETTINGS.has(k));
     if (reserved.length) throw forbidden('reserved_setting', `these settings cannot be changed here: ${reserved.join(', ')}`);
@@ -169,12 +170,15 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get(`${P}/rounds`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req));
     const q = req.query as { table_id?: string; state?: string; limit?: string };
+    // A club sees every bet on its tables; a partner or organizer sees only its own players' bets
+    // on the rounds it took part in, never the platform-wide totals of that round.
     const scope = org.kind === 'club' ? 'r.table_id in (select id from poker_tables where club_id = $1)'
       : 'r.id in (select round_id from bets where house_owner = $1 or partner_id = $1)';
+    const own = org.kind === 'club' ? '' : ' and (b.house_owner = $1 or b.partner_id = $1)';
     const rows = (await ctx.db.query(
       `select r.id, r.table_id, r.hand_no, r.state, r.procedure_step as step, r.mode, r.currency, r.opened_at, r.locked_at, r.settled_at, r.voided_at, r.void_reason, r.flop,
               r.review_started_at, count(b.id)::int as bets, coalesce(sum(b.stake_minor), 0)::bigint as staked_minor, coalesce(sum(b.payout_minor) filter (where b.status = 'won'), 0)::bigint as paid_minor
-         from rounds r left join bets b on b.round_id = r.id
+         from rounds r left join bets b on b.round_id = r.id${own}
         where ${scope} and ($2::text is null or r.table_id = $2) and ($3::text is null or r.state = $3)
         group by r.id order by r.opened_at desc limit $4`,
       [org.id, q.table_id ?? null, q.state ?? null, limitParam(q, 500, 100)])).rows;
@@ -197,7 +201,11 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
                      or exists (select 1 from room_members m join rooms r on r.id = m.room_id where m.user_id = u.id and r.org_id = $1)
                    then u.email end as email,
               u.display_name,
-              (select count(*)::int from bets b where b.user_id = u.id) as bets
+              -- Bets with this organization only (its house or partner bets, or at its tables): what a
+              -- player does elsewhere on the platform is not the organization's to see.
+              (select count(*)::int from bets b where b.user_id = u.id
+                 and (b.house_owner = $1 or b.partner_id = $1
+                      or exists (select 1 from rounds r join poker_tables t on t.id = r.table_id where r.id = b.round_id and t.club_id = $1))) as bets
          from p join users u on u.id = p.user_id order by u.display_name limit 500`, [org.id])).rows;
     const bal = (await ctx.db.query<{ account_id: string; b: number }>(
       `select e.account_id, sum(e.amount_minor)::bigint as b from ledger_entries e where e.account_id like $1 group by e.account_id`, [`%:${walletPurpose(org.id)}:%`])).rows;
@@ -224,7 +232,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.post(`${P}/tables`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['club'], write: true });
-    const b = z.object({ name: z.string().min(1).max(60), kind: z.enum(['physical', 'simulated']), mode: z.enum(['real-fiat', 'real-crypto', 'play', 'virtual-chips', 'diamonds']), currency: z.string() }).parse(req.body);
+    const b = z.object({ name: z.string().min(1).max(60), kind: z.enum(['physical', 'simulated']), mode: z.enum(['real-fiat', 'real-crypto', 'play', 'virtual-chips', 'diamonds']), currency: CurrencyCode }).parse(req.body);
     if (!MODES[b.mode].currencies.includes(b.currency)) throw unprocessable('invalid_currency', `${b.currency} is not valid in ${b.mode}`);
     if (b.mode === 'diamonds') throw unprocessable('invalid_mode', 'diamond play happens in organizer rooms; tables deal for every mode');
     const id = `${org.id}-${newId('t').slice(2, 8).toLowerCase()}`;
@@ -278,8 +286,13 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
       const k = createPublicKey(b.public_key_pem);
       if (k.asymmetricKeyType !== 'ed25519') throw new Error('not ed25519');
     } catch { throw unprocessable('invalid_key', 'public_key_pem must be an Ed25519 SPKI public key in PEM format'); }
-    const id = `cred_${createHash('sha256').update(b.public_key_pem).digest('hex').slice(0, 12)}`;
+    // A random id: one derived from the public key would let anyone who has seen a tablet's key
+    // enrol it first elsewhere and block the real enrolment.
+    const id = newId('cred');
     const row = await tx(ctx.db, async (c) => {
+      const dup = (await c.query(
+        'select 1 from staff_credentials s join poker_tables t on t.id = s.table_id where t.club_id = $1 and s.public_key_pem = $2 and not s.revoked', [org.id, b.public_key_pem])).rowCount;
+      if (dup) throw conflict('credential_exists', 'this key is already enrolled at one of your tables');
       const r = await c.query(
         `insert into staff_credentials (id, table_id, person_id, role, public_key_pem) values ($1, $2, $3, $4, $5)
          on conflict do nothing returning id, table_id, person_id, role, revoked, created_at`, [id, b.table_id, b.person_id, b.role, b.public_key_pem]);
@@ -316,8 +329,12 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     assertRoomRulesSupported(b.mode, b.rules as RoomRules);
     const v = validateRoomRules(b.mode, b.house, b.rules as RoomRules);
     if (!v.ok) throw unprocessable('invalid_rules', v.problems.join('; '), { problems: v.problems });
-    const t = (await ctx.db.query('select status from poker_tables where id = $1', [b.table_id])).rows[0];
+    const t = (await ctx.db.query<{ status: string; club_id: string; club_status: string | null }>(
+      'select t.status, t.club_id, o.status as club_status from poker_tables t left join organizations o on o.id = t.club_id where t.id = $1', [b.table_id])).rows[0];
     if (!t || t.status === 'retired') throw notFound('table');
+    // A club runs rooms on its own tables only; an organizer on the tables of clubs in good standing.
+    if (org.kind === 'club' && t.club_id !== org.id) throw forbidden('foreign_table', 'a club opens rooms on its own tables only');
+    if (t.club_status !== null && t.club_status !== 'active') throw unprocessable('club_suspended', 'the club running this table is suspended');
     const id = newId('room');
     const code = b.visibility === 'invite' ? inviteCode() : null;
     await tx(ctx.db, async (c) => {
@@ -368,7 +385,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/collateral/deposits`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const key = requireIdempotencyKey(req);
-    const b = z.object({ mode: z.enum(['virtual-chips', 'diamonds']), currency: z.string(), amount_minor: z.number().int().positive() }).parse(req.body);
+    const b = z.object({ mode: z.enum(['virtual-chips', 'diamonds']), currency: CurrencyCode, amount_minor: PositiveMinor }).parse(req.body);
     const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'col', async (c, ref) => {
       const from = acct(org.id, 'treasury', b.mode, b.currency);
       await lockAccount(c, from);
@@ -415,7 +432,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post(`${P}/transfers`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const key = requireIdempotencyKey(req);
-    const b = z.object({ email: z.string().email(), mode: z.enum(['virtual-chips', 'diamonds']), amount_minor: z.number().int().positive() }).parse(req.body);
+    const b = z.object({ email: z.string().email(), mode: z.enum(['virtual-chips', 'diamonds']), amount_minor: PositiveMinor }).parse(req.body);
     const target = (await ctx.db.query<{ id: string; status: string }>('select id, status from users where email = $1', [b.email.toLowerCase()])).rows[0];
     if (!target) throw notFound('player with that email');
     if (target.status !== 'active') throw new ApiError(403, 'player_unavailable', 'this player cannot receive transfers');

@@ -20,7 +20,9 @@ export const STREAM_MAX_PAYLOAD = 4096;
  * arrive is cut off once more than `maxBufferedBytes` wait in its send buffer, instead of buffering
  * without bound; it reconnects and refetches. Mutable for tests only.
  */
-export const streamTuning = { pingMs: 30_000, maxBufferedBytes: 1 << 20 };
+export const streamTuning = { pingMs: 30_000, maxBufferedBytes: 1 << 20, maxTopics: 50 };
+/** The topics a socket may follow: the lobby, one table, one tournament or one room by id. Anything else is ignored. */
+export const TOPIC = /^(lobby|(table|tournament|room):[A-Za-z0-9_.:-]{1,80})$/;
 
 export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/stream', { websocket: true }, async (socket) => {
@@ -28,6 +30,7 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
     socket.on('close', () => { ctx.stats.wsClients--; });
     const topics = new Set<string>();
     let userId: string | null = null;
+    let token: string | null = null;
     let first = true;
     let alive = true;
     socket.on('pong', () => { alive = true; });
@@ -35,6 +38,13 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!alive) { socket.terminate(); return; }
       alive = false;
       try { socket.ping(); } catch { socket.terminate(); }
+      // A session revoked meanwhile (sign-out everywhere, password change, suspension) stops the
+      // per-user events at the next ping instead of at the next reconnect.
+      if (userId && token) {
+        userFromToken(ctx.db, token).catch(() => null).then((u) => {
+          if (!u && userId) { userId = null; token = null; send({ type: 'auth', ok: false }); }
+        });
+      }
     }, streamTuning.pingMs);
     ping.unref?.();
     socket.on('close', () => clearInterval(ping));
@@ -59,10 +69,16 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
       first = false;
       if (m?.type === 'auth') {
         if (!isFirst || typeof m.token !== 'string' || !m.token) return send({ type: 'auth', ok: false });
-        try { userId = (await userFromToken(ctx.db, m.token)).id; } catch { userId = null; }
+        try { userId = (await userFromToken(ctx.db, m.token)).id; token = m.token; } catch { userId = null; token = null; }
         return send({ type: 'auth', ok: userId !== null });
       }
-      for (const t of Array.isArray(m?.subscribe) ? m.subscribe : []) topics.add(String(t));
+      // Topics are validated and capped: an unbounded set costs memory and a scan per event.
+      for (const t of Array.isArray(m?.subscribe) ? m.subscribe : []) {
+        const name = String(t);
+        if (!TOPIC.test(name)) continue;
+        if (topics.size >= streamTuning.maxTopics && !topics.has(name)) break;
+        topics.add(name);
+      }
       for (const t of Array.isArray(m?.unsubscribe) ? m.unsubscribe : []) topics.delete(String(t));
       send({ type: 'subscribed', topics: [...topics] });
     });

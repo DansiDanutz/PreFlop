@@ -20,6 +20,17 @@ export async function verifyPassword(pw: string, stored: string): Promise<boolea
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
+let nobody: Promise<string> | null = null;
+/**
+ * Spends one scrypt verification against a throwaway hash, so a sign-in with an unknown email
+ * costs the same as one with a wrong password: response time does not tell which emails exist.
+ */
+export async function verifyAgainstNobody(pw: string): Promise<false> {
+  nobody ??= hashPassword(randomBytes(16).toString('base64url'));
+  await verifyPassword(pw, await nobody);
+  return false;
+}
+
 export const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex');
 export const SESSION_DAYS = 30;
 
@@ -72,5 +83,7 @@ export async function userFromToken(db: Db, token: string | undefined): Promise<
   // A partner's player exists only through that partner: while it is suspended, the account is too.
   const { partner_status, ...u } = row;
   if (u.partner_id && partner_status !== 'active') throw forbidden('partner_suspended', 'the operator of this account is suspended');
+  // Suspension and closure sign the account out; a session that survived (issued in between) is refused too.
+  if (u.status === 'suspended' || u.status === 'closed') throw forbidden('account_blocked', `account is ${u.status}`);
   return u;
 }

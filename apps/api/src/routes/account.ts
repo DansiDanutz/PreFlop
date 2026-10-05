@@ -9,6 +9,8 @@ import { type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
+import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
+import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { modeEnabled as modeEnabledIn } from '../growth/leaderboards.ts';
@@ -32,14 +34,18 @@ const Application = z.object({
   kind: z.enum(['club', 'partner', 'organizer']),
   name: z.string().min(2).max(120),
   email: z.string().email().max(200),
-  details: z.record(z.unknown()).optional(),
+  // The website form's free fields: bounded so a public, unauthenticated route cannot store
+  // megabytes or thousands of keys per submission (the adviser scrub and the console read them).
+  details: BoundedRecord({ maxChars: 16_000, maxDepth: 6 }).optional(),
 });
+/** The applications form is public: 32 KB is plenty for every field it has. */
+export const APPLICATION_BODY_LIMIT = 32 * 1024;
 const Limits = z.object({
-  deposit_day_minor: z.number().int().positive().nullable().optional(),
-  loss_day_minor: z.number().int().positive().nullable().optional(),
+  deposit_day_minor: PositiveMinor.nullable().optional(),
+  loss_day_minor: PositiveMinor.nullable().optional(),
   session_minutes: z.number().int().min(5).max(24 * 60).nullable().optional(),
 });
-const Money = z.object({ mode: z.enum(['real-fiat', 'real-crypto']), currency: z.string(), amount_minor: z.number().int().positive(), method: z.string().min(2).max(40), destination: z.string().max(200).optional() });
+const Money = z.object({ mode: z.enum(['real-fiat', 'real-crypto']), currency: CurrencyCode, amount_minor: PositiveMinor, method: z.string().min(2).max(40), destination: z.string().max(200).optional() });
 
 export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- favorites
@@ -90,7 +96,8 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ---------------------------------------------------------------- applications (website forms)
-  app.post('/v1/applications', async (req, reply) => {
+  // Unauthenticated and public: the registration limiter applies per IP, and the body is small.
+  app.post('/v1/applications', { preHandler: perIp(ctx.limits.register), bodyLimit: APPLICATION_BODY_LIMIT }, async (req, reply) => {
     const a = Application.parse(req.body);
     let userId: string | null = null;
     try { userId = (await ctx.user(req)).id; } catch { userId = null; }

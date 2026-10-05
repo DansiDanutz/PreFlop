@@ -52,7 +52,9 @@ describe('Greptile review of b2c9c1e', () => {
 
   it('2b. IPv4 embedded in IPv6 is checked in every notation (hex mapped, compatible, NAT64, 6to4)', async () => {
     const priv = ['::ffff:7f00:1', '::ffff:7f00:0001', '0:0:0:0:0:ffff:7f00:1', '::ffff:a00:1', '::ffff:a9fe:a9fe', '::7f00:1', '::127.0.0.1',
-      '64:ff9b::7f00:1', '2002:7f00:1::1', '::', 'fec0::1', 'fe80::1%eth0', 'not-an-ip'];
+      '64:ff9b::7f00:1', '2002:7f00:1::1', '::', 'fec0::1', 'fe80::1%eth0', 'not-an-ip',
+      // translated ::ffff:0:0:0:0/96, NAT64 local-use 64:ff9b:1::/48, Teredo 2001::/32, ORCHID, documentation and the discard prefix
+      '::ffff:0:7f00:1', '::ffff:0:127.0.0.1', '64:ff9b:1::1', '2001::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001:10::1', '2001:1f::1', '2001:db8::1', '100::1', '100::ffff'];
     for (const ip of priv) expect(isPrivateAddress(ip), ip).toBe(true);
     for (const ip of ['::ffff:808:808', '64:ff9b::808:808', '2002:808:808::1', '2001:4860:4860::8888']) expect(isPrivateAddress(ip), ip).toBe(false);
     const owner = await user('p6');

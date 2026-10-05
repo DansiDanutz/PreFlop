@@ -68,7 +68,7 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Must not be `true` (it lets webhooks reach private addresses; tests only) |
 | `RATE_LIMIT_ENABLED` | `true` | Must not be `false` |
 | `RATE_LIMIT_AUTH_PER_MIN` · `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` · `RATE_LIMIT_BETS_PER_MIN` | `20` · `30` · `120` | Per-IP login/register, per-IP partner token, per-user bets; per API instance |
-| `TRUST_PROXY` | `false` | Set to `true` behind a load balancer, so per-IP limits see the client address |
+| `TRUST_PROXY` | `false` | Behind a load balancer: the number of proxy hops (`1` on Fly) or the proxies' CIDRs, so per-IP limits see the client address. Production refuses a bare `true` (a client could forge its address) |
 | `PORT` | `4000` | |
 | `RUN_WORKER` | `true` | `false` when the worker runs separately (`pnpm --filter @preflop/api worker`); several workers may run |
 | `WORKER_HEARTBEAT_MAX_AGE_MS` | `15000` | `GET /v1/health/ready` fails when no worker has beaten for this long |

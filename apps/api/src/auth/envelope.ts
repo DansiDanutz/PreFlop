@@ -93,6 +93,12 @@ export async function verifySignedRequest(db: Db, r: { method: string; url: stri
   try { ok = verify(null, Buffer.from(s), pubKey(pem), Buffer.from(sig, 'base64')); } catch { ok = false; }
   if (!ok) throw unauthorized('bad_signature', 'signature does not verify');
 
+  // A suspended club stops at once: its Table Box and staff tablets keep valid credentials, but
+  // the platform accepts nothing they sign until the club is active again (docs/13 §10).
+  const club = (await db.query<{ status: string | null }>(
+    'select o.status from poker_tables t left join organizations o on o.id = t.club_id where t.id = $1', [principal.tableId])).rows[0];
+  if (club?.status != null && club.status !== 'active') throw forbidden('club_suspended', 'the club running this table is suspended');
+
   const ins = await db.query('insert into request_nonces (credential_id, nonce) values ($1, $2) on conflict do nothing', [cred, nonce]);
   if (ins.rowCount !== 1) throw unauthorized('replayed_request', 'nonce already used');
   return principal;

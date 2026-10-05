@@ -307,10 +307,15 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     const settings = (await h.db.query('select settings from organizations where id = $1', [d.body.org_id])).rows[0].settings;
     expect(settings).toMatchObject({ city: 'Cluj', application_id: app.body.id });
     expect(settings).not.toHaveProperty('owner_email');
-    // The real owner redeems the link once.
-    const owner = await h.api('POST', '/v1/auth/register', undefined, { email: `owner-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Owner' });
-    expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: d.body.owner_claim.token })).body).toMatchObject({ org_id: d.body.org_id, kind: 'organizer' });
+    // The link is bound to the application's email: an account with another address cannot use it,
+    // so the team re-issues one for the address the real owner signed up with.
+    const ownerEmail = `owner-${Date.now()}@test.dev`;
+    const owner = await h.api('POST', '/v1/auth/register', undefined, { email: ownerEmail, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Owner' });
+    expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: d.body.owner_claim.token })).body.type).toBe('claim_email_mismatch');
+    const bound = (await h.api('POST', `/v1/admin/orgs/${d.body.org_id}/owner-claim`, admin, { email: ownerEmail.toUpperCase() })).body.owner_claim.token;
+    expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: bound })).body).toMatchObject({ org_id: d.body.org_id, kind: 'organizer' });
     expect((await h.api('GET', '/v1/me', owner.body.token)).body.memberships[0]).toMatchObject({ org_id: d.body.org_id, role: 'owner' });
+    // The first link was replaced by the second; the squatter holds the matching email and still gets nothing.
     expect((await h.api('POST', '/v1/me/org-claims', squatter.body.token, { token: d.body.owner_claim.token })).body.type).toBe('claim_used');
     // A re-issued link replaces the old one.
     const again = (await h.api('POST', `/v1/admin/orgs/${d.body.org_id}/owner-claim`, admin, {})).body.owner_claim.token;

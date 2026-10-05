@@ -26,6 +26,17 @@ describe('validated config', () => {
     expect(loadConfig({ RUN_WORKER: 'false', PORT: '8080', LOG: '1', CORS_ORIGINS: 'http://a.dev, http://b.dev' })).toMatchObject({ runWorker: false, port: 8080, log: true, corsOrigins: ['http://a.dev', 'http://b.dev'] });
   });
 
+  it('TRUST_PROXY is false, true, a hop count or the proxies\' CIDRs; production refuses a bare true', () => {
+    expect(loadConfig({ TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(loadConfig({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+    expect(loadConfig({ TRUST_PROXY: '0' }).trustProxy).toBe(false);
+    expect(loadConfig({ TRUST_PROXY: '10.0.0.0/8, fdaa::/16, uniquelocal' }).trustProxy).toEqual(['10.0.0.0/8', 'fdaa::/16', 'uniquelocal']);
+    expect(problemsOf({ TRUST_PROXY: 'yes please' })[0]).toMatch(/^TRUST_PROXY:/);
+    expect(problemsOf({ TRUST_PROXY: '10.0.0.0/8, evil' })[0]).toMatch(/^TRUST_PROXY:/);
+    expect(problemsOf({ ...PROD, TRUST_PROXY: 'true' }).join(' ')).toMatch(/TRUST_PROXY=true trusts every X-Forwarded-For hop/);
+    expect(problemsOf({ ...PROD, TRUST_PROXY: '1' })).toEqual([]);
+  });
+
   it('malformed values are refused in every environment, naming the variable', () => {
     expect(problemsOf({ PORT: 'eighty' })[0]).toMatch(/^PORT:/);
     expect(problemsOf({ RESULT_SLA_MS: '-5' })[0]).toMatch(/^RESULT_SLA_MS:/);
