@@ -68,3 +68,13 @@ jobs:
           done
           echo "API not ready after deploy" >&2
           exit 1
+      # End to end, against the deployed environment: register → open round in the lobby → stream
+      # events → a play bet settles and the wallet moves → the three sites serve the app. Node only,
+      # no dependencies (scripts/staging-smoke.mjs).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.token.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - name: End-to-end smoke test
+        if: steps.token.outputs.ok == 'true'
+        run: node scripts/staging-smoke.mjs
