@@ -5,6 +5,7 @@ import { deciderFromConfig } from './lib/decisions.ts';
 import { startEventRelay } from './lib/events.ts';
 import { startGrowthWorker } from './growth/worker.ts';
 import { mailTransportFor, mailWarning } from './lib/mailer.ts';
+import { providersFromConfig } from './providers/index.ts';
 import { startWorker } from './worker.ts';
 
 /**
@@ -22,7 +23,7 @@ console.log(decider.enabled ? `decision hints: ${decider.model} (docs/20)` : 'de
 const db = createPool(config.databaseUrl, 5);
 await migrate(db);
 const stopRelay = await startEventRelay(db);
-const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider);
+const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providersFromConfig(config));
 const stopGrowth = startGrowthWorker(db);
 console.log('PreFlop worker running');
 const shutdown = async () => {

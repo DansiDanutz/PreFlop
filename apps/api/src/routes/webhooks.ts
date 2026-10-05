@@ -3,7 +3,7 @@ import type { AppContext } from '../app.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { notFound } from '../lib/errors.ts';
-import { settlePayment } from '../payments/service.ts';
+import { keepEarlyEvent, lockRef, settlePayment } from '../payments/service.ts';
 import type { ProviderEvent, WebhookHandler } from '../providers/types.ts';
 
 /** Providers deliver small JSON documents; anything larger is not a webhook. */
@@ -18,8 +18,10 @@ export const WEBHOOK_MAX_BODY = 256 * 1024;
  *   to the ledger, a failed payout is refunded (payments/service.ts settlePayment);
  * - KYC events move the user named by (kyc_provider, ref) to verified, rejected or pending.
  *
- * Every delivery is audited, including ones for unknown references, and the answer is 200 once the
- * events are stored, so the provider stops retrying. A bad signature is 401 and changes nothing.
+ * An event that names no payment or KYC session yet (the provider answered its webhook before the
+ * apply phase stored the reference) is kept in `provider_events` and applied the moment the
+ * reference is attached (payments/service.ts, routes/account.ts). Every delivery is audited, and the
+ * answer is 200 once the events are stored, so the provider stops retrying. A bad signature is 401 and changes nothing.
  * There is no authentication other than the provider's signature: the route is unreachable for the
  * sandbox, which has no webhook.
  */
@@ -44,16 +46,21 @@ export async function webhookRoutes(app: FastifyInstance, ctx: AppContext) {
       const applied = await tx(ctx.db, async (c) => {
         let n = 0;
         for (const ev of events) {
+          // Under the (provider, ref) lock the apply phase takes too: either the reference is there
+          // and the event applies, or it is not yet and the event is kept for that phase to replay.
+          await lockRef(c, name, ev.ref);
           if (ev.type === 'payment') {
             const row = await settlePayment(c, name, ev.ref, ev.status, ev.details ?? {});
             if (row) n++;
-            else await audit(c, { type: 'webhook.unknown_payment', provider: name, ref: ev.ref, status: ev.status });
+            else await keepEarlyEvent(c, name, ev);
           } else {
             const r = await c.query<{ id: string }>(
               `update users set kyc_status = $3 where kyc_provider = $1 and kyc_ref = $2 and kyc_status <> 'verified' returning id`, [name, ev.ref, ev.status]);
             const userId = r.rows[0]?.id;
             if (userId) { n++; await audit(c, { type: `kyc.${ev.status}`, userId, provider: name, ref: ev.ref, via: 'webhook' }); }
-            else await audit(c, { type: 'webhook.unknown_kyc', provider: name, ref: ev.ref, status: ev.status });
+            else if ((await c.query(`select 1 from users where kyc_provider = $1 and kyc_ref = $2`, [name, ev.ref])).rowCount) {
+              await audit(c, { type: 'webhook.kyc_ignored', provider: name, ref: ev.ref, status: ev.status, reason: 'already verified' });
+            } else await keepEarlyEvent(c, name, ev);
           }
         }
         return n;

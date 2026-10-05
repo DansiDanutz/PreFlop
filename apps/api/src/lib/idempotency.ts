@@ -23,7 +23,8 @@ export async function idempotent(c: Tx, principal: string, key: string, method: 
   return res;
 }
 
-const requestHash = (method: string, path: string, raw: Uint8Array | string) => createHash('sha256').update(`${method} ${path}\n`).update(raw).digest('hex');
+/** The fingerprint of a request under an Idempotency-Key: method, path and the raw body. */
+export const requestHash = (method: string, path: string, raw: Uint8Array | string) => createHash('sha256').update(`${method} ${path}\n`).update(raw).digest('hex');
 
 /** The response stored for this (principal, key), or null; the same key with a different request → 422. */
 export async function findStored(c: Tx, principal: string, key: string, method: string, path: string, raw: Uint8Array | string): Promise<StoredResponse | null> {

@@ -3,10 +3,10 @@ import type { FastifyRequest } from 'fastify';
 import { audit } from '../lib/audit.ts';
 import { type Db, type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, unprocessable } from '../lib/errors.ts';
-import { type StoredResponse, findStored, idempotent, keyedRef } from '../lib/idempotency.ts';
+import { type StoredResponse, findStored, idempotent, keyedRef, requestHash } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
-import type { MoneyRail, PaymentIntent, ProviderResult } from '../providers/types.ts';
+import { type MoneyRail, type PaymentIntent, type ProviderResult, isRefusal } from '../providers/types.ts';
 
 /**
  * Payments: the one place real money enters and leaves the ledger. A `MoneyRail` adapter (docs/21)
@@ -25,7 +25,16 @@ import type { MoneyRail, PaymentIntent, ProviderResult } from '../providers/type
  *    second payment there.
  * 3. **Apply** (one transaction): `applyProviderResult` stores the provider's reference; a
  *    `completed` result posts the ledger now, a `pending` one waits for the webhook
- *    (`settlePayment`). A provider error marks the payment `failed` and refunds a payout.
+ *    (`settlePayment`). A definite refusal (`ProviderRefused`) marks the payment `failed` and
+ *    refunds a payout. Any other error is UNCERTAIN (a timeout after the provider took the money):
+ *    the row stays pending without a reference, the player gets 502 `provider_unavailable`, and the
+ *    provider is asked again, with the same intent id, by a retry of the request or by the worker's
+ *    recovery pass (recovery.ts). The call is guarded by a short lease on the row, so one caller at
+ *    a time talks to the provider; the request's fingerprint travels with the row, so a different
+ *    request under the same key is refused even before an answer is stored.
+ *
+ * A webhook that arrives before the reference is stored is kept (`provider_events`) and applied the
+ * moment `applyProviderResult` attaches the reference.
  *
  * Deposits and purchases take effect on completion; a payout debits the wallet in phase 1, so a
  * player can never spend money that is on its way out, and is refunded when it fails. External
@@ -55,7 +64,7 @@ export interface PaymentRow {
   status: 'pending' | 'completed' | 'failed' | 'cancelled'; provider: string; provider_ref: string | null; address: string | null;
   redirect_url?: string | null; created_at: Date; completed_at: Date | null;
 }
-type FullRow = PaymentRow & { user_id: string | null; org_id: string | null; details: Record<string, unknown> };
+export type FullRow = PaymentRow & { user_id: string | null; org_id: string | null; details: Record<string, unknown> };
 
 const RETURNING = 'id, kind, method, mode, currency, amount_minor, status, provider, provider_ref, address, created_at, completed_at';
 const FULL = `${RETURNING}, user_id, org_id, details`;
@@ -172,11 +181,39 @@ export async function applyProviderResult(c: Tx, id: string, r: ProviderResult):
     await completeRow(c, p);
     return setStatus(c, p, 'completed', details, { ref: r.ref, address: r.address ?? null });
   }
+  // Serialised with the webhook route on (provider, ref): an event that arrived before this
+  // reference existed was kept, and is applied now; one arriving during this transaction waits and
+  // then finds the row.
+  await lockRef(c, p.provider, r.ref);
   const row = (await c.query<FullRow>(
     `update payments set provider_ref = $2, address = coalesce($3, address), details = details || $4::jsonb where id = $1 returning ${FULL}`,
     [id, r.ref, r.address ?? null, JSON.stringify(details)])).rows[0]!;
   await audit(c, { type: `payment.${p.kind}_pending`, paymentId: id, userId: p.user_id, orgId: p.org_id, provider: p.provider, providerRef: r.ref });
-  return shape(row);
+  return (await replayEarlyEvents(c, p.provider, r.ref)) ?? shape(row);
+}
+
+/** The transaction-scoped lock both the apply phase and the webhook route take on a (provider, ref). */
+export async function lockRef(c: Tx, provider: string, ref: string): Promise<void> {
+  await c.query('select pg_advisory_xact_lock(hashtext($1))', [`provider_ref:${provider}:${ref}`]);
+}
+
+/** Keeps an authenticated webhook event that names no payment or KYC session yet (routes/webhooks.ts). */
+export async function keepEarlyEvent(c: Tx, provider: string, ev: { type: 'payment' | 'kyc'; ref: string; status: string; details?: Record<string, unknown> }): Promise<void> {
+  await c.query('insert into provider_events (provider, type, ref, status, details) values ($1, $2, $3, $4, $5)', [provider, ev.type, ev.ref, ev.status, JSON.stringify(ev.details ?? {})]);
+  await audit(c, { type: `webhook.early_${ev.type}`, provider, ref: ev.ref, status: ev.status });
+}
+
+/** Applies, in order, the payment events kept for (provider, ref) now that a pending row carries it. */
+async function replayEarlyEvents(c: Tx, provider: string, ref: string): Promise<PaymentRow | null> {
+  const kept = (await c.query<{ id: string; status: 'completed' | 'failed'; details: Record<string, unknown> }>(
+    `select id, status, details from provider_events where provider = $1 and type = 'payment' and ref = $2 and applied_at is null order by id for update`, [provider, ref])).rows;
+  let out: PaymentRow | null = null;
+  for (const ev of kept) {
+    out = (await settlePayment(c, provider, ref, ev.status, ev.details)) ?? out;
+    await c.query('update provider_events set applied_at = now() where id = $1', [ev.id]);
+  }
+  if (kept.length) await audit(c, { type: 'webhook.replayed', provider, ref, events: kept.length });
+  return out;
 }
 
 /** The provider call failed (or threw): the payment is failed and a payout refunded. Idempotent. */
@@ -203,20 +240,94 @@ export async function settlePayment(c: Tx, provider: string, providerRef: string
   return setStatus(c, p, status, details);
 }
 
-/** The error the player sees when the provider refused or failed; the payment row says the same. */
+/** The error the player sees when the provider refused; the payment row says the same. */
 export const providerFailed = (name: string, e: unknown) =>
-  new ApiError(502, 'provider_error', `${name} could not take this payment: ${e instanceof Error ? e.message : String(e)}`);
+  new ApiError(502, 'provider_error', `${name} could not take this payment: ${errorMessage(e)}`);
+/** The error the player sees when the provider did not answer; the payment stays pending and is retried. */
+export const providerUnavailable = (name: string, e: unknown) =>
+  new ApiError(502, 'provider_unavailable', `${name} did not answer (${errorMessage(e)}); the payment is pending and will be retried`);
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 500);
+
+/** How long one provider call may take before another caller (a retry, the recovery pass) may try again. */
+export const CALL_LEASE_MS = 90_000;
+/** Age before the recovery pass considers a pending row without a reference abandoned by its request. */
+export const RECOVERY_MIN_AGE_MS = 60_000;
+
+/**
+ * Claims the provider call for a pending row without a reference: one caller at a time, and a lease
+ * left behind by a crash or a hung call is taken over once it expires. Null when another call holds
+ * the lease or the row no longer qualifies.
+ */
+export async function claimCall(c: Tx, id: string, now = Date.now()): Promise<FullRow | null> {
+  const r = (await c.query<FullRow>(
+    `update payments set details = details || jsonb_build_object('lease_until', $2::bigint, 'attempts', coalesce((details->>'attempts')::int, 0) + 1)
+      where id = $1 and status = 'pending' and provider_ref is null and coalesce((details->>'lease_until')::bigint, 0) < $3::bigint returning ${FULL}`,
+    [id, now + CALL_LEASE_MS, now])).rows[0];
+  if (r) r.amount_minor = Number(r.amount_minor);
+  return r ?? null;
+}
+
+export type CallOutcome =
+  | { kind: 'result'; result: ProviderResult }
+  | { kind: 'refused'; error: unknown }
+  | { kind: 'uncertain'; error: unknown };
+
+/** Phase 2: asks the provider, outside any transaction, and classifies what came back. Never throws. */
+export async function callProvider(rail: MoneyRail, call: 'createDeposit' | 'createPayout', row: FullRow): Promise<CallOutcome> {
+  try {
+    return { kind: 'result', result: await rail[call](intentOf(row)) };
+  } catch (e) {
+    return { kind: isRefusal(e) ? 'refused' : 'uncertain', error: e };
+  }
+}
+
+/**
+ * An uncertain outcome: the row stays pending, the error and the attempt count are kept with it, the
+ * lease is released, and the recovery pass waits a growing interval before asking again (a retry of
+ * the request may ask at once). Idempotent for a row that moved on meanwhile.
+ */
+async function recordUncertain(c: Tx, id: string, reason: string, now = Date.now()): Promise<PaymentRow> {
+  const p = await lockRow(c, id);
+  if (!p) throw new ApiError(500, 'internal', `payment ${id} vanished between phases`);
+  if (p.status !== 'pending' || p.provider_ref !== null) return shape(p);
+  const attempts = Number(p.details.attempts ?? 1);
+  const backoffMs = Math.min(3_600_000, 60_000 * 2 ** Math.min(attempts - 1, 6));
+  const row = (await c.query<FullRow>(
+    `update payments set details = details || $2::jsonb where id = $1 returning ${FULL}`,
+    [id, JSON.stringify({ error: reason.slice(0, 500), lease_until: 0, next_try_at: now + backoffMs })])).rows[0]!;
+  await audit(c, { type: `payment.${p.kind}_unreachable`, paymentId: id, userId: p.user_id, orgId: p.org_id, provider: p.provider, attempts, error: reason.slice(0, 500) });
+  console.error(`payment ${id}: ${p.provider} did not answer (attempt ${attempts}): ${reason}`);
+  return shape(row);
+}
+
+/**
+ * Phase 3 for any caller: a result is applied, a refusal fails the payment, an uncertain error keeps
+ * it pending. `final` says whether the answer may be stored for the Idempotency-Key.
+ */
+export async function recordOutcome(c: Tx, id: string, railName: string, o: CallOutcome): Promise<StoredResponse & { final: boolean }> {
+  if (o.kind === 'result') return { final: true, status: 201, body: await applyProviderResult(c, id, o.result) };
+  if (o.kind === 'refused') {
+    const failed = await failPayment(c, id, errorMessage(o.error));
+    const err = providerFailed(railName, o.error);
+    return { final: true, status: err.status, body: { type: err.type, title: err.message, status: err.status, payment: failed } };
+  }
+  const row = await recordUncertain(c, id, errorMessage(o.error));
+  const err = providerUnavailable(railName, o.error);
+  return { final: false, status: err.status, body: { type: err.type, title: err.message, status: err.status, payment: row } };
+}
 
 /**
  * The three phases for a route (docs/21). The route's `prepare` runs its checks and calls
  * `preparePayment` with the given id; it may run more than once (a serialization retry) but has no
- * outside effects. The provider is called exactly once per new payment, outside any transaction.
- * The stored idempotent response is the final one, so a retry with the same key replays it.
+ * outside effects. The provider is called once per payment, outside any transaction, under the
+ * row's lease; a final answer is stored for the key and replayed, an uncertain one is not, so the
+ * same request asks the provider again (with the same intent id) until it answers.
  */
 export async function runPayment(db: Db, principal: string, key: string, req: FastifyRequest, rail: MoneyRail, call: 'createDeposit' | 'createPayout',
   prepare: (c: Tx, id: string) => Promise<void>): Promise<StoredResponse> {
   const id = keyedRef('pay', principal, key);
   const raw = req.rawBody ?? '';
+  const fingerprint = requestHash(req.method, req.url, raw);
   // Phase 1. A finished request replays its stored answer; an unfinished duplicate is recognised by
   // the payment row itself (the PK on its deterministic id), which also serialises concurrent ones.
   const prepared = await tx(db, async (c): Promise<{ stored: StoredResponse } | { fresh: boolean }> => {
@@ -224,6 +335,7 @@ export async function runPayment(db: Db, principal: string, key: string, req: Fa
     if (stored) return { stored };
     try {
       await prepare(c, id);
+      await c.query(`update payments set details = details || jsonb_build_object('request_sha256', $2::text) where id = $1`, [id, fingerprint]);
       return { fresh: true };
     } catch (e) {
       if ((e as { code?: string }).code === '23505' && String((e as Error).message).includes('payments_pkey')) return { fresh: false };
@@ -231,23 +343,24 @@ export async function runPayment(db: Db, principal: string, key: string, req: Fa
     }
   });
   if ('stored' in prepared) return prepared.stored;
-  const row = await tx(db, async (c) => lockRow(c, id));
-  if (!row) throw new ApiError(500, 'internal', 'payment row missing after prepare');
-  if (!prepared.fresh || row.provider_ref !== null || row.status !== 'pending') {
-    // Already in flight (a concurrent duplicate) or done: answer with the row as it is.
-    return { status: 201, body: shape(row) };
-  }
+  // Phase 1b: the row, and the right to call the provider for it.
+  const claimed = await tx(db, async (c): Promise<{ row: FullRow; call: boolean }> => {
+    const row = await lockRow(c, id);
+    if (!row) throw new ApiError(500, 'internal', 'payment row missing after prepare');
+    // The same key with a different request is refused here too, before any answer is stored.
+    const seen = row.details.request_sha256;
+    if (typeof seen === 'string' && seen !== fingerprint) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different request');
+    if (row.status !== 'pending' || row.provider_ref !== null) return { row, call: false };
+    const mine = await claimCall(c, id);
+    return { row: mine ?? row, call: mine !== null };
+  });
+  // Done, or a concurrent duplicate is talking to the provider right now: answer with the row as it is.
+  if (!claimed.call) return { status: 201, body: shape(claimed.row) };
   // Phase 2: outside any transaction, with the row's id as the provider idempotency key.
-  let result: ProviderResult | null = null;
-  let failure: unknown = null;
-  try { result = await rail[call](intentOf(row)); } catch (e) { failure = e; }
-  // Phase 3.
-  return tx(db, async (c) => idempotent(c, principal, key, req.method, req.url, raw, async () => {
-    if (result) return { status: 201, body: await applyProviderResult(c, id, result) };
-    const failed = await failPayment(c, id, failure instanceof Error ? failure.message : String(failure));
-    const err = providerFailed(rail.name, failure);
-    return { status: err.status, body: { type: err.type, title: err.message, status: err.status, payment: failed } };
-  }));
+  const outcome = await callProvider(rail, call, claimed.row);
+  // Phase 3. An uncertain outcome is not stored for the key: the next retry asks the provider again.
+  if (outcome.kind === 'uncertain') return tx(db, async (c) => recordOutcome(c, id, rail.name, outcome));
+  return tx(db, async (c) => idempotent(c, principal, key, req.method, req.url, raw, () => recordOutcome(c, id, rail.name, outcome)));
 }
 
 /**

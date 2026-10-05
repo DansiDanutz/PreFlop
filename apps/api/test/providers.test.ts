@@ -4,9 +4,10 @@ import { tx } from '../src/lib/db.ts';
 import { keyedRef } from '../src/lib/idempotency.ts';
 import { acct, balance } from '../src/lib/ledger.ts';
 import { noProviders, providersFromConfig } from '../src/providers/index.ts';
+import { recoverPayments } from '../src/payments/recovery.ts';
 import { chipsPurchase, runSandbox } from '../src/payments/service.ts';
 import { sandboxCustody, sandboxKyc, sandboxPsp } from '../src/providers/sandbox.ts';
-import type { KycProvider, MoneyRail, PaymentIntent, ProviderEvent, Providers } from '../src/providers/types.ts';
+import { type KycProvider, type MoneyRail, type PaymentIntent, type ProviderEvent, ProviderRefused, type Providers } from '../src/providers/types.ts';
 import { signWebhook, verifyWebhook } from '../src/providers/webhook.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { type Harness, harness, idemKey, ledgerSums, realMoneyReady } from './helpers.ts';
@@ -65,8 +66,10 @@ describe('webhook signatures', () => {
  * webhook. This is the shape a Stripe, Checkout.com or Fireblocks adapter takes.
  */
 const SECRET = 'whsec_test_' + 'x'.repeat(32);
-/** Payment ids the stand-in provider refuses (throws) when asked. */
+/** Payment ids the stand-in provider definitely refuses (throws ProviderRefused) when asked. */
 const failNext = new Set<string>();
+/** Payment ids for which the stand-in provider does not answer (a timeout: uncertain, not a refusal). */
+const downNext = new Set<string>();
 function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents: PaymentIntent[] } {
   const intents: PaymentIntent[] = [];
   const webhook = async (headers: Record<string, string | string[] | undefined>, raw: Buffer): Promise<ProviderEvent[]> => {
@@ -75,8 +78,8 @@ function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents
   };
   return {
     name, rail, intents,
-    async createDeposit(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new Error('provider refused the card'); return { status: 'pending', ref: `${name}_${intent.id}`, redirect_url: `https://${name}.example/pay/${intent.id}`, address: rail === 'chain' ? '0xdeposit' : null }; },
-    async createPayout(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new Error('payout rail unavailable'); return { status: 'pending', ref: `${name}_${intent.id}` }; },
+    async createDeposit(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new ProviderRefused('provider refused the card'); if (downNext.has(intent.id)) throw new Error('ETIMEDOUT: no answer'); return { status: 'pending', ref: `${name}_${intent.id}`, redirect_url: `https://${name}.example/pay/${intent.id}`, address: rail === 'chain' ? '0xdeposit' : null }; },
+    async createPayout(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new ProviderRefused('destination refused'); if (downNext.has(intent.id)) throw new Error('ETIMEDOUT: no answer'); return { status: 'pending', ref: `${name}_${intent.id}` }; },
     webhook,
   };
 }
@@ -242,6 +245,64 @@ describe('provider adapters', () => {
     expect(again.status).toBe(502);
     expect(again.body.payment.id).toBe(r3.body.payment.id);
     expect((await h.api('GET', '/v1/me/payments', p.token)).body.payments.find((x: any) => x.id === r3.body.payment.id).status).toBe('failed');
+  });
+
+  it('a provider that does not answer keeps the payment pending: nothing is refunded on a guess, the same id is asked again, and an early webhook is kept until the reference arrives', async () => {
+    const p = await verifiedPlayer('Down');
+    const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 5_000_000, method: 'crypto' }, idemKey());
+    await hook('custody-test', [{ type: 'payment', ref: fund.body.provider_ref, status: 'completed' }]);
+    const k = idemKey();
+    const id = keyedRef('pay', `user:${p.id}`, k['idempotency-key']!);
+    downNext.add(id);
+    const body = { mode: 'real-crypto', currency: 'USDT', amount_minor: 2_000_000, method: 'crypto', destination: '0xdown' };
+    const asked = custody.intents.length;
+    const r1 = await h.api('POST', '/v1/me/withdrawals', p.token, body, k);
+    expect(r1.status).toBe(502);
+    expect(r1.body.type).toBe('provider_unavailable');
+    expect(r1.body.payment).toMatchObject({ id, status: 'pending', kind: 'withdrawal', provider_ref: null });
+    // Debited and NOT refunded: the provider may have paid out already.
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(3_000_000);
+    expect(custody.intents.length).toBe(asked + 1);
+    // The answer was not stored: the same request asks the provider again, with the same intent id.
+    const r2 = await h.api('POST', '/v1/me/withdrawals', p.token, body, k);
+    expect(r2.status).toBe(502);
+    expect(r2.body.payment.status).toBe('pending');
+    expect(custody.intents.length).toBe(asked + 2);
+    expect(custody.intents.at(-1)!.id).toBe(id);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(3_000_000);
+    // The same key with a different request is refused, although no answer is stored yet.
+    const other = await h.api('POST', '/v1/me/withdrawals', p.token, { ...body, amount_minor: 1_000_000 }, k);
+    expect(other.status).toBe(422);
+    expect(other.body.type).toBe('idempotency_mismatch');
+    // The provider's webhook arrives before its reference was ever stored here: kept, applied to nothing yet.
+    const early = await hook('custody-test', [{ type: 'payment', ref: `custody-test_${id}`, status: 'completed' }]);
+    expect(early.body).toEqual({ received: 1, applied: 0 });
+    // The provider is back. The recovery pass waits out the backoff, then asks again with the same id,
+    // stores the reference, and the kept verdict settles the payout at once.
+    downNext.delete(id);
+    expect((await recoverPayments(h.db, providers, { minAgeMs: 0 })).asked).toBe(0); // not due yet
+    expect(await recoverPayments(h.db, providers, { minAgeMs: 0, now: Date.now() + 130_000 })).toEqual({ asked: 1, final: 1 });
+    expect(custody.intents.length).toBe(asked + 3);
+    expect(custody.intents.at(-1)!.id).toBe(id);
+    expect((await h.api('GET', '/v1/me/payments', p.token)).body.payments.find((x: any) => x.id === id).status).toBe('completed');
+    expect((await h.db.query('select provider_ref from payments where id = $1', [id])).rows[0].provider_ref).toBe(`custody-test_${id}`);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(3_000_000);
+    expect((await h.db.query('select applied_at from provider_events where provider = $1 and ref = $2', ['custody-test', `custody-test_${id}`])).rows[0].applied_at).not.toBeNull();
+    // Nothing left to recover; a retry of the request now returns the settled payment without asking anyone.
+    expect(await recoverPayments(h.db, providers, { minAgeMs: 0, now: Date.now() + 130_000 })).toEqual({ asked: 0, final: 0 });
+    const r3 = await h.api('POST', '/v1/me/withdrawals', p.token, body, k);
+    expect(r3.status).toBe(201);
+    expect(r3.body).toMatchObject({ id, status: 'completed' });
+    expect(custody.intents.length).toBe(asked + 3);
+  });
+
+  it('KYC: a verdict delivered before the session reference was stored is kept and applied when it is', async () => {
+    const p = await h.register('Early');
+    await realMoneyReady(h, p.id);
+    expect((await hook('idp', [{ type: 'kyc', ref: `idp_${p.id}`, status: 'verified' }])).body).toEqual({ received: 1, applied: 0 });
+    const started = await h.api('POST', '/v1/me/kyc', p.token, {});
+    expect(started.body).toEqual({ kyc_status: 'verified', provider: 'idp', redirect_url: null });
+    expect((await h.api('GET', '/v1/me', p.token)).body.kyc_status).toBe('verified');
   });
 
   it('purchase: chips are issued when the charge completes, not before', async () => {

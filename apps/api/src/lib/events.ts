@@ -38,16 +38,19 @@ export const EVENTS_CHANNEL = 'preflop_events';
 /** NOTIFY payloads are limited to 8000 bytes; a larger event is relayed without its data. */
 const MAX_PAYLOAD_BYTES = 7900;
 
-export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false, gaps: 0, dropped: 0, queued: 0 };
+export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false, gaps: 0, dropped: 0, queued: 0, gapsAnnounced: 0 };
 /** Outbound events waiting for NOTIFY to succeed; bounded, oldest dropped first (and counted). */
 const MAX_OUTBOUND = 2000;
-const MAX_ATTEMPTS = 8;
+/** Retry policy of the outbound drain loop; tests shorten it. */
+export const relayTuning = { maxAttempts: 8, baseDelayMs: 50 };
 
 /**
  * Emitted on this process's bus when its listener reconnects after a drop: notifications sent by
  * other instances while it was down are gone, so the stream closes its sockets (code 1012) and the
  * clients reconnect and refetch what the events would have patched, exactly as they do after a
- * socket drop of their own. A gap is never silent.
+ * socket drop of their own. The same event is SENT to the other instances when this publisher had
+ * to drop committed events (retries exhausted, queue overflow, stopped with events unsent): their
+ * subscribers would otherwise keep a stale view and never know. A gap is never silent.
  */
 export const RELAY_GAP: DomainEvent = { type: 'relay.gap', data: {} };
 
@@ -70,7 +73,19 @@ const outbound: string[] = [];
 let draining = false;
 /** Events at the front of `outbound` that the drain loop has handed to a NOTIFY still in flight. */
 let inFlight = 0;
+/**
+ * Set when committed events were dropped: the next NOTIFY that succeeds carries RELAY_GAP first, so
+ * the other instances resync their streams. It stays set until that NOTIFY goes through.
+ */
+let gapPending = false;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function dropEvents(n: number, why: string): void {
+  if (n <= 0) return;
+  relayStats.dropped += n;
+  gapPending = true;
+  console.error(`event relay: ${why}, dropped ${n} events; announcing a gap to the other instances`);
+}
 
 /**
  * Queues the events and drains the queue in order. A failed NOTIFY (pool exhausted, connection
@@ -86,8 +101,7 @@ async function forward(db: Db, events: DomainEvent[]): Promise<void> {
     const n = Math.min(outbound.length - MAX_OUTBOUND, outbound.length - inFlight);
     if (n > 0) {
       outbound.splice(inFlight, n);
-      relayStats.dropped += n;
-      console.error(`event relay: outbound queue full, dropped ${n} oldest events`);
+      dropEvents(n, 'outbound queue full');
     }
   }
   relayStats.queued = outbound.length;
@@ -95,25 +109,30 @@ async function forward(db: Db, events: DomainEvent[]): Promise<void> {
   draining = true;
   let attempt = 0;
   try {
-    while (outbound.length && relayDb === db) {
-      const batch = outbound.slice(0, 200);
-      inFlight = batch.length;
+    while ((outbound.length || gapPending) && relayDb === db) {
+      // A pending gap goes first, in the same NOTIFY as the next events, so it reaches the other
+      // instances before anything that follows the lost events.
+      const withGap = gapPending;
+      const fromQueue = outbound.slice(0, withGap ? 199 : 200);
+      const batch = withGap ? [encodeRelayed(RELAY_GAP), ...fromQueue] : fromQueue;
+      inFlight = fromQueue.length;
       try {
         await db.query('select pg_notify($1, p) from unnest($2::text[]) as p', [EVENTS_CHANNEL, batch]);
-        outbound.splice(0, batch.length);
-        relayStats.forwarded += batch.length;
+        outbound.splice(0, fromQueue.length);
+        relayStats.forwarded += fromQueue.length;
+        // A gap flagged while this batch was in flight is not in it; it goes with the next one.
+        if (withGap) { gapPending = false; relayStats.gapsAnnounced++; }
         attempt = 0;
       } catch (err) {
         relayStats.errors++;
         attempt++;
-        if (attempt >= MAX_ATTEMPTS) {
-          outbound.splice(0, batch.length);
-          relayStats.dropped += batch.length;
-          console.error(`event relay: forwarding failed ${attempt} times, dropped ${batch.length} events`, err);
+        if (attempt >= relayTuning.maxAttempts) {
+          outbound.splice(0, fromQueue.length);
+          dropEvents(fromQueue.length, `forwarding failed ${attempt} times (${err instanceof Error ? err.message : String(err)})`);
           attempt = 0;
         } else {
           inFlight = 0;
-          await sleep(Math.min(5000, 50 * 2 ** attempt));
+          await sleep(Math.min(5000, relayTuning.baseDelayMs * 2 ** attempt));
         }
       } finally {
         inFlight = 0;
@@ -192,7 +211,20 @@ export async function startEventRelay(db: Db): Promise<() => Promise<void>> {
   return async () => {
     stopped = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    relayDb = null;
+    relayDb = null; // the drain loop exits at its next turn
+    // Events still unsent are lost with this process: tell the other instances once, best effort.
+    if (outbound.length || gapPending) {
+      dropEvents(outbound.length, 'stopped with events unsent');
+      outbound.length = 0;
+      relayStats.queued = 0;
+      try {
+        await db.query('select pg_notify($1, $2)', [EVENTS_CHANNEL, encodeRelayed(RELAY_GAP)]);
+        gapPending = false;
+        relayStats.gapsAnnounced++;
+      } catch (err) {
+        console.error('event relay: could not announce the gap before stopping', err);
+      }
+    }
     const c = client;
     client = null;
     relayStats.connected = false;

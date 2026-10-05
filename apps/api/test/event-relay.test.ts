@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../src/lib/db.ts';
-import { type DomainEvent, EVENTS_CHANNEL, EventBatch, INSTANCE_ID, bus, encodeRelayed, publish, relayStats, startEventRelay } from '../src/lib/events.ts';
+import { type DomainEvent, EVENTS_CHANNEL, EventBatch, INSTANCE_ID, bus, encodeRelayed, publish, relayStats, relayTuning, startEventRelay } from '../src/lib/events.ts';
 
 /**
  * The cross-instance event relay (lib/events.ts) against a fake pool: a listener that fails to
@@ -16,7 +16,9 @@ class FakeClient extends EventEmitter {
     if (sql.includes('pg_notify') && this.pool.notifyFailures > 0) { this.pool.notifyFailures--; throw new Error('pool exhausted'); }
     if (sql.includes('pg_notify')) {
       // Deliver to every listening client of the pool, as PostgreSQL would.
-      for (const payload of (params![1] as string[])) for (const c of this.pool.listeners) c.emit('notification', { channel: EVENTS_CHANNEL, payload });
+      const payloads = Array.isArray(params![1]) ? (params![1] as string[]) : [params![1] as string];
+      this.pool.sent.push(...payloads);
+      for (const payload of payloads) for (const c of this.pool.listeners) c.emit('notification', { channel: EVENTS_CHANNEL, payload });
     }
     return { rows: [] };
   }
@@ -30,6 +32,9 @@ class FakePool {
   failNext = 0;
   /** How many NOTIFY queries fail before they succeed again. */
   notifyFailures = 0;
+  /** Every payload NOTIFY accepted, in order. */
+  sent: string[] = [];
+  gaps() { return this.sent.map((p) => JSON.parse(p) as { i: string; e: DomainEvent }).filter((x) => x.e.type === 'relay.gap'); }
   async connect() {
     const c = new FakeClient(this.failNext > 0);
     this.failNext = Math.max(0, this.failNext - 1);
@@ -138,7 +143,52 @@ describe('event relay', () => {
       // Everything still queued was sent, and the held event counted as forwarded, not dropped.
       expect(relayStats.forwarded - forwardedBefore).toBe(1 + 2500 - 501);
       expect(relayStats.queued).toBe(0);
+      // The other instances were told about the dropped events, before anything that followed them.
+      expect(pool.gaps()).toHaveLength(1);
+      const gapAt = pool.sent.findIndex((p) => p.includes('relay.gap'));
+      expect(pool.sent.slice(gapAt + 1).some((p) => p.includes('"flood"'))).toBe(true);
+      expect(pool.sent.slice(0, gapAt).some((p) => p.includes('"flood"'))).toBe(false);
     } finally { await stop(); }
+  });
+
+  it('announces a gap to the other instances when retries are exhausted', async () => {
+    const pool = new FakePool();
+    const stop = await startEventRelay(asDb(pool));
+    const saved = { ...relayTuning };
+    Object.assign(relayTuning, { maxAttempts: 3, baseDelayMs: 1 });
+    try {
+      pool.notifyFailures = 3;
+      const droppedBefore = relayStats.dropped;
+      const announcedBefore = relayStats.gapsAnnounced;
+      const batch = new EventBatch();
+      batch.push({ type: 'round.settled', tableId: 't1', roundId: 'lost', data: {} });
+      publish(batch);
+      await sleep(100);
+      expect(relayStats.dropped - droppedBefore).toBe(1);
+      expect(pool.sent.some((p) => p.includes('"lost"'))).toBe(false);
+      // With nothing else to send, the gap went out on its own as soon as NOTIFY worked again.
+      expect(relayStats.gapsAnnounced - announcedBefore).toBe(1);
+      const gaps = pool.gaps();
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0]!.i).toBe(INSTANCE_ID); // the other instances emit it; this one skips its own
+      expect(relayStats.queued).toBe(0);
+    } finally { Object.assign(relayTuning, saved); await stop(); }
+  });
+
+  it('a publisher stopped with unsent events announces the gap before it goes', async () => {
+    const pool = new FakePool();
+    const stop = await startEventRelay(asDb(pool));
+    pool.notifyFailures = 1;
+    const batch = new EventBatch();
+    batch.push({ type: 'round.settled', tableId: 't1', roundId: 'unsent', data: {} });
+    publish(batch);
+    await sleep(10); // the first NOTIFY failed; the drain loop is in its backoff
+    const announcedBefore = relayStats.gapsAnnounced;
+    await stop();
+    expect(relayStats.gapsAnnounced - announcedBefore).toBe(1);
+    expect(pool.gaps()).toHaveLength(1);
+    expect(pool.sent.some((p) => p.includes('"unsent"'))).toBe(false);
+    expect(relayStats.queued).toBe(0);
   });
 
   it('keeps every relayed payload under the NOTIFY limit by dropping oversized data', () => {

@@ -14,7 +14,7 @@ import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { modeEnabled as modeEnabledIn } from '../growth/leaderboards.ts';
-import { assertPositive, chipsPurchase, preparePayment, runPayment } from '../payments/service.ts';
+import { assertPositive, chipsPurchase, lockRef, preparePayment, runPayment } from '../payments/service.ts';
 import { railFor, requireProvider } from '../providers/index.ts';
 
 const SELECTION_IDS = new Set(SELECTIONS.map((s) => s.id));
@@ -194,10 +194,24 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     // verified or rejected (routes/webhooks.ts). A verdict that arrived meanwhile is never undone.
     const r = await kyc.start({ id: u.id, email: cur.email });
     return tx(ctx.db, async (c) => {
+      // Under the (provider, ref) lock the webhook route takes: a verdict that arrived before this
+      // reference was stored was kept (provider_events) and is applied now, never lost.
+      await lockRef(c, kyc.name, r.ref);
       const upd = await c.query(`update users set kyc_status = $2, kyc_provider = $3, kyc_ref = $4 where id = $1 and kyc_status <> 'verified'`, [u.id, r.status, kyc.name, r.ref]);
       if (upd.rowCount === 0) return { kyc_status: 'verified', provider: kyc.name };
       await audit(c, { type: `kyc.${r.status}`, userId: u.id, provider: kyc.name, ref: r.ref });
-      return { kyc_status: r.status, provider: kyc.name, redirect_url: r.redirect_url ?? null };
+      const early = (await c.query<{ id: string; status: 'verified' | 'rejected' | 'pending' }>(
+        `select id, status from provider_events where provider = $1 and type = 'kyc' and ref = $2 and applied_at is null order by id for update`, [kyc.name, r.ref])).rows;
+      let status = r.status;
+      for (const ev of early) {
+        await c.query('update provider_events set applied_at = now() where id = $1', [ev.id]);
+        status = ev.status;
+      }
+      if (early.length) {
+        await c.query('update users set kyc_status = $2 where id = $1', [u.id, status]);
+        await audit(c, { type: `kyc.${status}`, userId: u.id, provider: kyc.name, ref: r.ref, via: 'webhook', replayed: early.length });
+      }
+      return { kyc_status: status, provider: kyc.name, redirect_url: status === 'pending' ? (r.redirect_url ?? null) : null };
     });
   });
 

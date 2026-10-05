@@ -4,6 +4,7 @@ import { ApiError } from '../lib/errors.ts';
 import { sandboxCustody, sandboxKyc, sandboxPsp } from './sandbox.ts';
 import type { KycProvider, MoneyRail, Providers } from './types.ts';
 
+export { ProviderRefused, isRefusal } from './types.ts';
 export type { KycProvider, MoneyRail, PaymentIntent, ProviderEvent, ProviderResult, Providers, Rail, WebhookHandler } from './types.ts';
 
 /** Thrown by every real-money entry point whose provider is not configured (503, fail closed). */

@@ -57,11 +57,29 @@ export type ProviderEvent =
  */
 export type WebhookHandler = (headers: Record<string, string | string[] | undefined>, rawBody: Buffer) => Promise<ProviderEvent[]>;
 
+/**
+ * Thrown by an adapter when the provider DEFINITIVELY declined (card declined, destination invalid,
+ * compliance refusal): the payment fails and a payout is refunded. Any other error an adapter lets
+ * through (timeout, connection reset, 5xx) is uncertain: the provider may have taken the payment, so
+ * the service keeps the row pending and asks again later with the same intent id (docs/21).
+ */
+export class ProviderRefused extends Error {
+  readonly refused = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderRefused';
+  }
+}
+export const isRefusal = (e: unknown): boolean => e instanceof ProviderRefused || (typeof e === 'object' && e !== null && (e as { refused?: unknown }).refused === true);
+
 export interface MoneyRail {
   /** Provider name as it appears in `payments.provider` and in `POST /v1/webhooks/:provider`. */
   readonly name: string;
   readonly rail: Rail;
-  /** Collect money from the payer (a deposit, or the charge of a purchase). */
+  /**
+   * Collect money from the payer (a deposit, or the charge of a purchase). Throw `ProviderRefused`
+   * for a definite refusal; let any other error through as uncertain.
+   */
   createDeposit(intent: PaymentIntent): Promise<ProviderResult>;
   /** Send money out to the player. The wallet is already debited when this runs. */
   createPayout(intent: PaymentIntent): Promise<ProviderResult>;
