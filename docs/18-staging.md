@@ -66,7 +66,7 @@ Staging runs the real product against **simulated tables**:
 | Health | `curl https://preflop-staging-api.fly.dev/v1/health/ready` |
 | Logs | `fly logs -a preflop-staging-api` (structured, with request ids) · `fly logs -a preflop-staging-sim` |
 | Releases and rollback | `fly releases -a preflop-staging-api`, then `fly deploy -a preflop-staging-api --image <previous image>` |
-| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks and the worker are safe on several machines |
+| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks, the worker and the WebSocket stream (events cross machines through PostgreSQL NOTIFY) are safe on several machines |
 | Database backup and restore | Supabase's daily project backups, plus our own weekly dump and restore drill; see *Backups and restore drill* below. Before a risky migration: `scripts/db-backup.sh dump "$DATABASE_URL" before.dump` |
 | Metrics | `GET /v1/admin/metrics` (admin token) |
 | Rotate the simulator's table keys | `fly machine restart -a preflop-staging-sim` (it re-seeds and rotates its keys on a fresh machine) |

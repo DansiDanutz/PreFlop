@@ -80,7 +80,7 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `KYC_PROVIDER` · `PSP_PROVIDER` · `CUSTODY_PROVIDER` | `sandbox` (dev, test) · `none` (production) | Real-money adapters (`docs/21`): identity verification, fiat payments, stablecoin custody. `none` fails closed (`503 provider_not_configured`); production refuses `sandbox` |
 | `SMTP_URL` | unset | `smtp://` or `smtps://user:pass@host:port`: account emails go out over SMTP (nodemailer), retried with backoff. With it, production also requires `MAIL_FROM` and a public `https` `WEB_URL`. Unset: in production emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
 
-Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
+Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL, and WebSocket stream events cross processes through PostgreSQL NOTIFY (`docs/14`, *Limits* and *Health and metrics*).
 
 ## Documentation
 

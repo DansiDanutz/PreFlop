@@ -7,7 +7,7 @@ import { audit, verifyAuditChain } from '../lib/audit.ts';
 import { type Tx, retryCount, retryStats, tx } from '../lib/db.ts';
 import { defaultRoundLossMinor } from '../lib/limits.ts';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors.ts';
-import { EventBatch, publish } from '../lib/events.ts';
+import { EventBatch, publish, relayStats } from '../lib/events.ts';
 import { newId } from '../lib/ids.ts';
 import { mailStats } from '../lib/mailer.ts';
 import { HINT_AGREES_SQL, HINT_CHOICE_SQL, READING_CHECK, READING_SURE, REVIEW_STATES, noulVerdict, recordOutcome } from '../lib/decisions.ts';
@@ -121,6 +121,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         uptime_s: Math.round((Date.now() - ctx.stats.startedAt.getTime()) / 1000),
         db_retries: { total: retryCount.value, deadlocks: retryStats.deadlocks, serialization_failures: retryStats.serializationFailures, exhausted: retryStats.exhausted },
         ws_clients: ctx.stats.wsClients,
+        event_relay: { ...relayStats },
         mail: { sent: mailStats.sent, failed_attempts: mailStats.failedAttempts, gave_up: mailStats.gaveUp, expired: mailStats.expired },
         decisions: { enabled: ctx.decider.enabled, model: ctx.decider.model, ...ctx.decider.stats },
       },

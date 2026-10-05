@@ -256,6 +256,7 @@ Real money is off today. These rules are in place so it can be switched on.
 | `worker` | Freshest worker heartbeat (`ok`, `last_beat_age_ms`, `max_age_ms`) |
 | `instance.db_retries` | Deadlock (`40P01`) and serialization (`40001`) retries of `tx()` since this process started, and `exhausted` (gave up with `503 retry_later`). A non-zero deadlock count means a code path broke the lock order |
 | `instance.ws_clients` | WebSocket clients connected to this process |
+| `instance.event_relay` | Cross-instance stream fan-out through PostgreSQL NOTIFY: `connected` (this process listens), `forwarded` and `received` events, `truncated` (an event over the 8 KB payload limit was relayed without its data), `errors`. Processes started by `main.ts` and the standalone worker relay; a `connected: false` on a running instance means its clients see only events this process produced |
 
 Database counters are global; `instance` describes only the API process that answered.
 
