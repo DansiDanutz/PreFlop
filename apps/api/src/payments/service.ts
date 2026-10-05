@@ -177,14 +177,16 @@ export async function applyProviderResult(c: Tx, id: string, r: ProviderResult):
   if (!p) throw new ApiError(500, 'internal', `payment ${id} vanished between phases`);
   if (p.status !== 'pending' || p.provider_ref !== null) return shape(p);
   const details = { ...(r.details ?? {}), ...(r.status === 'pending' && r.redirect_url ? { redirect_url: r.redirect_url } : {}) };
-  if (r.status === 'completed') {
+  // Serialised with the webhook route on (provider, ref): an event that arrived before this
+  // reference existed was kept, and is applied now; one arriving during this transaction waits and
+  // then finds the row. A kept verdict is the provider's later word and wins over the call's answer:
+  // a `completed` answer with an early `failed` webhook ends failed, never credited.
+  await lockRef(c, p.provider, r.ref);
+  const early = (await c.query(`select 1 from provider_events where provider = $1 and type = 'payment' and ref = $2 and applied_at is null limit 1`, [p.provider, r.ref])).rowCount ?? 0;
+  if (r.status === 'completed' && !early) {
     await completeRow(c, p);
     return setStatus(c, p, 'completed', details, { ref: r.ref, address: r.address ?? null });
   }
-  // Serialised with the webhook route on (provider, ref): an event that arrived before this
-  // reference existed was kept, and is applied now; one arriving during this transaction waits and
-  // then finds the row.
-  await lockRef(c, p.provider, r.ref);
   const row = (await c.query<FullRow>(
     `update payments set provider_ref = $2, address = coalesce($3, address), details = details || $4::jsonb where id = $1 returning ${FULL}`,
     [id, r.ref, r.address ?? null, JSON.stringify(details)])).rows[0]!;
@@ -333,6 +335,10 @@ export async function runPayment(db: Db, principal: string, key: string, req: Fa
   const prepared = await tx(db, async (c): Promise<{ stored: StoredResponse } | { fresh: boolean }> => {
     const stored = await findStored(c, principal, key, req.method, req.url, raw);
     if (stored) return { stored };
+    // A payment already on record is a retry: the route's checks were passed when it was prepared and
+    // must not run again against a world that now includes this very payment (the daily limit) or
+    // has changed since (eligibility). The PK catch below covers the concurrent duplicate.
+    if ((await c.query('select 1 from payments where id = $1', [id])).rowCount) return { fresh: false };
     try {
       await prepare(c, id);
       await c.query(`update payments set details = details || jsonb_build_object('request_sha256', $2::text) where id = $1`, [id, fingerprint]);
@@ -351,6 +357,13 @@ export async function runPayment(db: Db, principal: string, key: string, req: Fa
     const seen = row.details.request_sha256;
     if (typeof seen === 'string' && seen !== fingerprint) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different request');
     if (row.status !== 'pending' || row.provider_ref !== null) return { row, call: false };
+    if (row.provider !== rail.name) {
+      // The configuration changed while this payment waited: only the provider that was asked may be
+      // asked again (its webhook names the row). The row stays pending for the recovery pass, which
+      // applies the same rule, and for the operator.
+      await audit(c, { type: 'payment.provider_changed', paymentId: id, userId: row.user_id, orgId: row.org_id, provider: row.provider, configured: rail.name });
+      return { row, call: false };
+    }
     const mine = await claimCall(c, id);
     return { row: mine ?? row, call: mine !== null };
   });

@@ -12,7 +12,10 @@ import { RECOVERY_MIN_AGE_MS, callProvider, claimCall, recordOutcome } from './s
  * Nothing is ever refunded on a guess: an uncertain payout stays pending until the provider answers.
  */
 export async function recoverPayments(db: Db, providers: Providers, opts: { limit?: number; minAgeMs?: number; now?: number } = {}): Promise<{ asked: number; final: number }> {
-  const now = opts.now ?? Date.now();
+  const started = Date.now();
+  const now = opts.now ?? started;
+  /** The clock as of this moment, in the pass's frame of reference (tests pass a shifted `now`). */
+  const clock = () => now + (Date.now() - started);
   const minAgeMs = opts.minAgeMs ?? RECOVERY_MIN_AGE_MS;
   const due = (await db.query<{ id: string; provider: string; kind: string; mode: 'real-fiat' | 'real-crypto' }>(
     `select id, provider, kind, mode from payments
@@ -28,7 +31,9 @@ export async function recoverPayments(db: Db, providers: Providers, opts: { limi
     // A rail that is no longer configured, or a different one: the row waits for an operator (it is
     // on record and audited); recovery never hands a payment to a provider that did not take it.
     if (!rail || rail.name !== d.provider) continue;
-    const row = await tx(db, (c) => claimCall(c, d.id, now));
+    // The lease starts when THIS payment is claimed, not when the pass began: a slow provider call
+    // earlier in the pass must not leave a later payment's lease already expired while its call runs.
+    const row = await tx(db, (c) => claimCall(c, d.id, clock()));
     if (!row) continue;
     asked++;
     const outcome = await callProvider(rail, d.kind === 'withdrawal' ? 'createPayout' : 'createDeposit', row);

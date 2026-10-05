@@ -5,7 +5,7 @@ import { keyedRef } from '../src/lib/idempotency.ts';
 import { acct, balance } from '../src/lib/ledger.ts';
 import { noProviders, providersFromConfig } from '../src/providers/index.ts';
 import { recoverPayments } from '../src/payments/recovery.ts';
-import { chipsPurchase, runSandbox } from '../src/payments/service.ts';
+import { chipsPurchase, preparePayment, runPayment, runSandbox } from '../src/payments/service.ts';
 import { sandboxCustody, sandboxKyc, sandboxPsp } from '../src/providers/sandbox.ts';
 import { type KycProvider, type MoneyRail, type PaymentIntent, type ProviderEvent, ProviderRefused, type Providers } from '../src/providers/types.ts';
 import { signWebhook, verifyWebhook } from '../src/providers/webhook.ts';
@@ -70,6 +70,8 @@ const SECRET = 'whsec_test_' + 'x'.repeat(32);
 const failNext = new Set<string>();
 /** Payment ids for which the stand-in provider does not answer (a timeout: uncertain, not a refusal). */
 const downNext = new Set<string>();
+/** Payment ids the stand-in provider completes at once instead of answering pending. */
+const completeNext = new Set<string>();
 function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents: PaymentIntent[] } {
   const intents: PaymentIntent[] = [];
   const webhook = async (headers: Record<string, string | string[] | undefined>, raw: Buffer): Promise<ProviderEvent[]> => {
@@ -79,7 +81,7 @@ function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents
   return {
     name, rail, intents,
     async createDeposit(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new ProviderRefused('provider refused the card'); if (downNext.has(intent.id)) throw new Error('ETIMEDOUT: no answer'); return { status: 'pending', ref: `${name}_${intent.id}`, redirect_url: `https://${name}.example/pay/${intent.id}`, address: rail === 'chain' ? '0xdeposit' : null }; },
-    async createPayout(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new ProviderRefused('destination refused'); if (downNext.has(intent.id)) throw new Error('ETIMEDOUT: no answer'); return { status: 'pending', ref: `${name}_${intent.id}` }; },
+    async createPayout(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new ProviderRefused('destination refused'); if (downNext.has(intent.id)) throw new Error('ETIMEDOUT: no answer'); return { status: completeNext.has(intent.id) ? 'completed' : 'pending', ref: `${name}_${intent.id}` }; },
     webhook,
   };
 }
@@ -296,12 +298,79 @@ describe('provider adapters', () => {
     expect(custody.intents.length).toBe(asked + 3);
   });
 
+  it('an early `failed` webhook wins over a later `completed` answer from the provider call', async () => {
+    const p = await verifiedPlayer('EarlyFail');
+    const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 4_000_000, method: 'crypto' }, idemKey());
+    await hook('custody-test', [{ type: 'payment', ref: fund.body.provider_ref, status: 'completed' }]);
+    const k = idemKey();
+    const id = keyedRef('pay', `user:${p.id}`, k['idempotency-key']!);
+    downNext.add(id);
+    const body = { mode: 'real-crypto', currency: 'USDT', amount_minor: 1_000_000, method: 'crypto', destination: '0xearly' };
+    expect((await h.api('POST', '/v1/me/withdrawals', p.token, body, k)).status).toBe(502);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(3_000_000);
+    // The provider reports the payout failed before we ever stored its reference.
+    expect((await hook('custody-test', [{ type: 'payment', ref: `custody-test_${id}`, status: 'failed' }])).body).toEqual({ received: 1, applied: 0 });
+    // Asked again, the provider now answers "completed" for the same intent; the kept verdict is its later word.
+    downNext.delete(id);
+    completeNext.add(id);
+    expect(await recoverPayments(h.db, providers, { minAgeMs: 0, now: Date.now() + 130_000 })).toEqual({ asked: 1, final: 1 });
+    expect((await h.api('GET', '/v1/me/payments', p.token)).body.payments.find((x: any) => x.id === id).status).toBe('failed');
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(4_000_000); // refunded once
+    expect((await h.db.query('select count(*)::int as n from provider_events where ref = $1 and applied_at is null', [`custody-test_${id}`])).rows[0].n).toBe(0);
+  });
+
+  it('a retry never asks a different provider than the one recorded on the payment', async () => {
+    const p = await verifiedPlayer('Switch');
+    const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 3_000_000, method: 'crypto' }, idemKey());
+    await hook('custody-test', [{ type: 'payment', ref: fund.body.provider_ref, status: 'completed' }]);
+    const key = idemKey()['idempotency-key']!;
+    const principal = `user:${p.id}`;
+    const id = keyedRef('pay', principal, key);
+    const body = { mode: 'real-crypto', currency: 'USDT', amount_minor: 1_000_000, method: 'crypto', destination: '0xswitch' };
+    const req = { method: 'POST', url: '/v1/me/withdrawals', rawBody: Buffer.from(JSON.stringify(body)) } as any;
+    const run = (rail: MoneyRail) => runPayment(h.db, principal, key, req, rail, 'createPayout', (c, pid) =>
+      preparePayment(c, { id: pid, rail, kind: 'withdrawal', userId: p.id, mode: 'real-crypto', currency: 'USDT', amountMinor: 1_000_000, method: 'crypto', destination: '0xswitch' }).then(() => undefined));
+    downNext.add(id);
+    expect((await run(custody)).status).toBe(502); // pending, provider custody-test, no reference
+    // The configuration now names another custody provider: the retry must not hand the payment to it.
+    const other = pendingRail('custody-other', 'chain');
+    const r = await run(other);
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ id, status: 'pending', provider: 'custody-test', provider_ref: null });
+    expect(other.intents).toHaveLength(0);
+    // Nor does the recovery pass, when the configured rail is not the recorded one.
+    expect(await recoverPayments(h.db, { ...providers, custody: other }, { minAgeMs: 0, now: Date.now() + 130_000 })).toEqual({ asked: 0, final: 0 });
+    downNext.delete(id);
+  });
+
+  it('deposit: a retry of a pending deposit is recognised before the limit and eligibility checks run', async () => {
+    const p = await verifiedPlayer('LimRetry');
+    expect((await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 1_000 })).body.deposit_day_minor).toBe(1_000);
+    const k = idemKey();
+    const id = keyedRef('pay', `user:${p.id}`, k['idempotency-key']!);
+    downNext.add(id);
+    const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 1_000, method: 'card' };
+    const asked = psp.intents.length;
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep, k)).body.type).toBe('provider_unavailable');
+    // The pending 1 000 fills the limit; the retry of that very deposit is not a new deposit.
+    const again = await h.api('POST', '/v1/me/deposits', p.token, dep, k);
+    expect(again.body.type).toBe('provider_unavailable');
+    expect(again.body.payment.id).toBe(id);
+    expect(psp.intents.length).toBe(asked + 2);
+    // A different deposit is still held back by the limit.
+    expect((await h.api('POST', '/v1/me/deposits', p.token, { ...dep, amount_minor: 1 }, idemKey())).body.type).toBe('limit_reached');
+    downNext.delete(id);
+  });
+
   it('KYC: a verdict delivered before the session reference was stored is kept and applied when it is', async () => {
     const p = await h.register('Early');
     await realMoneyReady(h, p.id);
     expect((await hook('idp', [{ type: 'kyc', ref: `idp_${p.id}`, status: 'verified' }])).body).toEqual({ received: 1, applied: 0 });
+    // A later early `rejected` does not undo it, as a delivered webhook would not either.
+    expect((await hook('idp', [{ type: 'kyc', ref: `idp_${p.id}`, status: 'rejected' }])).body).toEqual({ received: 1, applied: 0 });
     const started = await h.api('POST', '/v1/me/kyc', p.token, {});
     expect(started.body).toEqual({ kyc_status: 'verified', provider: 'idp', redirect_url: null });
+    expect((await h.db.query('select count(*)::int as n from provider_events where ref = $1 and applied_at is null', [`idp_${p.id}`])).rows[0].n).toBe(0);
     expect((await h.api('GET', '/v1/me', p.token)).body.kyc_status).toBe('verified');
   });
 

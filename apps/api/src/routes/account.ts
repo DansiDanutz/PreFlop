@@ -202,10 +202,12 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
       await audit(c, { type: `kyc.${r.status}`, userId: u.id, provider: kyc.name, ref: r.ref });
       const early = (await c.query<{ id: string; status: 'verified' | 'rejected' | 'pending' }>(
         `select id, status from provider_events where provider = $1 and type = 'kyc' and ref = $2 and applied_at is null order by id for update`, [kyc.name, r.ref])).rows;
+      // As for a delivered webhook, a verdict never downgrades a verified user: once an early event
+      // says verified, later early events are consumed but change nothing.
       let status = r.status;
       for (const ev of early) {
         await c.query('update provider_events set applied_at = now() where id = $1', [ev.id]);
-        status = ev.status;
+        if (status !== 'verified') status = ev.status;
       }
       if (early.length) {
         await c.query('update users set kyc_status = $2 where id = $1', [u.id, status]);
