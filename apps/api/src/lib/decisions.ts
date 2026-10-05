@@ -239,9 +239,15 @@ const prose = (v: unknown, withheld: string[] | undefined, path: string): unknow
         : v;
 const scrubText = (text: string): string =>
   text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
-export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
+/** Nesting beyond this is summarised, not walked: applicant JSON is bounded at the API, stored rows are bounded here too. */
+export const SCRUB_MAX_DEPTH = 12;
+export function scrubContact(value: unknown, withheld?: string[], path = '', depth = 0): unknown {
   if (typeof value === 'string') return scrubText(value);
-  if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`));
+  if (depth >= SCRUB_MAX_DEPTH && value !== null && typeof value === 'object') {
+    withheld?.push(`${path} (nested too deep)`);
+    return { chars: JSON.stringify(value).length };
+  }
+  if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`, depth + 1));
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     const entries = Object.entries(value as Record<string, unknown>);
@@ -264,7 +270,7 @@ export function scrubContact(value: unknown, withheld?: string[], path = ''): un
       const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
       else if (FREE_TEXT_KEY.test(k) || (typeof v === 'string' && v.length > PROSE_CHARS)) out[key] = prose(v, withheld, here);
-      else out[key] = scrubContact(v, withheld, here);
+      else out[key] = scrubContact(v, withheld, here, depth + 1);
     }
     if (entries.length > SCRUB_MAX_KEYS) withheld?.push(`${path ? `${path}.` : ''}… (${entries.length - SCRUB_MAX_KEYS} more fields not shown)`);
     return out;

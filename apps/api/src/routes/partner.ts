@@ -12,6 +12,7 @@ import { ApiError, badRequest, conflict, notFound, unauthorized, unprocessable }
 import { EventBatch, publish } from '../lib/events.ts';
 import { idempotent } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
+import { PositiveMinor } from '../lib/json.ts';
 import { limitParam } from '../lib/query.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { assertPublicUrl, postWebhook } from '../lib/safeUrl.ts';
@@ -127,7 +128,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.post(`${P}/webhooks`, async (req, reply) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'], write: true });
-    const b = z.object({ url: z.string().url().max(500), events: z.array(z.enum(WEBHOOK_EVENTS)).min(1) }).parse(req.body);
+    const b = z.object({ url: z.string().url().max(500), events: z.array(z.enum(WEBHOOK_EVENTS)).min(1).max(WEBHOOK_EVENTS.length * 2).transform((e) => [...new Set(e)]) }).parse(req.body);
     await assertPublicUrl(b.url);
     const id = newId('wh');
     const secret = `whsec_${randomBytes(24).toString('base64url')}`;
@@ -233,6 +234,11 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     return tx(ctx.db, async (c) => {
       const locked = await partnerFromToken(c, req, true);
       if (locked.orgId !== p.orgId) throw unauthorized('unauthorized', 'token expired or revoked');
+      // No session for a blocked account (as at /v1/auth/login): a suspended, closed or
+      // self-excluded player gets nothing, not even the non-betting endpoints.
+      await c.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [id]);
+      const st = (await c.query<{ status: string }>('select status from users where id = $1 for update', [id])).rows[0];
+      if (st?.status !== 'active') throw new ApiError(403, 'account_blocked', `account is ${st?.status ?? 'unknown'}`);
       return { token: await createSession(c, id), user_id: id };
     });
   });
@@ -251,7 +257,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header required (8–200 characters)');
     const { ref } = req.params as { ref: string };
-    const b = z.object({ amount_minor: z.number().int().positive(), mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
+    const b = z.object({ amount_minor: PositiveMinor, mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
     const principal = `partner:${p.orgId}`;
@@ -280,7 +286,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const p = await partnerFromToken(ctx.db, req);
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header (8–200 chars) required');
-    const b = z.object({ player_ref: z.string(), round_id: z.string(), selection_id: z.string(), stake_minor: z.number().int().positive(), odds_centi: z.number().int(), accept_price_change: z.boolean().optional() }).parse(req.body);
+    const b = z.object({ player_ref: z.string().min(1).max(100), round_id: z.string().min(1).max(64), selection_id: z.string().min(1).max(64), stake_minor: PositiveMinor, odds_centi: z.number().int().min(100).max(1_000_000), accept_price_change: z.boolean().optional() }).parse(req.body);
     const userId = await partnerPlayer(ctx.db, p.orgId, b.player_ref);
     // Same per-player bet limiter as POST /v1/bets, keyed on the player (not the partner): a
     // partner's server cannot bet faster for one player than that player could themselves.

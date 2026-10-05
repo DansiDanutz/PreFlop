@@ -49,6 +49,18 @@ describe('WS /v1/stream connection health', () => {
     expect(await big.closed).toBe(1009);
   });
 
+  it('follows at most 50 well-formed topics per socket; anything else is ignored', async () => {
+    const s = connect();
+    await s.opened;
+    s.ws.send(JSON.stringify({ subscribe: ['lobby', 'drop table rounds', 'table:', 'x'.repeat(200), 123, ...Array.from({ length: 60 }, (_, i) => `table:t-${i}`)] }));
+    await sleep(100);
+    const sub = s.frames.find((f) => f.type === 'subscribed') as { topics: string[] } | undefined;
+    expect(sub?.topics).toHaveLength(50);
+    expect(sub?.topics).toContain('lobby');
+    expect(sub?.topics.every((t) => /^(lobby|table:t-\d+)$/.test(t))).toBe(true);
+    s.ws.close();
+  });
+
   it('pings every interval and terminates a socket that misses a pong', async () => {
     streamTuning.pingMs = 60;
     const healthy = connect();

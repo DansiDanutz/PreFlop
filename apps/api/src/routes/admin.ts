@@ -33,6 +33,16 @@ export async function requirePlatform(ctx: AppContext, req: FastifyRequest, ...r
   return u;
 }
 
+/**
+ * The PreFlop team decides about a club's table only without a stake in that club: a team member
+ * who is also a member of the club (any role) does not review, void or approve its tables for real
+ * money; a colleague does (docs/13 §10).
+ */
+export async function assertNoClubInterest(c: Tx | AppContext['db'], userId: string, tableId: string): Promise<void> {
+  const hit = (await c.query('select 1 from poker_tables t join memberships m on m.org_id = t.club_id where t.id = $1 and m.user_id = $2', [tableId, userId])).rowCount;
+  if (hit) throw forbidden('conflict_of_interest', 'you are a member of the club running this table; another team member decides');
+}
+
 const Setting = z.object({ value: z.unknown(), note: z.string().max(500).optional() });
 
 /** Evidence of one round for reviewers: capture record, image, entries and procedure ordinals. */
@@ -167,7 +177,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         order by a.resolved_at nulls first, a.created_at desc limit 300`)).rows };
   });
   app.post('/v1/admin/alerts/:id/resolve', async (req) => {
-    const u = await requirePlatform(ctx, req);
+    const u = await requirePlatform(ctx, req, 'admin', 'ops', 'risk');
     const { id } = req.params as { id: string };
     await tx(ctx.db, async (c) => {
       const r = await c.query('update alerts set resolved_at = now(), resolved_by = $2 where id = $1 and resolved_at is null', [id, u.id]);
@@ -226,6 +236,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const ev = new EventBatch();
     const out = await tx(ctx.db, async (c) => {
       const r = await lockRound(c, id);
+      await assertNoClubInterest(c, u.id, r.table_id);
       const res = await resolveReviewByPlatform(c, r, u.id, decision, ctx.timing, ev);
       if (res.status === 200) await recordOutcome(c, 'review', id, decision.action, u.id);
       await ensureOpenRound(c, r.table_id, ev);
@@ -242,6 +253,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const ev = new EventBatch();
     const ok = await tx(ctx.db, async (c) => {
       const r = await lockRound(c, id);
+      await assertNoClubInterest(c, u.id, r.table_id);
       const done = await voidRound(c, r, `PreFlop team: ${reason}`, `user:${u.id}`, ev);
       if (done) {
         if (REVIEW_STATES.has(r.state)) await recordOutcome(c, 'review', id, 'void', u.id);
@@ -307,6 +319,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!cur) throw notFound('user');
       // Support and risk manage players, not the team: no changes to staff accounts or to themselves.
       if (u.platform_role !== 'admin' && (id === u.id || cur.platform_role !== null)) throw forbidden('forbidden_target', 'only an admin can change a PreFlop team account');
+      // Support handles complaints: it may suspend, close or self-exclude a player, never verify an
+      // identity or lift a block. Those decisions open real-money play, so admin or risk make them.
+      if (u.platform_role === 'support' && (b.kyc_status !== undefined || b.status === 'active')) throw forbidden('forbidden_role', 'KYC decisions and re-activations are made by admin or risk');
       // Whatever the current status (self_excluded, or suspended in between), an account under a
       // self-exclusion that has not ended cannot be made active; migration 016 enforces it in SQL too.
       if (b.status === 'active' && cur.self_excluded_until && new Date(cur.self_excluded_until) > new Date())
@@ -354,7 +369,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const { id } = req.params as { id: string };
     const b = z.object({ email: z.string().email().optional() }).parse(req.body ?? {});
     return reply.code(201).send(await tx(ctx.db, async (c) => {
-      if (!(await c.query('select 1 from organizations where id = $1', [id])).rowCount) throw notFound('organization');
+      // The organization row lock serialises this check with issuance and with a redemption that
+      // creates the first owner (redeemOwnerClaim takes the same lock), so the check cannot go stale.
+      if (!(await c.query('select 1 from organizations where id = $1 for update', [id])).rowCount) throw notFound('organization');
+      // Once an organization has an owner, a further owner link hands over its treasury and API
+      // clients to whoever redeems it: an admin decision, not an ops one.
+      const owners = (await c.query(`select 1 from memberships where org_id = $1 and role = 'owner'`, [id])).rowCount;
+      if (owners && u.platform_role !== 'admin') throw forbidden('forbidden_role', 'this organization already has an owner; only an admin issues another owner link');
       return { owner_claim: await issueOwnerClaim(c, id, b.email?.toLowerCase() ?? null, u.id) };
     }));
   });
@@ -423,6 +444,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     return tx(ctx.db, async (c) => {
       const t = (await c.query<{ mode: PlayMode; kind: string }>('select mode, kind from poker_tables where id = $1 for update', [id])).rows[0];
       if (!t) throw notFound('table');
+      await assertNoClubInterest(c, u.id, id);
       // A typed flop has no capture or review: a manual table never carries real money, not even a
       // real-money tournament's bets (docs/19).
       if (b.approved && t.kind === 'manual') throw unprocessable('manual_table', 'a manual table cannot be approved for real money');
@@ -439,6 +461,8 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ status: z.enum(['active', 'paused']), reason: z.string().max(200).optional() }).parse(req.body);
     const ev = new EventBatch();
     await tx(ctx.db, async (c) => {
+      // Pausing voids the open round and refunds its bets: the same conflict-of-interest rule as a void.
+      await assertNoClubInterest(c, u.id, id);
       if (b.status === 'paused') {
         // Lock order: open round first, then the table; accepted bets on the open flop are refunded.
         const open = (await c.query<{ id: string }>(`select id from rounds where table_id = $1 and state = 'OPEN'`, [id])).rows[0];
@@ -447,6 +471,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
       // The PreFlop team lifts any hold (monitor, evidence, platform, floor); the audit keeps which one.
       const prev = (await c.query<{ pause_kind: string | null }>('select pause_kind from poker_tables where id = $1 for update', [id])).rows[0];
       if (!prev) throw notFound('table');
+      await assertNoClubInterest(c, u.id, id);
       const r = await c.query(`update poker_tables set status = $2, pause_reason = $3, pause_kind = case when $2 = 'paused' then 'platform' end,
                                monitor = case when $2 = 'active' then '{}'::jsonb else monitor end where id = $1`, [id, b.status, b.status === 'paused' ? b.reason ?? 'paused by PreFlop' : null]);
       if (!r.rowCount) throw notFound('table');

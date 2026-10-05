@@ -91,11 +91,13 @@ describe('F01: self-exclusion can never be shortened or lifted early', () => {
     expect((await bet(h, after.body.token, `sim-1:h${hand}`, 'colour:mixed', 100)).status).toBe(201);
   });
 
-  it('self-excluding a suspended account keeps it suspended (no route back to active through the lift)', async () => {
+  it('a suspended account cannot self-exclude its way back to active: its session is refused and it stays suspended', async () => {
     const p = await user('se-sus');
     const tok = p.token;
     await h.db.query(`update users set status = 'suspended' where id = $1`, [p.id]);
-    expect((await h.api('POST', '/v1/me/self-exclusion', tok, { days: 2 })).status).toBe(200);
+    // A suspended account's session is refused on use (docs/13 §10), so there is no route through the lift at all.
+    const r = await h.api('POST', '/v1/me/self-exclusion', tok, { days: 2 });
+    expect([r.status, r.body.type]).toEqual([403, 'account_blocked']);
     expect(await statusOf(p.id)).toBe('suspended');
   });
 

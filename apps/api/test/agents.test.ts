@@ -8,11 +8,16 @@ import { type Harness, harness, ledgerSums } from './helpers.ts';
 /** Agents: two levels on net gaming revenue, real-money modes only (docs/16 §4). */
 let h: Harness;
 let admin: string;
+/** A second admin: the one who approves a statement never pays it (four eyes). */
+let admin2: string;
 let roundId: string;
 beforeAll(async () => {
   h = await harness('agents');
   await tx(h.db, (c) => seedAdmin(c, 'agents-admin@test.dev', 'admin-pass-1'));
   admin = (await h.api('POST', '/v1/auth/login', undefined, { email: 'agents-admin@test.dev', password: 'admin-pass-1' })).body.token;
+  const second = await h.api('POST', '/v1/auth/register', undefined, { email: 'agents-admin2@test.dev', password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Admin Two' });
+  await h.api('PUT', `/v1/admin/users/${second.body.user.id}`, admin, { platform_role: 'admin' });
+  admin2 = second.body.token;
   await h.sim.heartbeat();
   await h.work();
   const n = await h.sim.openHand();
@@ -105,13 +110,17 @@ describe('agents', () => {
 
   it('pays approved statements only when real money is on, into the agent’s wallet', async () => {
     const st = (await h.api('GET', '/v1/admin/agents', admin)).body.statements.find((s: any) => s.agent_id === A.id && s.level === 1 && s.month === '2025-09');
-    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin)).body.type).toBe('not_approved');
+    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin2)).body.type).toBe('not_approved');
     expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/approve`, admin)).status).toBe(200);
-    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin)).body.type).toBe('mode_disabled');
+    // Four eyes: the approver does not pay.
+    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin)).body.type).toBe('four_eyes');
+    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin2)).body.type).toBe('mode_disabled');
     await h.api('PUT', '/v1/admin/settings/modes_enabled', admin, { value: { play: true, 'virtual-chips': true, diamonds: true, 'real-fiat': true, 'real-crypto': false } });
-    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin)).status).toBe(200);
+    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin2)).status).toBe(200);
     expect(await balance(h.db as never, `${A.id}:wallet:real-fiat:EUR`)).toBe(1_750);
-    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin)).body.type).toBe('not_approved');
+    const paid = (await h.db.query('select decided_by, paid_by from agent_statements where id = $1', [st.id])).rows[0];
+    expect(paid.decided_by).not.toBe(paid.paid_by);
+    expect((await h.api('POST', `/v1/admin/agents/statements/${st.id}/pay`, admin2)).body.type).toBe('not_approved');
     const mine = (await h.api('GET', '/v1/me/agent', A.token)).body.statements;
     expect(mine.find((s: any) => s.id === st.id).status).toBe('paid');
     for (const s of await ledgerSums(h.db)) expect(Number(s.total)).toBe(0);
@@ -144,13 +153,13 @@ describe('agents', () => {
     expect(await l1('2025-12')).toMatchObject({ carry_in_minor: -3_000, carry_out_minor: -2_000, amount_minor: 0 });
     const l2 = (await h.api('GET', '/v1/admin/agents', admin)).body.statements.find((s: any) => s.agent_id === A.id && s.level === 2 && s.month === '2025-09');
     expect((await h.api('POST', `/v1/admin/agents/statements/${l2.id}/approve`, admin)).status).toBe(200);
-    expect((await h.api('POST', `/v1/admin/agents/statements/${l2.id}/pay`, admin)).body.type).toBe('agent_not_active');
+    expect((await h.api('POST', `/v1/admin/agents/statements/${l2.id}/pay`, admin2)).body.type).toBe('agent_not_active');
     // Back to active. January: p1 loses 2,500, so only 500 is above the carry: 25% of it.
     expect((await h.api('PUT', `/v1/admin/agents/${A.id}`, admin, { status: 'active' })).status).toBe(200);
     await settled(p1.id, 'real-fiat', 'EUR', 2_500, 0, '2026-01-10');
     await h.api('POST', '/v1/admin/agents/statements/close?month=2026-01', admin);
     expect(await l1('2026-01')).toMatchObject({ carry_in_minor: -2_000, carry_out_minor: 0, amount_minor: 125 });
-    expect((await h.api('POST', `/v1/admin/agents/statements/${l2.id}/pay`, admin)).status).toBe(200);
+    expect((await h.api('POST', `/v1/admin/agents/statements/${l2.id}/pay`, admin2)).status).toBe(200);
   });
 
   it('concurrent reparenting never builds a third level', async () => {

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 export interface Config {
@@ -17,7 +18,8 @@ export interface Config {
   playStartMinor: number;
   corsOrigins: string[];
   /** Trust X-Forwarded-For from the load balancer (per-IP rate limits need the client address). */
-  trustProxy: boolean;
+  /** false, the number of proxy hops in front of the API, or the proxies' addresses/CIDRs (never a bare true in production). */
+  trustProxy: boolean | number | string[];
   /** Fastify request logging (LOG=1). */
   log: boolean;
   /** In-process limits per window of one minute (per API instance). */
@@ -101,6 +103,35 @@ export function passwordWeakness(pw: string): string | null {
 }
 
 const bool = (def: boolean) => z.enum(['true', 'false', '1', '0']).default(def ? 'true' : 'false').transform((v) => v === 'true' || v === '1');
+/**
+ * TRUST_PROXY: `false` (default), `true` (every X-Forwarded-For hop; refused in production, since
+ * a client then forges its own address and every per-IP limit), a hop count (`1` behind Fly or one
+ * load balancer: the last address a trusted proxy appended) or a comma-separated list of the
+ * proxies' IPs/CIDRs (or proxy-addr's names loopback, linklocal, uniquelocal).
+ */
+const PROXY_ENTRY = /^([0-9a-fA-F:.]+)(\/\d{1,3})?$/;
+export function parseTrustProxy(v: string): boolean | number | string[] {
+  const s = v.trim();
+  if (s === 'true') return true;
+  if (s === 'false' || s === '0' || s === '') return false;
+  if (/^\d{1,2}$/.test(s)) return Number(s);
+  const list = s.split(',').map((x) => x.trim()).filter(Boolean);
+  const KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
+  // An address with a prefix length within its family (/32 for IPv4, /128 for IPv6): an out-of-range
+  // mask would pass here and crash Fastify's proxy-address compiler at startup instead of failing config.
+  const validEntry = (x: string) => {
+    const m = PROXY_ENTRY.exec(x);
+    if (!m) return false;
+    const family = isIP(m[1]!);
+    if (family === 0) return false;
+    return m[2] === undefined || Number(m[2].slice(1)) <= (family === 4 ? 32 : 128);
+  };
+  if (list.length && list.every((x) => KEYWORDS.has(x) || validEntry(x))) return list;
+  throw new Error('TRUST_PROXY must be true, false, a hop count or a comma-separated list of proxy IPs/CIDRs');
+}
+const trustProxy = z.string().default('false').transform((v, ctx) => {
+  try { return parseTrustProxy(v); } catch (e) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: (e as Error).message }); return z.NEVER; }
+});
 const ms = (def: number) => z.coerce.number().int().positive().default(def);
 
 /** The environment variables the API and worker read. Unknown variables are ignored. */
@@ -114,7 +145,7 @@ const Env = z.object({
   RUN_WORKER: bool(true),
   PLAY_START: z.coerce.number().int().nonnegative().default(10_000),
   CORS_ORIGINS: z.string().default('*'),
-  TRUST_PROXY: bool(false),
+  TRUST_PROXY: trustProxy,
   LOG: bool(false),
   WEBHOOK_ALLOW_PRIVATE: bool(false),
   ADMIN_PASSWORD: z.string().optional(),
@@ -176,6 +207,9 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
     if (o !== '*' && o.includes('*') && !WILDCARD_ORIGIN.test(o)) {
       problems.push(`CORS_ORIGINS entry ${o} is too broad; a wildcard must be one "-*-" inside an https host label`);
     }
+  }
+  if (raw.TRUST_PROXY?.trim() === 'true') {
+    problems.push('TRUST_PROXY=true trusts every X-Forwarded-For hop, so a client can forge its address and bypass per-IP limits; set the number of proxy hops (1 behind Fly or one load balancer) or the proxies\' CIDRs');
   }
   if (!raw.DATABASE_URL) problems.push('DATABASE_URL must be set in production (the localhost default is for development)');
   else {

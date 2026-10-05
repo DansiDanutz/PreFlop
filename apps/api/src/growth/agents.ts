@@ -71,6 +71,7 @@ export async function updateAgent(c: Tx, agentId: string, u: AgentUpdate, by: st
   if (u.rate_l2_bps !== undefined && (u.rate_l2_bps < 0 || u.rate_l2_bps > RATE_CAPS.l2)) throw unprocessable('rate_cap', `level-2 rate is 0–${RATE_CAPS.l2 / 100}%`);
   if (u.parent_agent_id !== undefined && u.parent_agent_id !== null) {
     if (u.parent_agent_id === agentId) throw unprocessable('invalid_parent', 'an agent cannot be its own parent');
+    if (u.parent_agent_id === by) throw forbidden('self_approval', 'you cannot place an agent under your own agent account');
     const p = (await c.query<AgentRow>('select * from agents where user_id = $1', [u.parent_agent_id])).rows[0];
     if (!p || p.status !== 'active') throw unprocessable('invalid_parent', 'the parent must be an active agent');
     if (p.parent_agent_id) throw unprocessable('depth_limit', 'agents go two levels deep: the parent must be a top-level agent');
@@ -177,11 +178,13 @@ export async function approveStatement(c: Tx, id: string, by: string): Promise<v
 
 /** Pays an approved statement from PreFlop marketing into the agent's wallet in that currency. */
 export async function payStatement(c: Tx, id: string, by: string): Promise<void> {
-  const s = (await c.query<{ agent_id: string; currency: string; amount_minor: string; status: string }>(
-    'select agent_id, currency, amount_minor::text, status from agent_statements where id = $1 for update', [id])).rows[0];
+  const s = (await c.query<{ agent_id: string; currency: string; amount_minor: string; status: string; decided_by: string | null }>(
+    'select agent_id, currency, amount_minor::text, status, decided_by from agent_statements where id = $1 for update', [id])).rows[0];
   if (!s) throw notFound('statement');
   if (s.status !== 'approved') throw unprocessable('not_approved', 'approve the statement before paying it');
   if (s.agent_id === by) throw forbidden('self_approval', 'another admin pays your own statements');
+  // Four eyes on money leaving PreFlop: the team member who approved a statement does not pay it.
+  if (s.decided_by === by) throw forbidden('four_eyes', 'the team member who approved a statement does not pay it; another admin does');
   // Held until the payment commits, so a concurrent suspension waits for it (or wins before it).
   const agent = (await c.query<{ status: string }>('select status from agents where user_id = $1 for share', [s.agent_id])).rows[0];
   if (agent?.status !== 'active') throw unprocessable('agent_not_active', 'commission is paid to active agents only; re-activate the agent first');
@@ -191,6 +194,6 @@ export async function payStatement(c: Tx, id: string, by: string): Promise<void>
   if (amount > 0) {
     await post(c, 'agent.commission', id, [{ from: acct('PreFlop', 'marketing', mode, s.currency), to: acct(s.agent_id, 'wallet', mode, s.currency), amountMinor: amount }]);
   }
-  await c.query(`update agent_statements set status = 'paid', decided_by = $2 where id = $1`, [id, by]);
+  await c.query(`update agent_statements set status = 'paid', paid_by = $2 where id = $1`, [id, by]);
   await audit(c, { type: 'agent.statement_paid', statementId: id, amountMinor: amount, by });
 }

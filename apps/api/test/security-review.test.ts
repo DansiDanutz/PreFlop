@@ -1,5 +1,8 @@
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { assertEligibleInTx } from '../src/bets/service.ts';
 import { tx } from '../src/lib/db.ts';
+import { tableReadiness } from '../src/rounds/readiness.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { type Harness, harness, ledgerSums, ownedOrg, idemKey } from './helpers.ts';
 
@@ -47,7 +50,12 @@ describe('authorization review', () => {
     const player = await user('player');
     expect((await h.api('PUT', `/v1/admin/users/${adminId}`, support.token, { status: 'suspended' })).body.type).toBe('forbidden_target');
     expect((await h.api('PUT', `/v1/admin/users/${support.id}`, support.token, { kyc_status: 'verified' })).body.type).toBe('forbidden_target');
-    expect((await h.api('PUT', `/v1/admin/users/${player.id}`, support.token, { kyc_status: 'pending' })).status).toBe(200);
+    // Support suspends and closes; KYC decisions and re-activations open real-money play, so admin or risk make them.
+    expect((await h.api('PUT', `/v1/admin/users/${player.id}`, support.token, { kyc_status: 'pending' })).body.type).toBe('forbidden_role');
+    expect((await h.api('PUT', `/v1/admin/users/${player.id}`, support.token, { status: 'suspended' })).status).toBe(200);
+    expect((await h.api('PUT', `/v1/admin/users/${player.id}`, support.token, { status: 'active' })).body.type).toBe('forbidden_role');
+    const risk = await staff('risk', 'risk');
+    expect((await h.api('PUT', `/v1/admin/users/${player.id}`, risk.token, { status: 'active', kyc_status: 'pending' })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', admin)).status).toBe(200);
   });
 
@@ -125,5 +133,149 @@ describe('accounting review', () => {
 
   it('the database session runs in UTC', async () => {
     expect((await h.db.query('show timezone')).rows[0].TimeZone).toBe('UTC');
+  });
+});
+
+/** Second review pass (docs/13 §10): conflicts of interest, ownership links, scoping and input bounds. */
+describe('security review pass', () => {
+  it('a team member who belongs to a club does not void, review or approve that club\'s tables; a colleague does', async () => {
+    const ops = await staff('club-ops', 'ops');
+    await h.db.query(`insert into memberships (user_id, org_id, role) values ($1, 'club-sim', 'viewer') on conflict do nothing`, [ops.id]);
+    await h.sim.heartbeat();
+    await h.work();
+    const n = await h.sim.openHand();
+    const round = `sim-1:h${n}`;
+    expect((await h.api('POST', `/v1/admin/rounds/${round}/void`, ops.token, { reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('PUT', '/v1/admin/tables/sim-1/real-money', ops.token, { approved: false })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('POST', `/v1/admin/rounds/${round}/review`, ops.token, { action: 'void', reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('PUT', '/v1/admin/tables/sim-1/status', ops.token, { status: 'paused', reason: 'conflict test' })).body.type).toBe('conflict_of_interest');
+    expect((await h.api('PUT', '/v1/admin/tables/sim-1/status', ops.token, { status: 'active' })).body.type).toBe('conflict_of_interest');
+    expect((await h.db.query(`select status from poker_tables where id = 'sim-1'`)).rows[0].status).toBe('active');
+    expect((await h.api('POST', `/v1/admin/rounds/${round}/void`, admin, { reason: 'no conflict' })).body).toMatchObject({ state: 'VOID' });
+    await h.db.query(`delete from memberships where user_id = $1 and org_id = 'club-sim'`, [ops.id]);
+  });
+
+  it('alerts are resolved by admin, ops or risk, not support', async () => {
+    const support = await staff('alert-support', 'support');
+    const id = (await h.db.query(`insert into alerts (kind, severity, details) values ('review_pass', 'info', '{}') returning id`)).rows[0].id;
+    expect((await h.api('POST', `/v1/admin/alerts/${id}/resolve`, support.token)).body.type).toBe('forbidden_role');
+    expect((await h.api('POST', `/v1/admin/alerts/${id}/resolve`, admin)).status).toBe(200);
+  });
+
+  it('only an admin re-issues an owner link once an organization has an owner, and a link issued for an email works for that account only', async () => {
+    const owner = await user('claim-owner');
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: 'Claim Partner' }, owner);
+    const ops = await staff('claim-ops', 'ops');
+    expect((await h.api('POST', `/v1/admin/orgs/${org}/owner-claim`, ops.token, {})).body.type).toBe('forbidden_role');
+    const other = await user('claim-other');
+    const bound = await h.api('POST', `/v1/admin/orgs/${org}/owner-claim`, admin, { email: other.email });
+    expect(bound.status).toBe(201);
+    const stranger = await user('claim-stranger');
+    expect((await h.api('POST', '/v1/me/org-claims', stranger.token, { token: bound.body.owner_claim.token })).body.type).toBe('claim_email_mismatch');
+    expect((await h.api('POST', '/v1/me/org-claims', other.token, { token: bound.body.owner_claim.token })).body).toMatchObject({ org_id: org, kind: 'partner' });
+    // An org that has no owner yet is ops business, as before.
+    const fresh = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Fresh Org', owner_email: 'fresh@sr.dev' })).body;
+    expect((await h.api('POST', `/v1/admin/orgs/${fresh.id}/owner-claim`, ops.token, {})).status).toBe(201);
+  });
+
+  it('an admin cannot place an agent under their own agent account', async () => {
+    const a = await user('agent-child');
+    await h.api('POST', '/v1/me/agent/apply', a.token, {});
+    expect((await h.api('PUT', `/v1/admin/agents/${a.id}`, admin, { status: 'active', parent_agent_id: adminId })).body.type).toBe('self_approval');
+  });
+
+  it('a club opens rooms on its own tables only; a partner sees its own bets per round, not the platform totals', async () => {
+    const owner = await user('room-club-owner');
+    const club = await ownedOrg(h, admin, { kind: 'club', name: 'Room Club' }, owner);
+    const r = await h.api('POST', `/v1/org/${club}/rooms`, owner.token, { name: 'Not ours', table_id: 'sim-1', mode: 'virtual-chips', house: 'pool', rules: { margin_bps: 0, min_stake_minor: 100, rake_bps: 1000 }, visibility: 'public' });
+    expect(r.body.type).toBe('foreign_table');
+    const partnerOwner = await user('scoped-partner');
+    const partner = await ownedOrg(h, admin, { kind: 'partner', name: 'Scoped Partner' }, partnerOwner);
+    const rounds = await h.api('GET', `/v1/org/${partner}/rounds`, partnerOwner.token);
+    expect(rounds.status).toBe(200);
+    expect(rounds.body.rounds).toEqual([]);
+    expect((await h.api('GET', `/v1/org/${partner}/players`, partnerOwner.token)).status).toBe(200);
+  });
+
+  it('a suspended club\'s devices and staff are refused, and its tables are not ready', async () => {
+    expect((await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'suspended' })).status).toBe(200);
+    try {
+      const hb = await h.sim.heartbeat();
+      expect(hb.status).toBe(403);
+      expect(hb.body.type).toBe('club_suspended');
+      const t = (await h.db.query(`select * from poker_tables where id = 'sim-1'`)).rows[0];
+      expect((await tableReadiness(h.db, t)).problems.join(' ')).toMatch(/club is suspended/);
+    } finally {
+      expect((await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'active' })).status).toBe(200);
+    }
+    expect((await h.sim.heartbeat()).status).toBe(200);
+  });
+
+  it('a partner gets no session for a blocked player; a blocked account\'s own session is refused', async () => {
+    const owner = await user('blocked-partner');
+    const org = await ownedOrg(h, admin, { kind: 'partner', name: 'Blocked Partner' }, owner);
+    const client = (await h.api('POST', `/v1/org/${org}/api-clients`, owner.token, { name: 'c' })).body;
+    const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
+    const auth = { authorization: `Bearer ${tok}` };
+    const s1 = await h.api('POST', '/v1/partner/players/blocked-1/session', undefined, {}, auth);
+    expect(s1.status).toBe(200);
+    expect((await h.api('PUT', `/v1/admin/users/${s1.body.user_id}`, admin, { status: 'suspended' })).status).toBe(200);
+    expect((await h.api('POST', '/v1/partner/players/blocked-1/session', undefined, {}, auth)).body.type).toBe('account_blocked');
+    // A session that survived a suspension (issued in between) is refused on use.
+    const p = await user('blocked-direct');
+    await h.api('PUT', `/v1/admin/users/${p.id}`, admin, { status: 'suspended' });
+    await h.db.query(`insert into sessions (token_sha256, user_id, expires_at) values (encode(sha256('sr-survivor'::bytea), 'hex'), $1, now() + interval '1 day')`, [p.id]);
+    expect((await h.api('GET', '/v1/me', 'sr-survivor')).body.type).toBe('account_blocked');
+  });
+
+  it('a staff key is enrolled once per club and gets a random credential id', async () => {
+    const owner = await user('enrol-owner');
+    const club = await ownedOrg(h, admin, { kind: 'club', name: 'Enrol Club' }, owner);
+    const t = (await h.api('POST', `/v1/org/${club}/tables`, owner.token, { name: 'T1', kind: 'simulated', mode: 'play', currency: 'PLAY' })).body;
+    const pem = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const a = await h.api('POST', `/v1/org/${club}/staff`, owner.token, { table_id: t.id, person_id: 'ana', role: 'dealer', public_key_pem: pem });
+    expect(a.status).toBe(201);
+    expect(a.body.id).not.toBe(`cred_${createHash('sha256').update(pem).digest('hex').slice(0, 12)}`);
+    expect((await h.api('POST', `/v1/org/${club}/staff`, owner.token, { table_id: t.id, person_id: 'bob', role: 'floor', public_key_pem: pem })).body.type).toBe('credential_exists');
+    // Concurrent enrolments of one key: exactly one succeeds (the club row serialises them).
+    const pem2 = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const race = await Promise.all(['p1', 'p2', 'p3', 'p4'].map((person) =>
+      h.api('POST', `/v1/org/${club}/staff`, owner.token, { table_id: t.id, person_id: person, role: 'dealer', public_key_pem: pem2 })));
+    expect(race.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
+    expect((await h.db.query('select count(*)::int as n from staff_credentials where public_key_pem = $1', [pem2])).rows[0].n).toBe(1);
+  });
+
+  it('a club suspension that lands between the readiness pre-check and the bet transaction refuses the bet', async () => {
+    const p = await user('race-bettor');
+    await h.sim.heartbeat();
+    await h.work();
+    const n = await h.sim.openHand();
+    const round = `sim-1:h${n}`;
+    // The share lock on the club row inside the bet transaction is what makes the pre-check safe:
+    // suspending (an exclusive update) and betting cannot interleave. Exercise both orders.
+    await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'suspended' });
+    try {
+      const r = await h.api('POST', '/v1/bets', p.token, { round_id: round, selection_id: 'colour:mixed', stake_minor: 10, odds_centi: 100, accept_price_change: true }, idemKey());
+      expect([r.status, r.body.type]).toEqual([409, 'table_not_ready']);
+      const inTx = await tx(h.db, (c) => assertEligibleInTx(c, p.id, 'sim-1').then(() => 'ok', (e) => (e as { type: string }).type));
+      expect(inTx).toBe('table_not_ready');
+    } finally {
+      await h.api('PUT', '/v1/admin/orgs/club-sim/status', admin, { status: 'active' });
+    }
+    expect(await tx(h.db, (c) => assertEligibleInTx(c, p.id, 'sim-1').then(() => 'ok'))).toBe('ok');
+  });
+
+  it('public and member input is bounded: application size and nesting, organization settings, partner bet fields', async () => {
+    const deep = JSON.parse(`${'{"a":'.repeat(8)}1${'}'.repeat(8)}`);
+    expect((await h.api('POST', '/v1/applications', undefined, { kind: 'club', name: 'Deep', email: 'deep@sr.dev', details: deep })).status).toBe(400);
+    expect((await h.api('POST', '/v1/applications', undefined, { kind: 'club', name: 'Big', email: 'big@sr.dev', details: { note: 'x'.repeat(40_000) } })).status).toBe(413);
+    expect((await h.api('POST', '/v1/applications', undefined, { kind: 'club', name: 'Fine', email: 'fine@sr.dev', details: { city: 'Cluj', tables: 4 } })).status).toBe(201);
+    const owner = await user('settings-owner');
+    const org = await ownedOrg(h, admin, { kind: 'organizer', name: 'Settings Org' }, owner);
+    const many = Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, i]));
+    expect((await h.api('PUT', `/v1/org/${org}`, owner.token, { settings: many })).status).toBe(400);
+    expect((await h.api('PUT', `/v1/org/${org}`, owner.token, { settings: { city: 'x'.repeat(501) } })).status).toBe(400);
+    expect((await h.api('PUT', `/v1/org/${org}`, owner.token, { settings: { city: 'Cluj' } })).status).toBe(200);
+    expect((await h.api('POST', '/v1/auth/login', undefined, { email: owner.email, password: 'x'.repeat(201) })).status).toBe(400);
   });
 });

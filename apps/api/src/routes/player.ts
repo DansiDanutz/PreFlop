@@ -1,8 +1,9 @@
 import { type Channel } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { PositiveMinor } from '../lib/json.ts';
 import type { AppContext } from '../app.ts';
-import { bearer, createSession, endSession, hashPassword, tokenHash, verifyPassword } from '../auth/players.ts';
+import { bearer, createSession, endSession, hashPassword, tokenHash, verifyPassword, verifyAgainstNobody } from '../auth/players.ts';
 import { placeRoomBet } from '../bets/rooms.ts';
 import { placeBet, potentialPayoutMinor, resetPlay } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
@@ -34,7 +35,7 @@ const Register = z.object({
 });
 const Login = z.object({
   email: z.string().email().transform((s) => s.toLowerCase()),
-  password: z.string(),
+  password: z.string().max(200),
   // One-time code, required when the account has two-factor authentication on.
   otp: z.string().trim().max(10).optional(),
 });
@@ -43,7 +44,7 @@ const MyBetsQuery = z.object({ round_id: qText, status: qText, before: qText, mo
 const Bet = z.object({
   round_id: z.string(),
   selection_id: z.string(),
-  stake_minor: z.number().int().positive(),
+  stake_minor: PositiveMinor,
   odds_centi: z.number().int().min(100),
   accept_price_change: z.boolean().optional(),
   room_id: z.string().optional(),
@@ -106,7 +107,9 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       const row = (await c.query<{ id: string; password_hash: string; status: string; mfa: boolean }>(
         `select u.id, u.password_hash, u.status, exists (select 1 from user_mfa m where m.user_id = u.id and m.enabled_at is not null) as mfa
            from users u where u.email = $1 and u.partner_id is null`, [b.email])).rows[0];
-      if (!row || !(await verifyPassword(b.password, row.password_hash))) return null;
+      // An unknown email costs one scrypt run too, so timing does not reveal which accounts exist.
+      if (!row) return verifyAgainstNobody(b.password).then(() => null);
+      if (!(await verifyPassword(b.password, row.password_hash))) return null;
       if (!row.mfa) return row;
       // Two-factor: no session without a valid code. A missing code is not a failure (nothing is
       // recorded or cleared); a wrong or replayed one counts toward the lockout like a wrong password.

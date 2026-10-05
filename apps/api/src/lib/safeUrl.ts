@@ -55,8 +55,25 @@ function privateV6(ip: string): boolean {
   }
   if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 12)) return privateV4Bytes(b[12]!, b[13]!);
   if (b[0] === 0x20 && b[1] === 0x02) return privateV4Bytes(b[2]!, b[3]!);
+  // IPv4-translated ::ffff:0:0:0:0/96 (RFC 2765) and the NAT64 local-use prefix 64:ff9b:1::/48.
+  if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff) return privateV4Bytes(b[12]!, b[13]!);
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b[4] === 0x00 && b[5] === 0x01) return true;
+  // Teredo 2001::/32 (tunnels to arbitrary hosts), benchmark 2001:2::/48, ORCHID 2001:10::/28,
+  // documentation 2001:db8::/32 and the discard prefix 100::/64 are never public destinations.
+  if (b[0] === 0x20 && b[1] === 0x01 && ((b[2] === 0x00 && (b[3] === 0x00 || b[3] === 0x02 || (b[3]! & 0xf0) === 0x10)) || (b[2] === 0x0d && b[3] === 0xb8))) return true;
+  if (b[0] === 0x01 && b[1] === 0x00 && zero(2, 8)) return true;
   // Unique local fc00::/7, link-local fe80::/10, site-local fec0::/10, multicast ff00::/8.
   return (b[0]! & 0xfe) === 0xfc || (b[0] === 0xfe && (b[1]! & 0x80) === 0x80) || b[0] === 0xff;
+}
+
+/** DNS lookups for the URL check have their own deadline: a stalling resolver must not hold a request or the sender. */
+export const DNS_TIMEOUT_MS = 5000;
+export function withDeadline<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+    t.unref?.();
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
 }
 
 export const isPrivateAddress = (ip: string) => (isIP(ip) === 6 ? privateV6(ip) : isIP(ip) === 4 ? privateV4(ip) : true);
@@ -68,7 +85,7 @@ export async function assertPublicUrl(raw: string): Promise<URL> {
   if (u.username || u.password) throw unprocessable('invalid_url', 'credentials in URLs are not allowed');
   if (allowPrivate()) return u;
   const host = u.hostname.replace(/^\[|\]$/g, '');
-  const addrs = isIP(host) ? [{ address: host }] : await lookupAsync(host, { all: true }).catch(() => []);
+  const addrs = isIP(host) ? [{ address: host }] : await withDeadline(lookupAsync(host, { all: true }), DNS_TIMEOUT_MS, 'DNS lookup').catch(() => []);
   if (!addrs.length) throw unprocessable('invalid_url', 'host does not resolve');
   if (addrs.some((a) => isPrivateAddress(a.address))) throw unprocessable('invalid_url', 'webhook destinations must be public internet addresses');
   return u;
@@ -92,15 +109,27 @@ export const guardedLookup: LookupFunction = (hostname, options, callback) => {
   });
 };
 
-/** POSTs a webhook body: checked URL, pinned resolution, no redirects, 5 s timeout. Returns the HTTP status. */
+/**
+ * POSTs a webhook body: checked URL, pinned resolution, no redirects. Returns the HTTP status.
+ * `timeoutMs` is a deadline for the whole attempt (DNS, connect, TLS, headers), not only an idle
+ * socket: a destination that accepts the connection and then trickles bytes cannot hold the sender.
+ */
 export async function postWebhook(raw: string, headers: Record<string, string>, body: string, timeoutMs = 5000): Promise<number> {
-  const u = await assertPublicUrl(raw);
+  const started = Date.now();
+  const u = await withDeadline(assertPublicUrl(raw), timeoutMs, 'URL check');
+  // The request gets what is left of the budget, not a fresh one: a slow URL check and a slow
+  // destination together still end within timeoutMs.
+  const remaining = timeoutMs - (Date.now() - started);
+  if (remaining <= 0) throw new Error('timeout');
   const send = u.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise<number>((resolve, reject) => {
-    const req = send(u, { method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(body) }, lookup: guardedLookup, timeout: timeoutMs }, (res) => {
+    const req = send(u, { method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(body) }, lookup: guardedLookup, timeout: remaining }, (res) => {
       res.resume();
       resolve(res.statusCode ?? 0);
     });
+    const deadline = setTimeout(() => req.destroy(new Error('timeout')), remaining);
+    deadline.unref?.();
+    req.on('close', () => clearTimeout(deadline));
     req.on('timeout', () => req.destroy(new Error('timeout')));
     req.on('error', reject);
     req.end(body);

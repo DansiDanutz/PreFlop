@@ -59,6 +59,9 @@ export const MANUAL_MODES: readonly string[] = ['play', 'virtual-chips'];
 export async function tableReadiness(c: Db | Tx, t: TableRow, now = Date.now()): Promise<{ ok: boolean; problems: string[] }> {
   const problems: string[] = [];
   if (t.status !== 'active') problems.push(`table is ${t.status}${t.pause_reason ? `: ${t.pause_reason}` : ''}`);
+  // A suspended club's tables are not ready, whatever their own state (docs/13 §10).
+  const club = (await c.query<{ status: string }>('select status from organizations where id = $1', [t.club_id])).rows[0];
+  if (club && club.status !== 'active') problems.push(`club is ${club.status}`);
   // A manual table has no Table Box, stream or shuffler: the PreFlop team types each flop after
   // betting closes. Its own switch, free play only.
   if (t.kind === 'manual') {
