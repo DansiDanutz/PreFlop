@@ -54,8 +54,10 @@ jobs:
           PROBLEMS: ${{ steps.probe.outputs.problems }}
         run: |
           gh label create uptime --color B60205 --description "Staging outage detected by the Uptime workflow" --force >/dev/null 2>&1 || true
-          body="Detected by the Uptime workflow at $(date -u +'%Y-%m-%d %H:%M UTC') ([run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})):"$'\n\n'"$PROBLEMS"$'\n'"Check \`fly status\` / \`fly logs\` (deploy/fly) and the Vercel dashboard. This issue closes itself on the next healthy probe."
-          existing=$(gh issue list --label uptime --state open --json number --jq '.[0].number')
+          # The workflow owns only the issue carrying its marker: other issues with the label are left alone.
+          marker='<!-- preflop-uptime-incident -->'
+          body="$marker"$'\n'"Detected by the Uptime workflow at $(date -u +'%Y-%m-%d %H:%M UTC') ([run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})):"$'\n\n'"$PROBLEMS"$'\n'"Check \`fly status\` / \`fly logs\` (deploy/fly) and the Vercel dashboard. This issue closes itself on the next healthy probe."
+          existing=$(gh issue list --label uptime --state open --json number,body --jq "[.[] | select(.body | contains(\"$marker\"))][0].number")
           if [ -n "$existing" ]; then gh issue comment "$existing" --body "$body"; else gh issue create --title "Staging is down" --label uptime --body "$body"; fi
       - name: Close the incident issue
         if: success()
@@ -63,6 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          for n in $(gh issue list --label uptime --state open --json number --jq '.[].number'); do
+          marker='<!-- preflop-uptime-incident -->'
+          for n in $(gh issue list --label uptime --state open --json number,body --jq "[.[] | select(.body | contains(\"$marker\"))][].number"); do
             gh issue close "$n" --comment "Healthy again at $(date -u +'%Y-%m-%d %H:%M UTC') (every probe passed)."
           done

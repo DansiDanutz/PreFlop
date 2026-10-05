@@ -77,4 +77,7 @@ jobs:
           node-version: 22
       - name: End-to-end smoke test
         if: steps.token.outputs.ok == 'true'
+        env:
+          # The sites must serve the build of this commit (Vercel deploys them from the same push).
+          EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: node scripts/staging-smoke.mjs

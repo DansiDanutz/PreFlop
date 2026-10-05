@@ -80,11 +80,11 @@ Staging runs the real product against **simulated tables**:
 3. a fresh player registers (`smoke-<time>@preflop-smoke.test`) and holds the play starting balance;
 4. the WebSocket stream authenticates the player and delivers events for that table;
 5. a play bet is accepted on the open round, settles within the budget (3 minutes per wait), and the wallet moves by exactly stake and payout;
-6. the website, console and club tablet are served with the app root.
+6. the website, console and club tablet serve the app, and in the deploy workflow the build of the commit just deployed: every site carries `<meta name="build-commit">` (`deploy/build-commit.mjs`, from Vercel's `VERCEL_GIT_COMMIT_SHA`), and the test waits until it matches `EXPECTED_COMMIT`, since Vercel builds the sites separately from the Fly deploy.
 
 Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
 
-**Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one. The next healthy probe closes the issue. Run it on demand from the Actions tab.
+**Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
 
 ## First demo data
 See `deploy/staging-bootstrap.md` for the API calls that create a free-chip tournament and a leaderboard after the first deploy.
