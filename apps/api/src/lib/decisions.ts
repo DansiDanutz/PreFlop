@@ -186,6 +186,113 @@ export const REVIEW_HINT: Record<string, Question> = {
   },
 };
 
+/**
+ * Contact fields and names never reach the adviser. Applicants type free-form details, so the scrub
+ * walks the whole value: a key that names a way to reach a person, or a name of any kind (a venue
+ * name and a manager's name are indistinguishable in free text), is withheld at every depth, and any
+ * string that looks like an email address or a phone number is redacted wherever it sits. Business
+ * facts stay: a venue's street address, capacity, tables or website. So the adviser still knows a
+ * venue name was given, the paths of the withheld fields travel with the details (`withheld`), never
+ * their values. Keys are applicant text as well, so they get the same redaction before they travel.
+ */
+const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|name|surname|applicant|person|owner|manager|director|ceo|founder|representative/i;
+const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
+const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
+/** Fields per object the adviser is shown; a real application has a few dozen at most. */
+export const SCRUB_MAX_KEYS = 200;
+/**
+ * Prose never travels: a name inside free text cannot be told apart from any other word, so a
+ * free-text field (by key, or any string longer than PROSE_CHARS) is replaced by its length. The
+ * adviser learns that a 240-character message was written, not what it says.
+ */
+const FREE_TEXT_KEY = /message|notes?|comments?|description|about|\btext|bio|story|pitch|\bwhy|summary|remarks?|background/i;
+export const PROSE_CHARS = 60;
+const prose = (v: unknown, withheld: string[] | undefined, path: string): unknown =>
+  typeof v === 'string' ? { chars: v.length }
+    : Array.isArray(v) ? v.map((x, i) => prose(x, withheld, `${path}[${i}]`))
+      : v !== null && typeof v === 'object' ? scrubContact(v, withheld, path)
+        : v;
+const scrubText = (text: string): string =>
+  text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
+export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
+  if (typeof value === 'string') return scrubText(value);
+  if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    const entries = Object.entries(value as Record<string, unknown>);
+    // Keys are applicant-controlled text too: the same redaction applies to them, kept or withheld.
+    // Two keys that redact (or truncate) to the same text stay distinct, so no value is lost; the
+    // next free suffix per base is remembered, so a flood of colliding keys costs linear time, and
+    // an object is cut at SCRUB_MAX_KEYS fields (the rest is counted, not sent).
+    const used = new Set<string>();
+    const next = new Map<string, number>();
+    for (const [k, v] of entries.slice(0, SCRUB_MAX_KEYS)) {
+      const base = scrubText(k).slice(0, 64);
+      let key = base;
+      if (used.has(key)) {
+        let n = next.get(base) ?? 2;
+        while (used.has(`${base} (${n})`)) n++;
+        key = `${base} (${n})`;
+        next.set(base, n + 1);
+      }
+      used.add(key);
+      const here = path ? `${path}.${key}` : key;
+      if (CONTACT_KEY.test(k)) withheld?.push(here);
+      else if (FREE_TEXT_KEY.test(k) || (typeof v === 'string' && v.length > PROSE_CHARS)) out[key] = prose(v, withheld, here);
+      else out[key] = scrubContact(v, withheld, here);
+    }
+    if (entries.length > SCRUB_MAX_KEYS) withheld?.push(`${path ? `${path}.` : ''}… (${entries.length - SCRUB_MAX_KEYS} more fields not shown)`);
+    return out;
+  }
+  return value;
+}
+/** The details an application's adviser sees, and the paths of the fields it was not shown. */
+export function scrubDetails(details: unknown): { details: unknown; withheld: string[] } {
+  const withheld: string[] = [];
+  return { details: scrubContact(details, withheld), withheld };
+}
+
+/** Organization application (club, betting partner, organizer): approve, reject or ask for more before an org is created. */
+export const APPLICATION_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in (names and contact fields are withheld and the paths of withheld fields are listed so you know they were provided; free text is replaced by its length in characters), how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
+    criteria: {
+      approve: 'The details describe a real, specific operation of the kind applied for and nothing suggests a duplicate or a test: create the organization.',
+      ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind): write back before deciding. A free-text message appears only as its character count and may already hold the missing facts; that never turns thin facts into an approval, it only lowers your confidence in this choice, since the reviewer reads the message and decides.',
+      reject: 'Empty, nonsense or test content, a duplicate of an existing organization or open application, or an activity the platform does not offer.',
+    },
+  },
+  complete: { type: 'noul', instructions: 'Do the structured details, counting the withheld fields as provided, contain enough concrete information (what, where, how big) to set this organization up without a follow-up question? Free-text fields are shown only as their character count and are read by the reviewer, not by you: a long message may answer what the structured fields leave open, so with one present answer near 0.5 rather than no.' },
+};
+
+/** Promotion review: an organization's offer to players, before players see it. */
+export const PROMOTION_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'An organization submitted a promotion for players of a poker flop-betting platform; a PreFlop team member approves it before any player sees it. Judge the title and body as a player would read them, together with the kind, the value per claim, the budget and the period. Rules: no misleading or unverifiable claims (guaranteed wins, risk-free, best odds), no urgency pressure or targeting of vulnerable players, no promise that the platform does not keep (the value is per claim and bounded by the budget), nothing that reads as a chat message or spam, and the period must be sensible. Suggest what the reviewer does.',
+    criteria: {
+      approve: 'Clear, truthful, matches the kind and the numbers, sensible period: show it to players.',
+      edit: 'Acceptable offer with wording that must change first (an unverifiable claim, pressure, missing condition): reject with the exact words to fix.',
+      reject: 'Misleading, manipulative, off-platform, or the numbers and period do not make sense for the kind.',
+    },
+  },
+  misleading: { type: 'noul', instructions: 'Would a reasonable player be misled about what they get, how likely it is, or what it costs them?' },
+};
+
+/** Agent application: a player asking to recruit players for a share of net revenue. */
+export const AGENT_HINT: Record<string, Question> = {
+  decision: {
+    type: 'choice',
+    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote (contact details redacted), the age of the account and of the application, whether a recruiting agent proposed them, whether this account was an agent before (a re-application after a rejection or suspension), and how many players registered with their code. The code of a first-time applicant has never been shown to players, so registrations with it before approval point to a code shared outside the platform; a former agent may legitimately still have players. Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
+    criteria: {
+      approve: 'A credible note (who they are, where their players come from) and nothing odd about the account: activate the code.',
+      hold: 'No note or a vague one, or a very new account: ask what audience they bring before activating.',
+      reject: 'Spam, prohibited practices (buying traffic to minors, incentivising losses), signs of a self-referral scheme, or a first application whose code already has registrations.',
+    },
+  },
+};
+
 /** Card reading: is one recognised card sure enough to pre-fill the operator's picker? */
 export const READING_CHECK: Record<string, Question> = {
   accept: { type: 'noul', instructions: 'A camera read one playing card on a felt table and reports a match confidence (0..1, normalised correlation of the corner index) and the margin to the runner-up glyph. Should this card be pre-filled for the operator to confirm? Answer no when a mistake is plausible; the operator can always type the card.' },

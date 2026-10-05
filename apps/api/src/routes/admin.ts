@@ -349,7 +349,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   });
   app.get('/v1/admin/applications', async (req) => {
     await requirePlatform(ctx, req);
-    return { applications: (await ctx.db.query('select * from applications order by (status = \'new\') desc, created_at desc limit 300')).rows };
+    // `hint` is the decision model's suggestion (docs/20) for an application still awaiting a decision.
+    return { applications: (await ctx.db.query(
+      `select a.*, case when h.ref is null or h.error is not null then null else jsonb_build_object('model', h.model, 'answers', h.answers, 'at', h.created_at) end as hint
+         from applications a left join decision_hints h on h.kind = 'application' and h.ref = a.id
+        order by (a.status = 'new') desc, a.created_at desc limit 300`)).rows };
   });
   app.post('/v1/admin/applications/:id/decision', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');

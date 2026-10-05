@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , PROSE_CHARS, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -92,6 +92,46 @@ describe('the Jev decider', () => {
 });
 
 /** A scripted decider for the worker and route tests: answers from a function of the questions asked. */
+describe('scrubContact', () => {
+  it('withholds names and contact keys at every depth, lists their paths, and redacts email- and phone-shaped text wherever it sits', () => {
+    const { details: scrubbed, withheld } = scrubDetails({
+      city: 'Valletta', tables: 4, contact_email: 'owner@hintclub.test', phone: '+356 2122 0000',
+      venue: { name: 'Hint Club', street_address: '1 Republic St', capacity: 80, manager: { email: 'm@x.test' } },
+      notes: ['Call +356 2122 0000 after 6pm', 'Reach us at owner@hintclub.test or on site', 'Opened in 2019'],
+      links: [{ url: 'https://hintclub.test', label: 'site' }],
+      'manager_alice@example.test': 'yes', 'call +356 2122 0000': 'evenings', 'call +356 2122 0001': 'weekends', ['x'.repeat(70)]: 'a', ['x'.repeat(71)]: 'b',
+    });
+    expect(scrubbed).toEqual({
+      city: 'Valletta', tables: 4,
+      venue: { street_address: '1 Republic St', capacity: 80 },
+      notes: [{ chars: 29 }, { chars: 42 }, { chars: 14 }],
+      links: [{ url: 'https://hintclub.test', label: 'site' }],
+      'call [phone]': 'evenings', 'call [phone] (2)': 'weekends', ['x'.repeat(64)]: 'a', ['x'.repeat(64) + ' (2)']: 'b',
+    });
+    // Keys are applicant text too: an email in a withheld key is redacted in the path, a phone in a kept key is redacted in the key,
+    // and keys that redact or truncate to the same text stay distinct.
+    expect(withheld).toEqual(['contact_email', 'phone', 'venue.name', 'venue.manager', '[email]']);
+    expect(scrubContact('plain text with a year 2019 and 12 tables')).toBe('plain text with a year 2019 and 12 tables');
+    expect(scrubContact('Ping me at agent@x.test or +356 2122 0000')).toBe('Ping me at [email] or [phone]');
+    // Prose never travels: a free-text key, or any string longer than PROSE_CHARS, becomes its length.
+    expect(scrubDetails({ message: 'Please contact Alice Smith', city: 'Alice Smith lives here and this sentence is long enough to count as prose', website: 'https://x.test' }).details)
+      .toEqual({ message: { chars: 26 }, city: { chars: 73 }, website: 'https://x.test' });
+    // Objects under a free-text key are scrubbed like any other object, never passed through.
+    expect(scrubDetails({ notes: [{ text: 'Call Alice', email: 'a@x.test', hours: 'ring +356 2122 0000 twice', tables: 3 }, 'plain'] }))
+      .toEqual({ details: { notes: [{ text: { chars: 10 }, hours: 'ring [phone] twice', tables: 3 }, { chars: 5 }] }, withheld: ['notes[0].email'] });
+    // A flood of colliding keys is linear work and is cut at SCRUB_MAX_KEYS fields; the rest is counted, never sent.
+    const flood = Object.fromEntries(Array.from({ length: 8000 }, (_, i) => [`${'k'.repeat(64)}${i}`, i]));
+    const t0 = performance.now();
+    const { details: cut, withheld: cutWithheld } = scrubDetails({ flood, city: 'Valletta' });
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(PROSE_CHARS).toBe(60);
+    expect(Object.keys((cut as any).flood)).toHaveLength(SCRUB_MAX_KEYS);
+    expect((cut as any).flood[`${'k'.repeat(64)} (2)`]).toBe(1);
+    expect(cutWithheld).toEqual([`flood.… (${8000 - SCRUB_MAX_KEYS} more fields not shown)`]);
+    expect(scrubContact(null)).toBeNull();
+  });
+});
+
 function fakeDecider(answer: (state: any, questions: Record<string, Question>) => Answers | Error): Decider & { seen: any[] } {
   const seen: any[] = [];
   return {
@@ -106,6 +146,9 @@ describe('decision hints in the worker and the console API', () => {
   const decider = fakeDecider((state) => {
     if ('card' in state) return { accept: { type: 'noul', noul: state.match_confidence >= 0.9 ? 0.8 : state.match_confidence >= 0.6 ? 0.55 : 0.2 } };
     if ('alert' in state) return { triage: { type: 'choice', choice: state.alert.severity === 'critical' ? 'escalate' : 'watch', confidence: 0.66 }, money_at_risk: { type: 'noul', noul: 0.1 } };
+    if ('application' in state) return { decision: { type: 'choice', choice: state.organizations_with_same_contact > 0 ? 'reject' : 'approve', confidence: 0.8 }, complete: { type: 'noul', noul: 0.85 } };
+    if ('promotion' in state) return { decision: { type: 'choice', choice: /guaranteed/i.test(state.promotion.body) ? 'edit' : 'approve', confidence: 0.7 }, misleading: { type: 'noul', noul: 0.75 } };
+    if ('agent_application' in state) return { decision: { type: 'choice', choice: state.agent_application.note ? 'approve' : 'hold', confidence: 0.6 } };
     return { outcome: { type: 'choice', choice: 'void', confidence: 0.55 } };
   });
   beforeAll(async () => {
@@ -144,6 +187,53 @@ describe('decision hints in the worker and the console API', () => {
     expect(asked).toMatchObject({ round: { state: 'REVIEW', review_reasons: ['cards_disagree'] }, entries: [{ source: 'dealer', cards: ['Ah', 'Kd', '7c'] }, { source: 'floor', cards: ['Ah', 'Kd', '7s'] }] });
     const q = (await h.api('GET', '/v1/admin/review-queue', admin)).body.rounds.find((r: any) => r.id === rid);
     expect(q.hint).toMatchObject({ model: 'fake-jev', answers: { outcome: { choice: 'void', confidence: 0.55 } } });
+  });
+
+  it('applications, promotions in review and agent applications get a decision hint; the admin routes carry it; contact fields never leave', async () => {
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint1', 'club', 'Hint Club', 'owner@hintclub.test',
+      '{"city":"Valletta","tables":4,"contact_email":"owner@hintclub.test","phone":"+356 1","venue":{"name":"Hint Club","street_address":"1 Republic St","capacity":80},"notes":["Reach us at owner@hintclub.test or +356 2122 0000"]}')`);
+    // A second applicant whose contact already had an application approved (and so owns an organization).
+    await h.db.query(`insert into applications (id, kind, name, email, details, status) values ('app_hint0', 'club', 'Twice Club', 'again@twice.test', '{}', 'approved')`);
+    await h.db.query(`insert into organizations (id, kind, name, settings) values ('org_twice', 'club', 'Twice Club', '{"application_id":"app_hint0"}')`);
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint2', 'club', 'Twice Club again', 'Again@Twice.test', '{"city":"Sliema"}')`);
+    // An owner claim link that expired unredeemed never made this contact an owner; a live one counts.
+    await h.db.query(`insert into organizations (id, kind, name) values ('org_expired', 'club', 'Expired Club'), ('org_live', 'club', 'Live Club')`);
+    await h.db.query(`insert into org_owner_claims (token_hash, org_id, email, created_by, expires_at) values ('h_expired', 'org_expired', 'claim@hint.test', 'admin', now() - interval '1 day'), ('h_live', 'org_live', 'claim@hint.test', 'admin', now() + interval '1 day')`);
+    await h.db.query(`insert into applications (id, kind, name, email, details) values ('app_hint3', 'club', 'Claim Club', 'claim@hint.test', '{"city":"Gozo"}')`);
+    await h.db.query(`insert into promotions (id, owner_org, kind, title, body, link, starts_at, ends_at, status, created_by) values ('promo_hint1', null, 'announcement', 'Friday night', 'Guaranteed wins every hand!', 'https://example.test/friday', now(), now() + interval '7 days', 'pending_review', 'someone')`);
+    const applicant = await h.register('Would-be agent');
+    await h.db.query(`insert into agents (user_id, code, note) values ($1, 'PFHINT01', 'I run a poker club Discord with 300 members')`, [applicant.id]);
+    expect(await decisionsOnce(h.db, decider)).toBeGreaterThanOrEqual(5);
+    expect(await decisionsOnce(h.db, decider)).toBe(0);
+    // What the model saw: the typed details with contact fields scrubbed at every depth, the promotion text,
+    // link and numbers, the agent's note. Never the applicant's name, email or phone.
+    const seenApps = decider.seen.filter((s) => s.application);
+    const seenApp = seenApps.find((s) => s.application.details.city === 'Valletta');
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { street_address: '1 Republic St', capacity: 80 }, notes: [{ chars: 49 }] });
+    expect([...seenApp.application.withheld_fields].sort()).toEqual(['contact_email', 'phone', 'venue.name']);
+    expect(seenApp.organizations_with_same_contact).toBe(0);
+    expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club|356/);
+    // The duplicate signal comes from the approved application behind an organization, matched case-insensitively.
+    expect(seenApps.find((s) => s.application.details.city === 'Sliema')).toMatchObject({ organizations_with_same_contact: 1, other_open_applications_same_contact: 0 });
+    expect(seenApps.find((s) => s.application.details.city === 'Gozo')).toMatchObject({ organizations_with_same_contact: 1 });
+    expect(decider.seen.find((s) => s.promotion)?.promotion).toMatchObject({ kind: 'announcement', title: 'Friday night', link: 'https://example.test/friday', runs_days: 7 });
+    expect(decider.seen.find((s) => s.agent_application)?.agent_application).toMatchObject({ note: 'I run a poker club Discord with 300 members', was_active_before: false, players_registered_with_code: 0 });
+    // The routes carry the hints beside the rows the team decides on.
+    const app = (await h.api('GET', '/v1/admin/applications', admin)).body.applications.find((a: any) => a.id === 'app_hint1');
+    expect(app.hint).toMatchObject({ model: 'fake-jev', answers: { decision: { choice: 'approve' }, complete: { noul: 0.85 } } });
+    const promo = (await h.api('GET', '/v1/admin/promotions', admin)).body.promotions.find((p: any) => p.id === 'promo_hint1');
+    expect(promo.hint).toMatchObject({ answers: { decision: { choice: 'edit' }, misleading: { noul: 0.75 } } });
+    expect((await h.api('GET', '/v1/admin/applications', admin)).body.applications.find((a: any) => a.id === 'app_hint2').hint.answers.decision.choice).toBe('reject');
+    const agent = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
+    expect(agent.hint).toMatchObject({ answers: { decision: { choice: 'approve', confidence: 0.6 } } });
+    // A rejected agent who applies again is a new case: the old hint goes, and the next pass asks afresh about the new note.
+    await h.db.query(`update agents set status = 'rejected' where user_id = $1`, [applicant.id]);
+    expect((await h.api('POST', '/v1/me/agent/apply', applicant.token, {})).status).toBe(201);
+    const reapplied = (await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id);
+    expect(reapplied.status).toBe('applied');
+    expect(reapplied.hint ?? null).toBeNull();
+    expect(await decisionsOnce(h.db, decider)).toBe(1);
+    expect((await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id).hint).toMatchObject({ answers: { decision: { choice: 'hold' } } });
   });
 
   it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {

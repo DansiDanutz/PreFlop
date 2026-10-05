@@ -6,6 +6,7 @@ import { Network } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { useCanWrite, usePortal } from '../../components/Shell.tsx';
 import { DataTable } from '../../components/DataTable.tsx';
+import { ChoiceHint } from '../../components/decisions.tsx';
 import { Callout, ConfirmDialog, Field, Kpi, Modal, PageHeader, QueryView, Section, Select, TextInput, useAction } from '../../components/ui.tsx';
 
 /** The PreFlop team's view of agents: applications, the two-level tree, rates and monthly statements (docs/16 §4). */
@@ -87,6 +88,7 @@ export function Agents() {
                         <div className="min-w-0 max-w-2xl">
                           <div className="font-semibold">{a.display_name} <span className="text-sm font-normal text-muted">· {a.email}</span></div>
                           {a.note && <p className="mt-1 text-sm text-ink/80">{a.note}</p>}
+                          <div className="mt-2 flex items-center gap-2 text-xs text-muted">Suggested: <ChoiceHint hint={a.hint} question="decision" /></div>
                         </div>
                         {write && <div className="flex gap-2"><Button size="sm" onClick={() => setEditing(a)}>Review &amp; approve</Button><Button size="sm" variant="secondary" onClick={() => setConfirm({ kind: 'rejected', agent: a })}>Reject</Button></div>}
                       </li>
