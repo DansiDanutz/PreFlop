@@ -4,7 +4,7 @@ import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
-import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubDetails } from './lib/decisions.ts';
+import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubContact, scrubDetails } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
@@ -175,18 +175,18 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
       where p.status = 'pending_review' and ${HINT_WANTED} order by p.created_at limit $1`, [limit])).rows;
   for (const p of promotions) {
     const days = Math.round((p.ends_at.getTime() - p.starts_at.getTime()) / 86_400_000);
-    const state = { promotion: { kind: p.kind, title: p.title, body: p.body, link: p.link, mode: p.mode, currency: p.currency, amount_minor: p.amount_minor === null ? null : Number(p.amount_minor), budget_minor: p.budget_minor === null ? null : Number(p.budget_minor), runs_days: days, starts_in_days: Math.round((p.starts_at.getTime() - Date.now()) / 86_400_000), owner_kind: p.org_kind } };
+    const state = { promotion: { kind: p.kind, title: scrubContact(p.title), body: scrubContact(p.body), link: p.link, mode: p.mode, currency: p.currency, amount_minor: p.amount_minor === null ? null : Number(p.amount_minor), budget_minor: p.budget_minor === null ? null : Number(p.budget_minor), runs_days: days, starts_in_days: Math.round((p.starts_at.getTime() - Date.now()) / 86_400_000), owner_kind: p.org_kind } };
     if (!(await ask('promotion', p.id, state, PROMOTION_HINT))) return stored;
   }
-  // Agent applications. No names: the note, the account's age, the proposed parent, whether the
-  // account was an agent before (approved once) and how many players carry its code.
+  // Agent applications. No names: the note (contact details redacted), the account's age, the proposed
+  // parent, whether the account was an agent before (approved once) and how many players carry its code.
   const agents = (await db.query<{ user_id: string; note: string | null; created_at: Date; user_created_at: Date; parent_status: string | null; was_active_before: boolean; referrals: number }>(
     `select a.user_id, a.note, a.created_at, u.created_at as user_created_at, p.status as parent_status, a.approved_by is not null as was_active_before,
             (select count(*)::int from users r where r.referred_by_agent = a.user_id) as referrals
        from agents a join users u on u.id = a.user_id left join agents p on p.user_id = a.parent_agent_id left join decision_hints h on h.kind = 'agent' and h.ref = a.user_id
       where a.status = 'applied' and ${HINT_WANTED} order by a.created_at limit $1`, [limit])).rows;
   for (const a of agents) {
-    const state = { agent_application: { note: a.note, account_age_days: Math.round((Date.now() - a.user_created_at.getTime()) / 86_400_000), applied_hours_ago: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000), proposed_by_agent: a.parent_status, was_active_before: a.was_active_before, players_registered_with_code: a.referrals } };
+    const state = { agent_application: { note: a.note === null ? null : scrubContact(a.note), account_age_days: Math.round((Date.now() - a.user_created_at.getTime()) / 86_400_000), applied_hours_ago: Math.round((Date.now() - a.created_at.getTime()) / 3_600_000), proposed_by_agent: a.parent_status, was_active_before: a.was_active_before, players_registered_with_code: a.referrals } };
     if (!(await ask('agent', a.user_id, state, AGENT_HINT))) return stored;
   }
   return stored;

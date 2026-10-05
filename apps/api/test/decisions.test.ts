@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , PROSE_CHARS, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -104,7 +104,7 @@ describe('scrubContact', () => {
     expect(scrubbed).toEqual({
       city: 'Valletta', tables: 4,
       venue: { street_address: '1 Republic St', capacity: 80 },
-      notes: ['Call [phone] after 6pm', 'Reach us at [email] or on site', 'Opened in 2019'],
+      notes: [{ chars: 29 }, { chars: 42 }, { chars: 14 }],
       links: [{ url: 'https://hintclub.test', label: 'site' }],
       'call [phone]': 'evenings', 'call [phone] (2)': 'weekends', ['x'.repeat(64)]: 'a', ['x'.repeat(64) + ' (2)']: 'b',
     });
@@ -112,11 +112,16 @@ describe('scrubContact', () => {
     // and keys that redact or truncate to the same text stay distinct.
     expect(withheld).toEqual(['contact_email', 'phone', 'venue.name', 'venue.manager', '[email]']);
     expect(scrubContact('plain text with a year 2019 and 12 tables')).toBe('plain text with a year 2019 and 12 tables');
+    expect(scrubContact('Ping me at agent@x.test or +356 2122 0000')).toBe('Ping me at [email] or [phone]');
+    // Prose never travels: a free-text key, or any string longer than PROSE_CHARS, becomes its length.
+    expect(scrubDetails({ message: 'Please contact Alice Smith', city: 'Alice Smith lives here and this sentence is long enough to count as prose', website: 'https://x.test' }).details)
+      .toEqual({ message: { chars: 26 }, city: { chars: 73 }, website: 'https://x.test' });
     // A flood of colliding keys is linear work and is cut at SCRUB_MAX_KEYS fields; the rest is counted, never sent.
     const flood = Object.fromEntries(Array.from({ length: 8000 }, (_, i) => [`${'k'.repeat(64)}${i}`, i]));
     const t0 = performance.now();
     const { details: cut, withheld: cutWithheld } = scrubDetails({ flood, city: 'Valletta' });
     expect(performance.now() - t0).toBeLessThan(500);
+    expect(PROSE_CHARS).toBe(60);
     expect(Object.keys((cut as any).flood)).toHaveLength(SCRUB_MAX_KEYS);
     expect((cut as any).flood[`${'k'.repeat(64)} (2)`]).toBe(1);
     expect(cutWithheld).toEqual([`flood.… (${8000 - SCRUB_MAX_KEYS} more fields not shown)`]);
@@ -201,7 +206,7 @@ describe('decision hints in the worker and the console API', () => {
     // link and numbers, the agent's note. Never the applicant's name, email or phone.
     const seenApps = decider.seen.filter((s) => s.application);
     const seenApp = seenApps.find((s) => s.application.details.city === 'Valletta');
-    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { street_address: '1 Republic St', capacity: 80 }, notes: ['Reach us at [email] or [phone]'] });
+    expect(seenApp.application.details).toEqual({ city: 'Valletta', tables: 4, venue: { street_address: '1 Republic St', capacity: 80 }, notes: [{ chars: 49 }] });
     expect([...seenApp.application.withheld_fields].sort()).toEqual(['contact_email', 'phone', 'venue.name']);
     expect(seenApp.organizations_with_same_contact).toBe(0);
     expect(JSON.stringify(seenApp)).not.toMatch(/hintclub|Hint Club|356/);

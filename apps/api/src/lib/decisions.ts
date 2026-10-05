@@ -200,6 +200,14 @@ const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
 const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
 /** Fields per object the adviser is shown; a real application has a few dozen at most. */
 export const SCRUB_MAX_KEYS = 200;
+/**
+ * Prose never travels: a name inside free text cannot be told apart from any other word, so a
+ * free-text field (by key, or any string longer than PROSE_CHARS) is replaced by its length. The
+ * adviser learns that a 240-character message was written, not what it says.
+ */
+const FREE_TEXT_KEY = /message|notes?|comments?|description|about|\btext|bio|story|pitch|\bwhy|summary|remarks?|background/i;
+export const PROSE_CHARS = 60;
+const prose = (v: unknown): unknown => (typeof v === 'string' ? { chars: v.length } : Array.isArray(v) ? v.map(prose) : v);
 const scrubText = (text: string): string =>
   text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
 export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
@@ -226,6 +234,7 @@ export function scrubContact(value: unknown, withheld?: string[], path = ''): un
       used.add(key);
       const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
+      else if (FREE_TEXT_KEY.test(k) || (typeof v === 'string' && v.length > PROSE_CHARS)) out[key] = typeof v === 'object' && v !== null && !Array.isArray(v) ? scrubContact(v, withheld, here) : prose(v);
       else out[key] = scrubContact(v, withheld, here);
     }
     if (entries.length > SCRUB_MAX_KEYS) withheld?.push(`${path ? `${path}.` : ''}… (${entries.length - SCRUB_MAX_KEYS} more fields not shown)`);
@@ -243,7 +252,7 @@ export function scrubDetails(details: unknown): { details: unknown; withheld: st
 export const APPLICATION_HINT: Record<string, Question> = {
   decision: {
     type: 'choice',
-    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in (names and contact fields are withheld; the paths of withheld fields are listed so you know they were provided), how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
+    instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in (names and contact fields are withheld and the paths of withheld fields are listed so you know they were provided; free text is replaced by its length in characters), how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
     criteria: {
       approve: 'The details describe a real, specific operation of the kind applied for and nothing suggests a duplicate or a test: create the organization.',
       ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind): write back before deciding.',
@@ -271,7 +280,7 @@ export const PROMOTION_HINT: Record<string, Question> = {
 export const AGENT_HINT: Record<string, Question> = {
   decision: {
     type: 'choice',
-    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote, the age of the account and of the application, whether a recruiting agent proposed them, whether this account was an agent before (a re-application after a rejection or suspension), and how many players registered with their code. The code of a first-time applicant has never been shown to players, so registrations with it before approval point to a code shared outside the platform; a former agent may legitimately still have players. Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
+    instructions: 'A registered player applied to become an agent of a poker flop-betting platform: agents share a code, and earn a percentage of the net gaming revenue of the players who register with it (two levels deep at most). The state holds the note the applicant wrote (contact details redacted), the age of the account and of the application, whether a recruiting agent proposed them, whether this account was an agent before (a re-application after a rejection or suspension), and how many players registered with their code. The code of a first-time applicant has never been shown to players, so registrations with it before approval point to a code shared outside the platform; a former agent may legitimately still have players. Suggest what the reviewer does. Approval only activates the code; the rates stay at the defaults.',
     criteria: {
       approve: 'A credible note (who they are, where their players come from) and nothing odd about the account: activate the code.',
       hold: 'No note or a vague one, or a very new account: ask what audience they bring before activating.',
