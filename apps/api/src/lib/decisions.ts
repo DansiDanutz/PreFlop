@@ -259,11 +259,11 @@ export const APPLICATION_HINT: Record<string, Question> = {
     instructions: 'An organization applied to join a poker flop-betting platform as a club (hosts tables), a betting partner (brings players) or an organizer (runs rooms and promotions). From the kind, the details the applicant filled in (names and contact fields are withheld and the paths of withheld fields are listed so you know they were provided; free text is replaced by its length in characters), how long it has waited and whether the same contact already has organizations or other open applications, suggest what the reviewer does first. Approving creates the organization and gives the applicant an owner account; nothing else is automatic.',
     criteria: {
       approve: 'The details describe a real, specific operation of the kind applied for and nothing suggests a duplicate or a test: create the organization.',
-      ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind): write back before deciding.',
+      ask_more: 'Plausible but thin or inconsistent (missing venue, licence, website or tables; details that do not fit the kind) and no substantial free-text message was written: write back before deciding. A free-text message appears only as its character count and may hold what the structured fields lack, so with a long one present prefer approve or reject on what is known.',
       reject: 'Empty, nonsense or test content, a duplicate of an existing organization or open application, or an activity the platform does not offer.',
     },
   },
-  complete: { type: 'noul', instructions: 'Do the details, counting the withheld fields as provided, contain enough concrete information (what, where, how big) to set this organization up without a follow-up question?' },
+  complete: { type: 'noul', instructions: 'Do the structured details, counting the withheld fields as provided, contain enough concrete information (what, where, how big) to set this organization up without a follow-up question? Free-text fields are shown only as their character count and are read by the reviewer, not by you: a long message may answer what the structured fields leave open, so with one present answer near 0.5 rather than no.' },
 };
 
 /** Promotion review: an organization's offer to players, before players see it. */
