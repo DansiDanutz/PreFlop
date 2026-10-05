@@ -110,11 +110,15 @@ const book = await api('GET', '/v1/book?channel=direct');
 if (book.status !== 200) fail(`/v1/book: ${book.status}`);
 const selection = book.body.markets.flatMap((m) => m.selections).find((s) => s.offered);
 if (!selection) fail('no offered selection in the book');
+// Always the subscribed table: a round on another table would not reach this socket.
+const openRoundOf = (tableId) => until(`an open round on ${tableId}`, async () => {
+  const r = await api('GET', `/v1/tables/${tableId}/rounds/current`);
+  return r.status === 200 ? r.body?.open?.id ?? null : null;
+}, 2000);
 let roundId = table.open_round_id;
 let bet;
 for (let attempt = 1; ; attempt++) {
-  const current = await api('GET', `/v1/tables/${table.id}/rounds/current`);
-  roundId = current.body?.open?.id ?? (await openTable(table.id)).open_round_id;
+  roundId = await openRoundOf(table.id);
   bet = await api('POST', '/v1/bets', {
     token, headers: { 'idempotency-key': `smoke-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` },
     body: { round_id: roundId, selection_id: selection.id, stake_minor: STAKE, odds_centi: selection.odds_centi, accept_price_change: true },
@@ -137,9 +141,10 @@ const expected = settled.status === 'won' || settled.status === 'lost' ? before 
 if (after !== expected) fail(`wallet after settlement is ${after}, expected ${expected} (bet ${settled.status}, payout ${payout})`);
 log(`bet ${settled.status} (payout ${payout}); wallet ${before} → ${after}`);
 ws.close();
-// The table topic itself must have delivered: a player-only event (bet.accepted) is not enough.
-const tableEvents = events.filter((e) => e.table_id === table.id && String(e.type).startsWith('round.'));
-if (tableEvents.length === 0) fail(`no round.* events received on table:${table.id} while the round settled (${events.length} other events)`);
+// The table topic itself must have delivered, for the very round the bet was on: a player-only
+// event (bet.accepted) or an unrelated round on that table is not enough.
+const tableEvents = events.filter((e) => e.table_id === table.id && e.round_id === roundId && String(e.type).startsWith('round.'));
+if (tableEvents.length === 0) fail(`no round.* events received on table:${table.id} for ${roundId} while it settled (${events.length} other events)`);
 log(`${events.length} stream events received, ${tableEvents.length} for the table (${[...new Set(events.map((e) => e.type))].join(', ')})`);
 
 // 6. the sites are served, and (when EXPECTED_COMMIT is set) by the build of this very commit:

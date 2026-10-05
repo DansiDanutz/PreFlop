@@ -78,6 +78,8 @@ jobs:
       - name: End-to-end smoke test
         if: steps.token.outputs.ok == 'true'
         env:
-          # The sites must serve the build of this commit (Vercel deploys them from the same push).
-          EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # The sites must serve the build of this commit: Vercel builds them from every push to
+          # main. A manual run of another ref deploys only the Fly services, so the sites are then
+          # checked for being up, not for a commit they were never built from.
+          EXPECTED_COMMIT: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || (github.ref == 'refs/heads/main' && github.sha) || '' }}
         run: node scripts/staging-smoke.mjs
