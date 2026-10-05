@@ -13,18 +13,25 @@ export interface StoredResponse {
  * effect and returned verbatim on retry. The same key with a different request → 422.
  */
 export async function idempotent(c: Tx, principal: string, key: string, method: string, path: string, raw: Uint8Array | string, fn: () => Promise<StoredResponse>): Promise<StoredResponse> {
-  const reqHash = createHash('sha256').update(`${method} ${path}\n`).update(raw).digest('hex');
-  const prior = (await c.query<{ request_sha256: string; status: number; body: string }>(
-    'select request_sha256, status, body from idempotency_responses where principal = $1 and idempotency_key = $2', [principal, key])).rows[0];
-  if (prior) {
-    if (prior.request_sha256 !== reqHash) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different request');
-    return { status: prior.status, body: JSON.parse(prior.body) };
-  }
+  const prior = await findStored(c, principal, key, method, path, raw);
+  if (prior) return prior;
+  const reqHash = requestHash(method, path, raw);
   const res = await fn();
   await c.query(
     'insert into idempotency_responses (principal, idempotency_key, method, path, request_sha256, status, body) values ($1, $2, $3, $4, $5, $6, $7)',
     [principal, key, method, path, reqHash, res.status, JSON.stringify(res.body)]);
   return res;
+}
+
+const requestHash = (method: string, path: string, raw: Uint8Array | string) => createHash('sha256').update(`${method} ${path}\n`).update(raw).digest('hex');
+
+/** The response stored for this (principal, key), or null; the same key with a different request → 422. */
+export async function findStored(c: Tx, principal: string, key: string, method: string, path: string, raw: Uint8Array | string): Promise<StoredResponse | null> {
+  const prior = (await c.query<{ request_sha256: string; status: number; body: string }>(
+    'select request_sha256, status, body from idempotency_responses where principal = $1 and idempotency_key = $2', [principal, key])).rows[0];
+  if (!prior) return null;
+  if (prior.request_sha256 !== requestHash(method, path, raw)) throw unprocessable('idempotency_mismatch', 'this Idempotency-Key was used for a different request');
+  return { status: prior.status, body: JSON.parse(prior.body) };
 }
 
 /** The Idempotency-Key header of a money write: 8–200 characters (as POST /v1/bets), else 400. */

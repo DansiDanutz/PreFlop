@@ -7,14 +7,14 @@ import { statsOf } from '../bets/service.ts';
 import { audit } from '../lib/audit.ts';
 import { type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
-import { idempotentMoneyWrite, requireIdempotencyKey } from '../lib/idempotency.ts';
+import { requireIdempotencyKey } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
 import { assertRealMoneyAccount } from '../lib/accounts.ts';
 import { modeEnabled as modeEnabledIn } from '../growth/leaderboards.ts';
-import { assertPositive, buyChips, deposit, withdraw } from '../payments/service.ts';
+import { assertPositive, chipsPurchase, preparePayment, runPayment } from '../payments/service.ts';
 import { railFor, requireProvider } from '../providers/index.ts';
 
 const SELECTION_IDS = new Set(SELECTIONS.map((s) => s.id));
@@ -187,22 +187,23 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/me/kyc', async (req) => {
     const kyc = kycProvider();
     const u = await ctx.user(req);
+    const cur = (await ctx.db.query<{ kyc_status: string; email: string }>('select kyc_status, email from users where id = $1', [u.id])).rows[0]!;
+    if (cur.kyc_status === 'verified') return { kyc_status: 'verified', provider: kyc.name };
+    // The provider is called outside any transaction (docs/21). The sandbox verifies instantly; a
+    // real provider returns `pending` and a place to continue, and its webhook moves the user to
+    // verified or rejected (routes/webhooks.ts). A verdict that arrived meanwhile is never undone.
+    const r = await kyc.start({ id: u.id, email: cur.email });
     return tx(ctx.db, async (c) => {
-      // Lock the user row: a verdict arriving by webhook while this runs is serialised with it.
-      const cur = (await c.query<{ kyc_status: string; email: string }>('select kyc_status, email from users where id = $1 for update', [u.id])).rows[0]!;
-      if (cur.kyc_status === 'verified') return { kyc_status: 'verified', provider: kyc.name };
-      // The sandbox verifies instantly. A real provider returns `pending` and a place to continue;
-      // its webhook then moves the user to verified or rejected (routes/webhooks.ts).
-      const r = await kyc.start(c, { id: u.id, email: cur.email });
-      await c.query('update users set kyc_status = $2, kyc_provider = $3, kyc_ref = $4 where id = $1', [u.id, r.status, kyc.name, r.ref]);
+      const upd = await c.query(`update users set kyc_status = $2, kyc_provider = $3, kyc_ref = $4 where id = $1 and kyc_status <> 'verified'`, [u.id, r.status, kyc.name, r.ref]);
+      if (upd.rowCount === 0) return { kyc_status: 'verified', provider: kyc.name };
       await audit(c, { type: `kyc.${r.status}`, userId: u.id, provider: kyc.name, ref: r.ref });
       return { kyc_status: r.status, provider: kyc.name, redirect_url: r.redirect_url ?? null };
     });
   });
 
   // ---------------------------------------------------------------- payments (provider rails)
-  // Run INSIDE idempotentMoneyWrite's callback: a retry of a payment that already committed must
-  // replay its stored response, even if the account, KYC, territory or mode changed since.
+  // The checks run inside runPayment's prepare phase (docs/21): a retry of a payment that already
+  // completed replays its stored response, even if the account, KYC, territory or mode changed since.
   // Every query goes through the transaction's own connection: asking the pool for a second one
   // while holding this one could starve the pool under concurrent payments.
   const realGate = async (c: Tx, userId: string, mode: PlayMode) => {
@@ -221,15 +222,15 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   /**
    * Money in and out needs an Idempotency-Key (8–200 characters, as POST /v1/bets). The payment id
    * and its ledger postings are derived from (player, key) and the response is stored with them:
-   * a retry returns the original payment and never moves money twice; the same key with a
-   * different request gets 422 idempotency_mismatch.
+   * a retry returns the original payment and never moves money twice, nor asks the provider
+   * twice; the same key with a different request gets 422 idempotency_mismatch.
    */
   app.post('/v1/me/deposits', async (req, reply) => {
     const u = await ctx.user(req);
     const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
     const r = rail(b.mode);
-    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+    const res = await runPayment(ctx.db, `user:${u.id}`, key, req, r, 'createDeposit', async (c, id) => {
       await realGate(c, u.id, b.mode);
       // Deposits only: a withdrawal returns the player's own money and is never held back by these.
       await assertRealMoneyAccount(c, u.id); // age, verified email, territory
@@ -251,7 +252,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
         const cents = [...totals].reduce((a, [cur, n]) => a + toEurCents(cur, n), 0);
         if (cents > l.deposit_day_minor) throw new ApiError(403, 'limit_reached', 'your daily deposit limit would be exceeded');
       }
-      return { status: 201, body: await deposit(c, r, u.id, b.mode, b.currency, b.amount_minor, b.method, ref) };
+      await preparePayment(c, { id, rail: r, kind: 'deposit', userId: u.id, mode: b.mode, currency: b.currency, amountMinor: b.amount_minor, method: b.method });
     });
     return reply.code(res.status).send(res.body);
   });
@@ -260,9 +261,9 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const key = requireIdempotencyKey(req);
     const b = Money.parse(req.body);
     const r = rail(b.mode);
-    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+    const res = await runPayment(ctx.db, `user:${u.id}`, key, req, r, 'createPayout', async (c, id) => {
       await realGate(c, u.id, b.mode);
-      return { status: 201, body: await withdraw(c, r, u.id, b.mode, b.currency, b.amount_minor, b.method, b.destination, ref) };
+      await preparePayment(c, { id, rail: r, kind: 'withdrawal', userId: u.id, mode: b.mode, currency: b.currency, amountMinor: b.amount_minor, method: b.method, destination: b.destination ?? null });
     });
     return reply.code(res.status).send(res.body);
   });
@@ -272,9 +273,9 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ chips: z.number().int(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
     assertPositive(b.chips, 'chips');
     const r = rail(b.pay_with === 'EUR' ? 'real-fiat' : 'real-crypto');
-    const res = await idempotentMoneyWrite(ctx.db, `user:${u.id}`, key, req, 'pay', async (c, ref) => {
+    const res = await runPayment(ctx.db, `user:${u.id}`, key, req, r, 'createDeposit', async (c, id) => {
       if (!(await modeEnabledIn(c, 'virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
-      return { status: 201, body: await buyChips(c, r, { userId: u.id }, b.chips, b.pay_with, ref) };
+      await preparePayment(c, { id, rail: r, kind: 'purchase', userId: u.id, ...chipsPurchase(b.chips, b.pay_with) });
     });
     return reply.code(res.status).send(res.body);
   });

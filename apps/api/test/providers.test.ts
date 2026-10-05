@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config.ts';
 import { tx } from '../src/lib/db.ts';
+import { keyedRef } from '../src/lib/idempotency.ts';
 import { acct, balance } from '../src/lib/ledger.ts';
 import { noProviders, providersFromConfig } from '../src/providers/index.ts';
+import { chipsPurchase, runSandbox } from '../src/payments/service.ts';
 import { sandboxCustody, sandboxKyc, sandboxPsp } from '../src/providers/sandbox.ts';
 import type { KycProvider, MoneyRail, PaymentIntent, ProviderEvent, Providers } from '../src/providers/types.ts';
 import { signWebhook, verifyWebhook } from '../src/providers/webhook.ts';
@@ -63,6 +65,8 @@ describe('webhook signatures', () => {
  * webhook. This is the shape a Stripe, Checkout.com or Fireblocks adapter takes.
  */
 const SECRET = 'whsec_test_' + 'x'.repeat(32);
+/** Payment ids the stand-in provider refuses (throws) when asked. */
+const failNext = new Set<string>();
 function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents: PaymentIntent[] } {
   const intents: PaymentIntent[] = [];
   const webhook = async (headers: Record<string, string | string[] | undefined>, raw: Buffer): Promise<ProviderEvent[]> => {
@@ -71,14 +75,14 @@ function pendingRail(name: string, rail: 'psp' | 'chain'): MoneyRail & { intents
   };
   return {
     name, rail, intents,
-    async createDeposit(_c, intent) { intents.push(intent); return { status: 'pending', ref: `${name}_${intent.id}`, redirect_url: `https://${name}.example/pay/${intent.id}`, address: rail === 'chain' ? '0xdeposit' : null }; },
-    async createPayout(_c, intent) { intents.push(intent); return { status: 'pending', ref: `${name}_${intent.id}` }; },
+    async createDeposit(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new Error('provider refused the card'); return { status: 'pending', ref: `${name}_${intent.id}`, redirect_url: `https://${name}.example/pay/${intent.id}`, address: rail === 'chain' ? '0xdeposit' : null }; },
+    async createPayout(intent) { intents.push(intent); if (failNext.has(intent.id)) throw new Error('payout rail unavailable'); return { status: 'pending', ref: `${name}_${intent.id}` }; },
     webhook,
   };
 }
 const pendingKyc: KycProvider = {
   name: 'idp',
-  async start(_c, user) { return { status: 'pending', ref: `idp_${user.id}`, redirect_url: 'https://idp.example/verify' }; },
+  async start(user) { return { status: 'pending', ref: `idp_${user.id}`, redirect_url: 'https://idp.example/verify' }; },
   webhook: async (headers, raw) => (verifyWebhook(headers, raw, { secret: SECRET }) as { events: ProviderEvent[] }).events,
 };
 
@@ -195,6 +199,38 @@ describe('provider adapters', () => {
     expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(25_000_000);
   });
 
+  it('the provider is asked once per payment, outside the transaction; a refusal fails the payment and refunds a payout', async () => {
+    const p = await verifiedPlayer('Once');
+    const dep = { mode: 'real-fiat', currency: 'EUR', amount_minor: 1_500, method: 'card' };
+    const before = psp.intents.length;
+    const key = idemKey();
+    const r1 = await h.api('POST', '/v1/me/deposits', p.token, dep, key);
+    const r2 = await h.api('POST', '/v1/me/deposits', p.token, dep, key);
+    expect(r1.status).toBe(201);
+    expect(r2.body.id).toBe(r1.body.id);
+    expect(psp.intents.length).toBe(before + 1); // the retry replayed the stored answer, the provider was not asked again
+    // The row existed before the provider was asked, and its id is the provider's idempotency key.
+    expect(psp.intents.at(-1)!.id).toBe(r1.body.id);
+    expect((await h.db.query('select provider_ref from payments where id = $1', [r1.body.id])).rows[0].provider_ref).toBe(`psp-test_${r1.body.id}`);
+
+    // Fund a USDT wallet, then ask for a payout the provider refuses.
+    const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 9_000_000, method: 'crypto' }, idemKey());
+    await hook('custody-test', [{ type: 'payment', ref: fund.body.provider_ref, status: 'completed' }]);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(9_000_000);
+    const k = idemKey();
+    failNext.add(keyedRef('pay', `user:${p.id}`, k['idempotency-key']!)); // the id the route will derive
+    const r3 = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 2_000_000, method: 'crypto', destination: '0xfail' }, k);
+    expect(r3.status).toBe(502);
+    expect(r3.body.type).toBe('provider_error');
+    expect(r3.body.payment).toMatchObject({ status: 'failed', kind: 'withdrawal' });
+    // The phase-1 debit was refunded, the failed payment stays on record, and the same key replays the same answer.
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(9_000_000);
+    const again = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 2_000_000, method: 'crypto', destination: '0xfail' }, k);
+    expect(again.status).toBe(502);
+    expect(again.body.payment.id).toBe(r3.body.payment.id);
+    expect((await h.api('GET', '/v1/me/payments', p.token)).body.payments.find((x: any) => x.id === r3.body.payment.id).status).toBe('failed');
+  });
+
   it('purchase: chips are issued when the charge completes, not before', async () => {
     const p = await verifiedPlayer('Buy');
     const r = await h.api('POST', '/v1/me/chips/purchases', p.token, { chips: 1_000, pay_with: 'EUR' }, idemKey());
@@ -226,14 +262,16 @@ describe('sandbox adapters honour the same contract', () => {
     try {
       const p = await h.register('Sbx');
       const intent: PaymentIntent = { id: 'pay_x', userId: p.id, mode: 'real-fiat', currency: 'EUR', amountMinor: 100, method: 'card' };
-      await tx(h.db, async (c) => {
-        expect(await sandboxPsp.createDeposit(c, intent)).toMatchObject({ status: 'completed', ref: 'sbx_pay_x', address: null });
-        expect(await sandboxPsp.createPayout(c, { ...intent, destination: 'DE89…' })).toMatchObject({ status: 'completed', address: 'DE89…' });
-        const chain = await sandboxCustody.createDeposit(c, { ...intent, mode: 'real-crypto', currency: 'USDT' });
-        expect(chain.status).toBe('completed');
-        expect(chain.address).toMatch(/^0x[0-9a-f]{40}$/);
-        expect(await sandboxKyc.start(c, { id: p.id, email: 'x@y.z' })).toMatchObject({ status: 'verified', ref: `sbx_kyc_${p.id}` });
-      });
+      expect(await sandboxPsp.createDeposit(intent)).toMatchObject({ status: 'completed', ref: 'sbx_pay_x', address: null });
+      expect(await sandboxPsp.createPayout({ ...intent, destination: 'DE89…' })).toMatchObject({ status: 'completed', address: 'DE89…' });
+      const chain = await sandboxCustody.createDeposit({ ...intent, mode: 'real-crypto', currency: 'USDT' });
+      expect(chain.status).toBe('completed');
+      expect(chain.address).toMatch(/^0x[0-9a-f]{40}$/);
+      expect(await sandboxKyc.start({ id: p.id, email: 'x@y.z' })).toMatchObject({ status: 'verified', ref: `sbx_kyc_${p.id}` });
+      // Demo seeding runs the three phases in one transaction with the sandbox only.
+      const row = await tx(h.db, (c) => runSandbox(c, { id: 'pay_sbx_1', rail: sandboxPsp, kind: 'purchase', userId: p.id, ...chipsPurchase(500, 'EUR') }));
+      expect(row).toMatchObject({ status: 'completed', provider: 'sandbox', provider_ref: 'sbx_pay_sbx_1' });
+      expect(await tx(h.db, (c) => balance(c, acct(p.id, 'wallet', 'virtual-chips', 'CHIP')))).toBe(500);
       expect(sandboxPsp.webhook).toBeUndefined();
       expect(sandboxKyc.webhook).toBeUndefined();
     } finally { await h.close(); }

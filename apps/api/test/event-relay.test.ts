@@ -13,6 +13,7 @@ class FakeClient extends EventEmitter {
   constructor(private readonly listenFails: boolean) { super(); }
   async query(sql: string, params?: unknown[]) {
     if (/^listen /.test(sql) && this.listenFails) throw new Error('LISTEN refused');
+    if (sql.includes('pg_notify') && this.pool.notifyFailures > 0) { this.pool.notifyFailures--; throw new Error('pool exhausted'); }
     if (sql.includes('pg_notify')) {
       // Deliver to every listening client of the pool, as PostgreSQL would.
       for (const payload of (params![1] as string[])) for (const c of this.pool.listeners) c.emit('notification', { channel: EVENTS_CHANNEL, payload });
@@ -27,6 +28,8 @@ class FakePool {
   clients: FakeClient[] = [];
   listeners: FakeClient[] = [];
   failNext = 0;
+  /** How many NOTIFY queries fail before they succeed again. */
+  notifyFailures = 0;
   async connect() {
     const c = new FakeClient(this.failNext > 0);
     this.failNext = Math.max(0, this.failNext - 1);
@@ -82,6 +85,27 @@ describe('event relay', () => {
       expect(relayStats.connected).toBe(true);
       expect(relayStats.gaps).toBe(gaps + 1);
       expect(seen.filter((e) => e.type === 'relay.gap')).toHaveLength(1);
+    } finally { await stop(); bus.off('event', onEvent); }
+  });
+
+  it('retries a failed NOTIFY with backoff instead of dropping the event', async () => {
+    const pool = new FakePool();
+    const seen: DomainEvent[] = [];
+    const onEvent = (e: DomainEvent) => { seen.push(e); };
+    bus.on('event', onEvent);
+    const stop = await startEventRelay(asDb(pool));
+    try {
+      pool.notifyFailures = 2;
+      const forwarded = relayStats.forwarded;
+      const batch = new EventBatch();
+      batch.push({ type: 'round.settled', tableId: 't1', roundId: 'r9', data: {} });
+      publish(batch);
+      await sleep(50);
+      expect(relayStats.forwarded).toBe(forwarded); // still retrying
+      await sleep(600); // backoff: 100 ms then 200 ms, then the third attempt succeeds
+      expect(relayStats.forwarded).toBe(forwarded + 1);
+      expect(relayStats.queued).toBe(0);
+      expect(pool.notifyFailures).toBe(0);
     } finally { await stop(); bus.off('event', onEvent); }
   });
 

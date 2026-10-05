@@ -38,7 +38,10 @@ export const EVENTS_CHANNEL = 'preflop_events';
 /** NOTIFY payloads are limited to 8000 bytes; a larger event is relayed without its data. */
 const MAX_PAYLOAD_BYTES = 7900;
 
-export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false, gaps: 0 };
+export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false, gaps: 0, dropped: 0, queued: 0 };
+/** Outbound events waiting for NOTIFY to succeed; bounded, oldest dropped first (and counted). */
+const MAX_OUTBOUND = 2000;
+const MAX_ATTEMPTS = 8;
 
 /**
  * Emitted on this process's bus when its listener reconnects after a drop: notifications sent by
@@ -63,13 +66,52 @@ export function encodeRelayed(e: DomainEvent): string {
   return JSON.stringify({ i: INSTANCE_ID, e: { ...e, data: { truncated: true } } });
 }
 
+const outbound: string[] = [];
+let draining = false;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Queues the events and drains the queue in order. A failed NOTIFY (pool exhausted, connection
+ * lost) is retried with backoff rather than dropped: the other instances' listeners are healthy and
+ * would otherwise never hear of these events. Only after MAX_ATTEMPTS, or when the queue overflows,
+ * are events dropped, and then counted in relayStats.dropped and logged.
+ */
 async function forward(db: Db, events: DomainEvent[]): Promise<void> {
+  for (const e of events) outbound.push(encodeRelayed(e));
+  if (outbound.length > MAX_OUTBOUND) {
+    const n = outbound.length - MAX_OUTBOUND;
+    outbound.splice(0, n);
+    relayStats.dropped += n;
+    console.error(`event relay: outbound queue full, dropped ${n} oldest events`);
+  }
+  relayStats.queued = outbound.length;
+  if (draining) return;
+  draining = true;
+  let attempt = 0;
   try {
-    await db.query('select pg_notify($1, p) from unnest($2::text[]) as p', [EVENTS_CHANNEL, events.map(encodeRelayed)]);
-    relayStats.forwarded += events.length;
-  } catch (err) {
-    relayStats.errors++;
-    console.error('event relay: forwarding failed', err);
+    while (outbound.length && relayDb === db) {
+      const batch = outbound.slice(0, 200);
+      try {
+        await db.query('select pg_notify($1, p) from unnest($2::text[]) as p', [EVENTS_CHANNEL, batch]);
+        outbound.splice(0, batch.length);
+        relayStats.forwarded += batch.length;
+        attempt = 0;
+      } catch (err) {
+        relayStats.errors++;
+        attempt++;
+        if (attempt >= MAX_ATTEMPTS) {
+          outbound.splice(0, batch.length);
+          relayStats.dropped += batch.length;
+          console.error(`event relay: forwarding failed ${attempt} times, dropped ${batch.length} events`, err);
+          attempt = 0;
+        } else {
+          await sleep(Math.min(5000, 50 * 2 ** attempt));
+        }
+      }
+      relayStats.queued = outbound.length;
+    }
+  } finally {
+    draining = false;
   }
 }
 

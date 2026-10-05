@@ -20,19 +20,19 @@ function instant(rail: 'psp' | 'chain', intent: PaymentIntent, payout: boolean):
 export const sandboxPsp: MoneyRail = {
   name: 'sandbox',
   rail: 'psp',
-  async createDeposit(_c, intent) { return instant('psp', intent, false); },
-  async createPayout(_c, intent) { return instant('psp', intent, true); },
+  async createDeposit(intent) { return instant('psp', intent, false); },
+  async createPayout(intent) { return instant('psp', intent, true); },
 };
 
 export const sandboxCustody: MoneyRail = {
   name: 'sandbox',
   rail: 'chain',
-  async createDeposit(_c, intent) { return instant('chain', intent, false); },
-  async createPayout(_c, intent) { return instant('chain', intent, true); },
+  async createDeposit(intent) { return instant('chain', intent, false); },
+  async createPayout(intent) { return instant('chain', intent, true); },
 };
 
 /** Documents are "verified" instantly. A real provider returns `pending` and its webhook decides. */
 export const sandboxKyc: KycProvider = {
   name: 'sandbox',
-  async start(_c, user) { return { status: 'verified', ref: `sbx_kyc_${user.id}`, details: { sandbox: true } }; },
+  async start(user) { return { status: 'verified', ref: `sbx_kyc_${user.id}`, details: { sandbox: true } }; },
 };

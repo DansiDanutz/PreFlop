@@ -1,5 +1,4 @@
 import type { PlayMode } from '@preflop/odds-engine';
-import type { Tx } from '../lib/db.ts';
 
 /**
  * Provider adapters (docs/21). Real money needs three outside services, each behind one interface:
@@ -12,9 +11,11 @@ import type { Tx } from '../lib/db.ts';
  * and are the same for every provider. An adapter only talks to the outside service and reports
  * either an immediate result or "pending", and later the outcome through its webhook.
  *
- * Every method runs inside the caller's transaction: an adapter must not open its own, and must not
- * commit anything irreversible before returning (a provider call that cannot be rolled back belongs
- * in a pending result, confirmed by the webhook).
+ * An adapter is called OUTSIDE any database transaction, after the payment is on record as a pending
+ * row (payments/service.ts, phase 2), and never touches the database itself. `intent.id` is that
+ * row's id and is stable across retries of the same request: the adapter passes it to the provider
+ * as the idempotency key, so a repeated call can never create a second payment there. A call that
+ * cannot answer at once returns `pending`; the provider's webhook settles it later.
  */
 
 export type Rail = 'psp' | 'chain';
@@ -61,9 +62,9 @@ export interface MoneyRail {
   readonly name: string;
   readonly rail: Rail;
   /** Collect money from the payer (a deposit, or the charge of a purchase). */
-  createDeposit(c: Tx, intent: PaymentIntent): Promise<ProviderResult>;
+  createDeposit(intent: PaymentIntent): Promise<ProviderResult>;
   /** Send money out to the player. The wallet is already debited when this runs. */
-  createPayout(c: Tx, intent: PaymentIntent): Promise<ProviderResult>;
+  createPayout(intent: PaymentIntent): Promise<ProviderResult>;
   webhook?: WebhookHandler;
 }
 
@@ -77,8 +78,8 @@ export interface KycResult {
 
 export interface KycProvider {
   readonly name: string;
-  /** Start (or restart) verification for a user. */
-  start(c: Tx, user: { id: string; email: string }): Promise<KycResult>;
+  /** Start (or restart) verification for a user; called outside any transaction. */
+  start(user: { id: string; email: string }): Promise<KycResult>;
   webhook?: WebhookHandler;
 }
 
