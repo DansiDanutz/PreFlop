@@ -30,6 +30,18 @@ export interface Config {
   mail: MailConfig;
   /** Decision model hints (docs/20): TypeSafe AI's Jev through JEV_API_KEY. Off without a key. */
   decisions: DecisionsConfig;
+  /** Real-money provider adapters (docs/21): `sandbox` outside production, `none` (fail closed) by default in production. */
+  providers: ProvidersConfig;
+}
+
+export type ProviderName = 'sandbox' | 'none';
+export interface ProvidersConfig {
+  /** KYC_PROVIDER: identity verification. */
+  kyc: ProviderName;
+  /** PSP_PROVIDER: fiat deposits and payouts (real-fiat). */
+  psp: ProviderName;
+  /** CUSTODY_PROVIDER: stablecoin deposits and payouts (real-crypto). */
+  custody: ProviderName;
 }
 
 export interface DecisionsConfig {
@@ -160,6 +172,9 @@ const Env = z.object({
   JEV_API_KEY: z.string().min(16).optional(),
   JEV_API_URL: z.string().url().default('https://api.typesafe.ai/v1/systemone'),
   JEV_MODEL: z.string().min(1).max(80).default('jev-latest'),
+  KYC_PROVIDER: z.enum(['sandbox', 'none']).optional(),
+  PSP_PROVIDER: z.enum(['sandbox', 'none']).optional(),
+  CUSTODY_PROVIDER: z.enum(['sandbox', 'none']).optional(),
 });
 type Env = z.infer<typeof Env>;
 
@@ -245,6 +260,9 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
     }
   }
   if (e.JEV_API_KEY && !/^https:\/\//i.test(e.JEV_API_URL)) problems.push('JEV_API_URL must be https: the key travels in the Authorization header');
+  for (const [name, v] of [['KYC_PROVIDER', e.KYC_PROVIDER], ['PSP_PROVIDER', e.PSP_PROVIDER], ['CUSTODY_PROVIDER', e.CUSTODY_PROVIDER]] as const) {
+    if (v === 'sandbox') problems.push(`${name}=sandbox never runs in production: it verifies anyone and completes every payment without moving money; leave it unset (none) until a real provider is configured (docs/21)`);
+  }
   if (!e.RATE_LIMIT_ENABLED) problems.push('RATE_LIMIT_ENABLED=false is for tests and the soak only');
   if (e.WEBHOOK_ALLOW_PRIVATE) problems.push('WEBHOOK_ALLOW_PRIVATE=true is for local tests only; it lets webhooks reach private addresses (SSRF)');
   return problems;
@@ -261,6 +279,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(present);
   if (!parsed.success) throw new ConfigError(parsed.error.issues.map((i) => `${i.path.join('.') || 'env'}: ${i.message}`), nodeEnv);
   const e = parsed.data;
+  // Without a choice, development and tests get the sandbox; production fails closed.
+  const defaultProvider: ProviderName = e.NODE_ENV === 'production' ? 'none' : 'sandbox';
   if (e.NODE_ENV === 'production') {
     const problems = productionProblems(env, e);
     if (problems.length) throw new ConfigError(problems, e.NODE_ENV);
@@ -286,6 +306,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
     decisions: { apiKey: e.JEV_API_KEY ?? null, url: e.JEV_API_URL, model: e.JEV_MODEL },
+    providers: {
+      kyc: e.KYC_PROVIDER ?? defaultProvider,
+      psp: e.PSP_PROVIDER ?? defaultProvider,
+      custody: e.CUSTODY_PROVIDER ?? defaultProvider,
+    },
   };
 }
 

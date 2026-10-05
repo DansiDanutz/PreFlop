@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { tx } from '../src/lib/db.ts';
+import { RELAY_GAP, bus } from '../src/lib/events.ts';
 import { STREAM_MAX_PAYLOAD, streamTuning } from '../src/routes/stream.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { type Harness, harness } from './helpers.ts';
@@ -59,6 +60,19 @@ describe('WS /v1/stream connection health', () => {
     expect(sub?.topics).toContain('lobby');
     expect(sub?.topics.every((t) => /^(lobby|table:t-\d+)$/.test(t))).toBe(true);
     s.ws.close();
+  });
+
+  it('a relay gap closes every socket with 1012 so clients reconnect and refetch', async () => {
+    const a = connect();
+    const b = connect();
+    await Promise.all([a.opened, b.opened]);
+    a.ws.send(JSON.stringify({ subscribe: ['lobby'] }));
+    await sleep(50);
+    bus.emit('event', RELAY_GAP);
+    expect(await a.closed).toBe(1012);
+    expect(await b.closed).toBe(1012);
+    // Nothing was sent as an event frame.
+    expect(a.frames.some((f) => f.type === 'relay.gap')).toBe(false);
   });
 
   it('pings every interval and terminates a socket that misses a pong', async () => {

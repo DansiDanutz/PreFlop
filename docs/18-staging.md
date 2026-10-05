@@ -66,8 +66,8 @@ Staging runs the real product against **simulated tables**:
 | Health | `curl https://preflop-staging-api.fly.dev/v1/health/ready` |
 | Logs | `fly logs -a preflop-staging-api` (structured, with request ids) · `fly logs -a preflop-staging-sim` |
 | Releases and rollback | `fly releases -a preflop-staging-api`, then `fly deploy -a preflop-staging-api --image <previous image>` |
-| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks and the worker are safe on several machines |
-| Database backup and restore | Supabase keeps daily backups of the project (Pro plan), restorable from its dashboard; `pg_dump` the `preflop_staging` database before a risky migration |
+| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks, the worker and the WebSocket stream (events cross machines through PostgreSQL NOTIFY) are safe on several machines |
+| Database backup and restore | Supabase's daily project backups, plus our own weekly dump and restore drill; see *Backups and restore drill* below. Before a risky migration: `scripts/db-backup.sh dump "$DATABASE_URL" before.dump` |
 | Metrics | `GET /v1/admin/metrics` (admin token) |
 | Rotate the simulator's table keys | `fly machine restart -a preflop-staging-sim` (it re-seeds and rotates its keys on a fresh machine) |
 
@@ -85,6 +85,32 @@ Staging runs the real product against **simulated tables**:
 Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
 
 **Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
+
+## Backups and restore drill
+
+Two layers, so losing the database is a bad hour and not a bad month:
+
+1. **Supabase** keeps daily backups of the whole project (Pro plan), restorable from its dashboard. They are the first line, and they belong to the project, not to this repository.
+2. **Our own weekly dump** (`.github/workflows/backup.yml`, Sundays 03:23 UTC and on demand). The run takes a `pg_dump` of the staging database (custom format, compressed), **restores it into a scratch PostgreSQL 17 on the runner**, verifies the copy, encrypts the dump and keeps it as a workflow artifact for 30 days (Actions → the run → Artifacts). A backup nobody has restored is a hope, so every weekly run is also the restore drill; a failing run means the backup or the restore is broken, and GitHub emails the owner about failed scheduled runs.
+
+The verification checks that the restored copy has the same applied migrations and the same row count in every table as the source **as of the dump's snapshot** (the drill reads those in the transaction whose snapshot `pg_dump` uses, so a bet placed while the dump runs never fails a good restore), that the ledger sums to zero in every currency, and that every audit event's hash recomputes from its predecessor and its text, the chain is unbroken and `audit_head` is its last event. Any difference fails the run.
+
+The workflow reads two repository secrets: `DATABASE_URL` (the same connection string the Fly apps use, with `sslmode=verify-full`; the Supabase CA in `deploy/supabase-ca.crt` verifies the server; the Fly secrets workflow already expects it under this name, so one secret serves both) and `BACKUP_PASSPHRASE` (at least 32 random characters, e.g. `openssl rand -base64 48`). The artifact is the dump encrypted with that passphrase (`openssl enc -aes-256-cbc -pbkdf2 -iter 600000`): a dump holds accounts, password hashes and 2FA secrets, and anyone who can read the repository can download its artifacts. Keep the passphrase where the team keeps secrets, outside GitHub too; without it the artifacts are noise. Without either secret the run fails saying which one is missing. To use an artifact:
+
+```sh
+BACKUP_PASSPHRASE='…' openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in preflop-staging-<time>.dump.enc -out staging.dump -pass env:BACKUP_PASSPHRASE
+```
+
+By hand, from a machine with PostgreSQL client tools of version 17 or newer (the dump must come from a `pg_dump` at least as new as the server):
+
+```sh
+scripts/db-backup.sh dump    "$DATABASE_URL" staging.dump               # back up
+scripts/db-backup.sh drill   "$DATABASE_URL" postgres://localhost/preflop_drill   # dump, restore into a scratch db, verify
+scripts/db-backup.sh restore "$TARGET_URL"   staging.dump               # restore into a fresh, empty database
+scripts/db-backup.sh verify  "$DATABASE_URL" "$TARGET_URL"             # compare a restored copy with its source
+```
+
+The script never prints connection strings. `restore` refuses a target that already holds tables. `drill` drops and recreates its scratch database, and only one that does not exist yet or that an earlier drill created (it marks its scratch databases with a database comment): a scratch URL that reaches a real database by another host name or role is refused, so the drill can never drop what it protects. To restore staging itself after a loss: create an empty database (Supabase SQL editor, or `create database`), `restore` into it, point the Fly apps' `DATABASE_URL` at it with the Fly secrets workflow, and deploy; the API applies any newer migrations at start.
 
 ## First demo data
 See `deploy/staging-bootstrap.md` for the API calls that create a free-chip tournament and a leaderboard after the first deploy.

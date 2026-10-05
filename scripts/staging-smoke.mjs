@@ -165,10 +165,13 @@ const payout = Number(settled.payout_minor ?? 0);
 const expected = settled.status === 'won' || settled.status === 'lost' ? before - STAKE + payout : before;
 if (after !== expected) fail(`wallet after settlement is ${after}, expected ${expected} (bet ${settled.status}, payout ${payout})`);
 log(`bet ${settled.status} (payout ${payout}); wallet ${before} → ${after}`);
-ws.close();
 // The table topic itself must have delivered, for the very round the bet was on: a player-only
-// event (bet.accepted) or an unrelated round on that table is not enough.
-const tableEvents = events.filter((e) => e.table_id === table.id && e.round_id === roundId && String(e.type).startsWith('round.'));
+// event (bet.accepted) or an unrelated round on that table is not enough. The socket may sit on
+// another API machine than the one that settled the round; the relay between them takes a moment.
+const roundEvents = () => events.filter((e) => e.table_id === table.id && e.round_id === roundId && String(e.type).startsWith('round.'));
+for (let waited = 0; roundEvents().length === 0 && waited < 10_000; waited += 250) await sleep(250);
+ws.close();
+const tableEvents = roundEvents();
 if (tableEvents.length === 0) fail(`no round.* events received on table:${table.id} for ${roundId} while it settled (${events.length} other events)`);
 log(`${events.length} stream events received, ${tableEvents.length} for the table (${[...new Set(events.map((e) => e.type))].join(', ')})`);
 

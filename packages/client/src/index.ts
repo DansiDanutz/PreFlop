@@ -250,7 +250,7 @@ export interface Alert { id: number; table_id: string | null; round_id: string |
 export interface ReadingCheck { enabled: boolean; model: string | null; cards: { card: string; accept: boolean; confidence: number | null }[] }
 export interface Evidence { round: Round & { review_reasons: string[] | null }; capture: Record<string, unknown> | null; image_data_url: string | null; entries: { source: string; person_id: string; cards: string[] }[]; events: { ord: number; step: string; at: string }[] }
 export interface Limits { deposit_day_minor?: number | null; loss_day_minor?: number | null; session_minutes?: number | null }
-export interface Payment { id: string; kind: 'deposit' | 'withdrawal' | 'purchase'; method: string; currency: string; amount_minor: number; status: string; created_at: string; address?: string | null }
+export interface Payment { id: string; kind: 'deposit' | 'withdrawal' | 'purchase'; method: string; currency: string; amount_minor: number; status: string; created_at: string; address?: string | null; provider?: string; product?: string | null; /** Where a pending payment continues (hosted checkout, 3-D Secure); null once settled. */ redirect_url?: string | null }
 
 // --- stream
 export interface StreamEvent { type: string; table_id?: string; round_id?: string; data: Record<string, any>; at: number }
@@ -444,7 +444,8 @@ export function createClient(o: ClientOptions) {
     limits: () => get<Limits>('/v1/me/limits'),
     setLimits: (l: Limits) => put<Limits>('/v1/me/limits', l),
     selfExclude: (days: number) => post<{ until: string }>('/v1/me/self-exclusion', { days }),
-    startKyc: () => post<{ kyc_status: string }>('/v1/me/kyc'),
+    /** Starts identity verification. `pending` with a `redirect_url` means the provider continues it there. */
+    startKyc: () => post<{ kyc_status: 'verified' | 'pending' | 'rejected'; provider: string; redirect_url?: string | null }>('/v1/me/kyc'),
     payments: () => get<{ payments: Payment[] }>('/v1/me/payments', S.paymentsSchema),
     // Money in/out: pass the same idempotencyKey to retry safely (a retry never moves money twice).
     deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }, idempotencyKey = newIdempotencyKey()) => post<Payment>('/v1/me/deposits', b, { 'idempotency-key': idempotencyKey }, S.paymentSchema),
@@ -485,6 +486,7 @@ export function createClient(o: ClientOptions) {
     orgTreasury: (id: string) => get<{ accounts: { purpose: string; mode: PlayMode; currency: string; balance_minor: number; reserved_minor?: number }[] }>(`${org(id)}/treasury`),
     orgFundCollateral: (id: string, b: { mode: PlayMode; currency: string; amount_minor: number }, idempotencyKey = newIdempotencyKey()) => post<{ ok: true }>(`${org(id)}/collateral/deposits`, b, { 'idempotency-key': idempotencyKey }),
     diamondPacks: (id: string) => get<{ packs: DiamondPack[] }>(`${org(id)}/diamonds/packs`),
+    orgPayments: (id: string) => get<{ payments: Payment[] }>(`${org(id)}/payments`),
     buyDiamonds: (id: string, b: { diamonds: number; pay_with: 'EUR' | 'USDT' | 'USDC' }, idempotencyKey = newIdempotencyKey()) => post<Payment>(`${org(id)}/diamonds/purchases`, b, { 'idempotency-key': idempotencyKey }),
     buyOrgChips: (id: string, b: { chips: number; pay_with: 'EUR' | 'USDT' | 'USDC' }, idempotencyKey = newIdempotencyKey()) => post<Payment>(`${org(id)}/chips/purchases`, b, { 'idempotency-key': idempotencyKey }),
     orgTransfers: (id: string) => get<{ transfers: Transfer[] }>(`${org(id)}/transfers`),

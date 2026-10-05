@@ -41,10 +41,11 @@ This is the API as **built** in `apps/api`. The typed client in `packages/client
 | `GET/PUT /v1/me/favorites` | Six favorite selections (`docs/15`) |
 | `POST /v1/rooms/join {code}` | Joins an invite-only room |
 | `GET/PUT /v1/me/limits` · `POST /v1/me/self-exclusion` | Responsible gaming. A lower limit applies at once; a higher one (or a removal) waits 24 h in `pending`. Editing a field again supersedes its queued change (asking for 200, then reducing to 50, leaves 50 and cancels the 200; re-stating the current value cancels a queued raise); queued changes of other fields are kept, and a new raise restarts the shared `pending_effective_at`. Self-exclusion ends the sessions and is never shortened: excluding again keeps the later end |
-| `POST /v1/me/kyc` | KYC through the sandbox provider. The sandbox KYC, deposit and withdrawal rails return `503 provider_not_configured` when `NODE_ENV=production` |
+| `POST /v1/me/kyc` | Starts identity verification with the configured KYC provider (`docs/21`): `{kyc_status, provider, redirect_url}`. The sandbox verifies at once; a real provider answers `pending` and decides through its webhook. Without a configured provider (production by default) every real-money route answers `503 provider_not_configured` |
 | `POST /v1/me/org-claims` | Redeem a single-use owner link (`claim_used`, `claim_expired`) |
-| `POST /v1/me/deposits` · `withdrawals` (+ `Idempotency-Key`) · `GET /v1/me/payments` | Real money on the sandbox rail. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent, summed per currency in exact minor units over 24 h, the new deposit included; stablecoins convert once, rounding up). Deposits also need the account checks in *Accounts and security*; withdrawals never do. See *Idempotent money* |
-| `POST /v1/me/chips/purchases` (+ `Idempotency-Key`) | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC |
+| `POST /v1/me/deposits` · `withdrawals` (+ `Idempotency-Key`) · `GET /v1/me/payments` | Real money through the payment provider of the mode (`docs/21`): a payment is `completed`, or `pending` with a `redirect_url` until the provider's webhook settles it; a payout debits the wallet at once and is refunded if it fails; a provider that refuses answers `502 provider_error` with the `failed` payment. The provider is asked once per payment, outside the transaction, with the payment id as its idempotency key. Needs the mode enabled, KYC, and the deposit limit (EUR-equivalent, summed per currency in exact minor units over 24 h, the new deposit included; stablecoins convert once, rounding up). Deposits also need the account checks in *Accounts and security*; withdrawals never do. See *Idempotent money* |
+| `POST /v1/me/chips/purchases` (+ `Idempotency-Key`) | Buy virtual chips: 100 per euro, paid in EUR, USDT or USDC through the provider of that currency; chips are issued when the charge completes |
+| `POST /v1/webhooks/:provider` | Inbound provider webhooks (`docs/21`): authenticated by the adapter from the raw body, applied once, `200 {received, applied}`; `401 bad_signature`; `404` for a provider without a webhook |
 
 ## Provider (club tables)
 These calls use the signed envelope, and every write needs an `Idempotency-Key`. The order of the routes is the order of a hand:
@@ -255,6 +256,7 @@ Real money is off today. These rules are in place so it can be switched on.
 | `worker` | Freshest worker heartbeat (`ok`, `last_beat_age_ms`, `max_age_ms`) |
 | `instance.db_retries` | Deadlock (`40P01`) and serialization (`40001`) retries of `tx()` since this process started, and `exhausted` (gave up with `503 retry_later`). A non-zero deadlock count means a code path broke the lock order |
 | `instance.ws_clients` | WebSocket clients connected to this process |
+| `instance.event_relay` | Cross-instance stream fan-out through PostgreSQL NOTIFY: `connected` (this process listens), `forwarded` and `received` events, `truncated` (an event over the 8 KB payload limit was relayed without its data), `errors`. Processes started by `main.ts` and the standalone worker relay; a `connected: false` on a running instance means its clients see only events this process produced |
 
 Database counters are global; `instance` describes only the API process that answered.
 

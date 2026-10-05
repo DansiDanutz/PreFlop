@@ -379,7 +379,15 @@ function ResponsiblePlay() {
 }
 
 function RealMoney({ enabled, kyc }: { enabled: boolean; kyc: string }) {
-  const kycM = useMutation({ mutationFn: () => api.startKyc() });
+  const qc = useQueryClient();
+  const kycM = useMutation({
+    mutationFn: () => api.startKyc(),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['me'] });
+      // A real provider verifies on its own pages; the sandbox answers "verified" at once.
+      if (r.redirect_url) window.location.assign(r.redirect_url);
+    },
+  });
   const payments = useQuery({ queryKey: ['me', 'payments'], queryFn: () => api.payments(), enabled });
   if (!enabled) {
     return (
@@ -395,14 +403,17 @@ function RealMoney({ enabled, kyc }: { enabled: boolean; kyc: string }) {
         <span className="text-sm">Identity verification</span>
         <Badge tone={kyc === 'verified' ? 'accent' : kyc === 'rejected' ? 'danger' : 'muted'}>{kyc}</Badge>
       </div>
-      {kyc !== 'verified' && <Button className="w-full" disabled={kycM.isPending || kyc === 'pending'} onClick={() => kycM.mutate()}>Verify my identity</Button>}
+      {kyc !== 'verified' && <Button className="w-full" disabled={kycM.isPending} onClick={() => kycM.mutate()}>{kyc === 'pending' ? 'Continue verification' : 'Verify my identity'}</Button>}
       {kycM.isError && <Notice tone="warn">{errorText(kycM.error)}</Notice>}
       <div>
         <h3 className="mb-2 text-sm font-semibold">Deposits & withdrawals</h3>
         {payments.isError ? <Notice tone="info">{errorText(payments.error)}</Notice> : (payments.data?.payments.length ?? 0) === 0 ? <p className="text-sm text-muted">No payments yet.</p> : (
           <ul className="divide-y divide-line text-sm">
             {payments.data!.payments.map((p) => (
-              <li key={p.id} className={cx('flex justify-between py-2')}><span>{p.kind} · {p.method}</span><span>{formatMoney(p.amount_minor, p.currency)} · {p.status}</span></li>
+              <li key={p.id} className={cx('flex justify-between gap-3 py-2')}>
+                <span>{p.kind} · {p.method}</span>
+                <span className="text-right">{formatMoney(p.amount_minor, p.currency)} · {p.status}{p.redirect_url && <> · <a className="text-accent underline" href={p.redirect_url} target="_blank" rel="noopener noreferrer">Continue</a></>}</span>
+              </li>
             ))}
           </ul>
         )}

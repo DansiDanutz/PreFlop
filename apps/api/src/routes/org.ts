@@ -14,7 +14,8 @@ import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.t
 import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import { limitParam } from '../lib/query.ts';
 import { orgStatements } from '../lib/statements.ts';
-import { buyChips, buyDiamonds, diamondPacks } from '../payments/sandbox.ts';
+import { chipsPurchase, diamondPacks, diamondsPurchase, preparePayment, runPayment } from '../payments/service.ts';
+import { railFor, requireProvider } from '../providers/index.ts';
 import { CERT_FLAGS, type CertItem } from '../rounds/readiness.ts';
 import { withReviewDeadline } from '../rounds/service.ts';
 import { roomSelect, roomView } from './account.ts';
@@ -404,27 +405,37 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     await requireOrg(ctx, req, oid(req));
     return { packs: diamondPacks() };
   });
+  /** The organization's purchases; a pending one keeps the provider's checkout link (docs/21). */
+  app.get(`${P}/payments`, async (req) => {
+    const { org } = await requireOrg(ctx, req, oid(req));
+    return { payments: (await ctx.db.query(`select id, kind, method, mode, currency, amount_minor, status, provider, created_at, details->>'product' as product,
+        case when status = 'pending' then details->>'redirect_url' end as redirect_url
+      from payments where org_id = $1 order by created_at desc limit 100`, [org.id])).rows };
+  });
+  // Purchases are charged through the payment provider of the paying currency (docs/21); without one, 503 provider_not_configured.
+  const purchaseRail = (payWith: 'EUR' | 'USDT' | 'USDC') =>
+    requireProvider(railFor(ctx.providers, payWith === 'EUR' ? 'real-fiat' : 'real-crypto'), payWith === 'EUR' ? 'card and bank payments' : 'stablecoin payments');
   app.post(`${P}/diamonds/purchases`, async (req, reply) => {
-    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
-    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const key = requireIdempotencyKey(req);
     const b = z.object({ diamonds: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
+    const rail = purchaseRail(b.pay_with);
     if (!(await ctx.modeEnabled('diamonds'))) throw conflict('mode_disabled', 'diamonds are not enabled');
-    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await buyDiamonds(c, org.id, b.diamonds, b.pay_with, ref) }));
+    const res = await runPayment(ctx.db, `user:${user.id}`, key, req, rail, 'createDeposit', async (c, id) => {
+      await preparePayment(c, { id, rail, kind: 'purchase', orgId: org.id, ...diamondsPurchase(b.diamonds, b.pay_with) });
+    });
     return reply.code(res.status).send(res.body);
   });
   app.post(`${P}/chips/purchases`, async (req, reply) => {
-    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
-    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     // Partners buy chips too: their treasury funds transfer-wallet deposits to their players.
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
     const key = requireIdempotencyKey(req);
     const b = z.object({ chips: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
+    const rail = purchaseRail(b.pay_with);
     if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
-    const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await buyChips(c, { orgId: org.id }, b.chips, b.pay_with, ref) }));
+    const res = await runPayment(ctx.db, `user:${user.id}`, key, req, rail, 'createDeposit', async (c, id) => {
+      await preparePayment(c, { id, rail, kind: 'purchase', orgId: org.id, ...chipsPurchase(b.chips, b.pay_with) });
+    });
     return reply.code(res.status).send(res.body);
   });
   app.get(`${P}/transfers`, async (req) => {
@@ -458,7 +469,8 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'] });
     const period = (req.query as { period?: string }).period ?? new Date().toISOString().slice(0, 7);
     const q1 = async (sql: string) => Number((await ctx.db.query<{ n: number }>(sql, [org.id, period])).rows[0]?.n ?? 0);
-    const bought = await q1(`select coalesce(sum((details->>'diamonds')::bigint), 0)::bigint as n from payments where org_id = $1 and details->>'product' = 'diamonds' and to_char(created_at, 'YYYY-MM') = $2`);
+    // Completed purchases only: a pending one has issued nothing yet, a failed one never will.
+    const bought = await q1(`select coalesce(sum((details->>'diamonds')::bigint), 0)::bigint as n from payments where org_id = $1 and details->>'product' = 'diamonds' and status = 'completed' and to_char(created_at, 'YYYY-MM') = $2`);
     const bets = await q1(`select count(*)::int as n from bets where house_owner = $1 and mode = 'diamonds' and to_char(placed_at, 'YYYY-MM') = $2 and status <> 'void'`);
     const stakes = await q1(`select coalesce(sum(stake_minor), 0)::bigint as n from bets where house_owner = $1 and mode = 'diamonds' and to_char(placed_at, 'YYYY-MM') = $2 and status <> 'void'`);
     const fees = await q1(`select coalesce(sum(fee_minor), 0)::bigint as n from bets where house_owner = $1 and mode = 'diamonds' and to_char(placed_at, 'YYYY-MM') = $2 and status <> 'void'`);

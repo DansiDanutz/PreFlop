@@ -77,9 +77,10 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
 | `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
 | `MAIL_FROM` | `PreFlop <no-reply@preflop.local>` | Sender of account emails. **Required** (an address of your own domain) when `SMTP_URL` is set |
+| `KYC_PROVIDER` · `PSP_PROVIDER` · `CUSTODY_PROVIDER` | `sandbox` (dev, test) · `none` (production) | Real-money adapters (`docs/21`): identity verification, fiat payments, stablecoin custody. `none` fails closed (`503 provider_not_configured`); production refuses `sandbox` |
 | `SMTP_URL` | unset | `smtp://` or `smtps://user:pass@host:port`: account emails go out over SMTP (nodemailer), retried with backoff. With it, production also requires `MAIL_FROM` and a public `https` `WEB_URL`. Unset: in production emails stay queued in `email_outbox` and the API warns at start (`docs/14`, *Accounts and security*) |
 
-Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL (`docs/14`, *Limits* and *Health and metrics*).
+Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database plus a fresh worker heartbeat). Operational counters: `GET /v1/admin/metrics`. Several API processes can share one database: bet exposure, the login lockout and webhook fan-out are all enforced in PostgreSQL, and WebSocket stream events cross processes through PostgreSQL NOTIFY (`docs/14`, *Limits* and *Health and metrics*).
 
 ## Documentation
 
@@ -95,9 +96,10 @@ Probes: liveness `GET /v1/health`, readiness `GET /v1/health/ready` (database pl
 | [`docs/14`](docs/14-platform-api.md) | **Platform API reference** as built, and the money flows |
 | [`docs/15`](docs/15-app-design.md) | App design taken from Codex's mobile concepts |
 | [`docs/16`](docs/16-leaderboards-promotions-agents.md) · [`17`](docs/17-tournaments.md) | Leaderboards, prize pools, promotions and agents; tournaments |
-| [`docs/18`](docs/18-staging.md) | **Staging environment** (Vercel + Fly.io + Supabase Postgres): setup, deploys, operations |
+| [`docs/18`](docs/18-staging.md) | **Staging environment** (Vercel + Fly.io + Supabase Postgres): setup, deploys, operations, smoke test, uptime, backups |
 | [`docs/19`](docs/19-manual-tables.md) | **Manual tables**: the PreFlop team types each flop in the console (free play only), the base for webcam card recognition |
 | [`docs/20`](docs/20-decisions.md) | **Decision hints** (TypeSafe AI Jev): alert triage, review outcome and card-reading checks as advice beside the operator's controls; off without `JEV_API_KEY` |
+| [`docs/21`](docs/21-providers.md) | **Provider adapters**: the KYC, payment and custody interfaces, the webhook route, and the contract a real provider must pass |
 | [`docs/screens/`](docs/screens) | Screenshots of the web app, console and club tablet |
 | [`docs/odds-book.md`](docs/odds-book.md) · [`docs/profitability.md`](docs/profitability.md) | The generated odds book and P&L for each participant |
 

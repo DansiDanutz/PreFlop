@@ -3,6 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RoundExposure, getSelection, payoutMinor, statsFor } from '@preflop/odds-engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+import { tx } from '../src/lib/db.ts';
+import { seedAdmin } from '../src/seed.ts';
 import { type Harness, harness, testDbName } from './helpers.ts';
 
 /**
@@ -119,3 +122,41 @@ describe('exposure cap across API instances', () => {
     await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'cleanup' });
   });
 });
+
+describe('stream events across API instances', () => {
+  it('a WebSocket client on one process receives a round event produced on another', async () => {
+    const [a, b] = [instances[0]!, instances[1]!];
+    await tx(h.db, (c) => seedAdmin(c, 'admin-mi@test.dev', 'admin-pass-1'));
+    const admin = (await call(b.url, 'POST', '/v1/auth/login', undefined, { email: 'admin-mi@test.dev', password: 'admin-pass-1' })).body.token as string;
+    const player = (await call(a.url, 'POST', '/v1/auth/register', undefined, { email: `ws-${Date.now()}@test.dev`, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'WS' })).body.token as string;
+
+    // Follow the lobby on instance A.
+    const frames: any[] = [];
+    const ws = new WebSocket(`${a.url.replace('http', 'ws')}/v1/stream`);
+    ws.on('message', (m: Buffer) => frames.push(JSON.parse(m.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once('open', () => resolve()); ws.once('error', reject); });
+    ws.send(JSON.stringify({ type: 'auth', token: player }));
+    ws.send(JSON.stringify({ subscribe: ['lobby', 'table:sim-1'] }));
+    await waitFor(() => frames.some((f) => f.type === 'subscribed'), 'subscription ack');
+
+    // Open a hand through the harness, then void it on instance B: the void is committed and
+    // published by process B, and must reach the socket on process A through the relay.
+    await h.sim.heartbeat();
+    const n = await h.sim.openHand();
+    const rid = `sim-1:h${n}`;
+    const v = await call(b.url, 'POST', `/v1/admin/rounds/${encodeURIComponent(rid)}/void`, admin, { reason: 'relay test' });
+    expect(v.status).toBe(200);
+    await waitFor(() => frames.some((f) => f.type === 'round.voided' && f.round_id === rid), `round.voided for ${rid} on instance A (got ${frames.map((f) => f.type).join(', ')})`);
+    // The relay never doubles an event: the producing process emits locally and skips its own notification.
+    expect(frames.filter((f) => f.type === 'round.voided' && f.round_id === rid)).toHaveLength(1);
+    ws.close();
+  });
+});
+
+async function waitFor(ok: () => boolean, what: string, ms = 10_000): Promise<void> {
+  const t0 = Date.now();
+  while (!ok()) {
+    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}

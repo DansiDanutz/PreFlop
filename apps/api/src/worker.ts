@@ -7,6 +7,8 @@ import { type MailTransport, deliverMail } from './lib/mailer.ts';
 import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubContact, scrubDetails } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
+import { recoverPayments } from './payments/recovery.ts';
+import type { Providers } from './providers/types.ts';
 import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
 
 /**
@@ -14,7 +16,8 @@ import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRo
  * - outbox jobs: resolve_round (idempotent) and void_round (rejected evidence → refund);
  * - the sweeper: result deadline for LOCKED/DEALT, review SLA for REVIEW, immediate void of
  *   EVIDENCE_REJECTED, re-enqueue of DEALT rounds, and reopening betting on healthy tables;
- * - webhook delivery (claimed rows, safe with several workers) and nonce pruning.
+ * - webhook delivery (claimed rows, safe with several workers) and nonce pruning;
+ * - payment recovery: pending payments without a provider reference are asked again (docs/21).
  */
 
 export async function runOutboxOnce(db: Db, t: Timing, limit = 50): Promise<number> {
@@ -192,7 +195,7 @@ export async function decisionsOnce(db: Db, decider: Decider, limit = 10): Promi
   return stored;
 }
 
-export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000, decider?: Decider): () => Promise<void> {
+export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail, idleMs = 5000, decider?: Decider, providers?: Providers): () => Promise<void> {
   let stopped = false;
   let current: Promise<void> | null = null;
   const workerId = newWorkerId();
@@ -204,13 +207,15 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       await beat(db, workerId);
       const jobs = await runOutboxOnce(db, t);
       const swept = await sweepOnce(db, t);
+      // Payments whose provider call never finished are asked again (payments/recovery.ts).
+      const recovered = providers ? await recoverPayments(db, providers) : { asked: 0, final: 0 };
       // Housekeeping once a minute: consumed request nonces past the replay window.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
         await pruneBetChanges(db);
       }
-      return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0;
+      return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0 || recovered.asked > 0;
     } catch (e) {
       console.error('worker error', e);
       return true; // retry at the fast cadence
