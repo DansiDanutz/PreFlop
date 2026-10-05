@@ -4,7 +4,8 @@ import { hashPassword } from './auth/players.ts';
 import { audit } from './lib/audit.ts';
 import { createPool, tx } from './lib/db.ts';
 import { acct, post } from './lib/ledger.ts';
-import { buyChips, buyDiamonds } from './payments/sandbox.ts';
+import { buyChips, buyDiamonds } from './payments/service.ts';
+import { sandboxCustody, sandboxPsp } from './providers/sandbox.ts';
 import { seedAdmin } from './seed.ts';
 
 /**
@@ -29,8 +30,8 @@ await tx(db, async (c) => {
   }
   const has = (await c.query(`select 1 from payments where org_id = 'diamond-nights'`)).rowCount;
   if (!has) {
-    await buyDiamonds(c, 'diamond-nights', 100_000, 'USDT');
-    await buyChips(c, { orgId: 'diamond-nights' }, 50_000, 'EUR');
+    await buyDiamonds(c, sandboxCustody, 'diamond-nights', 100_000, 'USDT');
+    await buyChips(c, sandboxPsp, { orgId: 'diamond-nights' }, 50_000, 'EUR');
     await post(c, 'collateral.deposit', 'demo-collateral', [{ from: acct('diamond-nights', 'treasury', 'diamonds', 'DIAMOND'), to: acct('diamond-nights', 'collateral', 'diamonds', 'DIAMOND'), amountMinor: 60_000 }]);
     await c.query(`insert into rooms (id, org_id, name, table_id, mode, currency, house, rules, visibility) values
       ('room_demo_diamonds', 'diamond-nights', 'Diamond High Rollers', 'atlas-04', 'diamonds', 'DIAMOND', 'organizer', '{"margin_bps":600,"min_stake_minor":20,"rake_bps":500}', 'public'),

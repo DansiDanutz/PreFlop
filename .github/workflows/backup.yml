@@ -1,0 +1,71 @@
+name: Database backup
+
+# Weekly logical backup of the staging database plus a restore drill: the dump is restored into a
+# scratch PostgreSQL on the runner and verified (migrations, row counts, ledger sums, audit chain) by
+# scripts/db-backup.sh, then kept as a workflow artifact for 30 days. Supabase's own daily backups
+# remain the first line; this proves a backup we hold ourselves restores, every week, without anyone
+# remembering to. See docs/18-staging.md §Backups and restore drill.
+#
+# Needs the repository secret DATABASE_URL (the same value the Fly apps use; store it once under
+# Settings → Secrets and variables → Actions, as the Fly secrets workflow also expects).
+
+on:
+  schedule:
+    - cron: '23 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      scratch:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the secret is there
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::No repository secret DATABASE_URL. Add it under Settings → Secrets and variables → Actions (the staging connection string, sslmode=verify-full); see docs/18-staging.md §Backups and restore drill."
+            exit 1
+          fi
+      - name: PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+      - name: Dump, restore into scratch, verify
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGSSLROOTCERT: ${{ github.workspace }}/deploy/supabase-ca.crt
+        run: |
+          set -euo pipefail
+          mkdir -p backup
+          file="backup/preflop-staging-$(date -u +%Y%m%dT%H%M%SZ).dump"
+          scripts/db-backup.sh drill "$DATABASE_URL" postgres://postgres@localhost:5432/preflop_drill "$file"
+          echo "FILE=$file" >> "$GITHUB_ENV"
+      - name: Keep the dump for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflop-staging-db-${{ github.run_id }}
+          path: ${{ env.FILE }}
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0

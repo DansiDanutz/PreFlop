@@ -379,7 +379,15 @@ function ResponsiblePlay() {
 }
 
 function RealMoney({ enabled, kyc }: { enabled: boolean; kyc: string }) {
-  const kycM = useMutation({ mutationFn: () => api.startKyc() });
+  const qc = useQueryClient();
+  const kycM = useMutation({
+    mutationFn: () => api.startKyc(),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['me'] });
+      // A real provider verifies on its own pages; the sandbox answers "verified" at once.
+      if (r.redirect_url) window.location.assign(r.redirect_url);
+    },
+  });
   const payments = useQuery({ queryKey: ['me', 'payments'], queryFn: () => api.payments(), enabled });
   if (!enabled) {
     return (
@@ -395,7 +403,7 @@ function RealMoney({ enabled, kyc }: { enabled: boolean; kyc: string }) {
         <span className="text-sm">Identity verification</span>
         <Badge tone={kyc === 'verified' ? 'accent' : kyc === 'rejected' ? 'danger' : 'muted'}>{kyc}</Badge>
       </div>
-      {kyc !== 'verified' && <Button className="w-full" disabled={kycM.isPending || kyc === 'pending'} onClick={() => kycM.mutate()}>Verify my identity</Button>}
+      {kyc !== 'verified' && <Button className="w-full" disabled={kycM.isPending || kyc === 'pending'} onClick={() => kycM.mutate()}>{kyc === 'pending' ? 'Verification in progress' : 'Verify my identity'}</Button>}
       {kycM.isError && <Notice tone="warn">{errorText(kycM.error)}</Notice>}
       <div>
         <h3 className="mb-2 text-sm font-semibold">Deposits & withdrawals</h3>

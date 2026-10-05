@@ -10,6 +10,7 @@ import type { Db } from './lib/db.ts';
 import { ApiError, forbidden } from './lib/errors.ts';
 import { type Limiter, RateLimiter, unlimited } from './lib/rateLimit.ts';
 import { type Decider, deciderFromConfig } from './lib/decisions.ts';
+import { type Providers, providersFromConfig } from './providers/index.ts';
 import { accountRoutes } from './routes/account.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { agentRoutes } from './routes/agents.ts';
@@ -21,6 +22,7 @@ import { partnerRoutes } from './routes/partner.ts';
 import { playerRoutes } from './routes/player.ts';
 import { providerRoutes } from './routes/provider.ts';
 import { publicRoutes } from './routes/public.ts';
+import { webhookRoutes } from './routes/webhooks.ts';
 import { mfaEnrolmentAllowed, securityRoutes, staffMfaRequired } from './routes/security.ts';
 import { STREAM_MAX_PAYLOAD, streamRoutes } from './routes/stream.ts';
 import type { Timing } from './rounds/service.ts';
@@ -52,6 +54,8 @@ export interface AppContext {
   stats: { wsClients: number; startedAt: Date };
   /** Decision hints (docs/20): the decision model, or a disabled stand-in without JEV_API_KEY. */
   decider: Decider;
+  /** Real-money adapters (docs/21): KYC, fiat (psp) and stablecoin (custody); null = not configured (503). */
+  providers: Providers;
 }
 
 /** Accepted incoming request ids: short, printable, no spaces (no log injection). */
@@ -62,6 +66,8 @@ export interface BuildOptions {
   logStream?: NodeJS.WritableStream;
   /** Replace the decision model (tests; the worker shares the API's when both run in one process). */
   decider?: Decider;
+  /** Replace the provider adapters (tests: a pending rail with a webhook). */
+  providers?: Providers;
 }
 
 /** Query parameters whose values never reach a log line (old clients may still send ?token=). */
@@ -182,6 +188,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     },
     stats: { wsClients: 0, startedAt: new Date() },
     decider: opts.decider ?? deciderFromConfig(config),
+    providers: opts.providers ?? providersFromConfig(config),
   };
 
   await publicRoutes(app, ctx);
@@ -197,5 +204,6 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   await partnerRoutes(app, ctx);
   await adminRoutes(app, ctx);
   await streamRoutes(app, ctx);
+  await webhookRoutes(app, ctx);
   return app;
 }

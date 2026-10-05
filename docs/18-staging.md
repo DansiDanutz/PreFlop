@@ -67,7 +67,7 @@ Staging runs the real product against **simulated tables**:
 | Logs | `fly logs -a preflop-staging-api` (structured, with request ids) · `fly logs -a preflop-staging-sim` |
 | Releases and rollback | `fly releases -a preflop-staging-api`, then `fly deploy -a preflop-staging-api --image <previous image>` |
 | Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks and the worker are safe on several machines |
-| Database backup and restore | Supabase keeps daily backups of the project (Pro plan), restorable from its dashboard; `pg_dump` the `preflop_staging` database before a risky migration |
+| Database backup and restore | Supabase's daily project backups, plus our own weekly dump and restore drill; see *Backups and restore drill* below. Before a risky migration: `scripts/db-backup.sh dump "$DATABASE_URL" before.dump` |
 | Metrics | `GET /v1/admin/metrics` (admin token) |
 | Rotate the simulator's table keys | `fly machine restart -a preflop-staging-sim` (it re-seeds and rotates its keys on a fresh machine) |
 
@@ -85,6 +85,28 @@ Staging runs the real product against **simulated tables**:
 Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
 
 **Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
+
+## Backups and restore drill
+
+Two layers, so losing the database is a bad hour and not a bad month:
+
+1. **Supabase** keeps daily backups of the whole project (Pro plan), restorable from its dashboard. They are the first line, and they belong to the project, not to this repository.
+2. **Our own weekly dump** (`.github/workflows/backup.yml`, Sundays 03:23 UTC and on demand). The run takes a `pg_dump` of the staging database (custom format, compressed), **restores it into a scratch PostgreSQL 17 on the runner**, verifies the copy, and keeps the dump as a workflow artifact for 30 days (Actions → the run → Artifacts). A backup nobody has restored is a hope, so every weekly run is also the restore drill; a failing run means the backup or the restore is broken, and GitHub emails the owner about failed scheduled runs.
+
+The verification (`scripts/db-backup.sh verify`) checks that the restored copy has the same applied migrations and the same row count in every table as the source, that the ledger sums to zero in every currency, and that the audit log's hash chain is intact and ends at `audit_head`. Any difference fails the run.
+
+The workflow reads the repository secret `DATABASE_URL` (the same connection string the Fly apps use, with `sslmode=verify-full`; the Supabase CA in `deploy/supabase-ca.crt` is used to verify the server). The Fly secrets workflow already expects that secret under this name, so one secret serves both; without it the backup run fails with a message saying so.
+
+By hand, from a machine with PostgreSQL client tools of version 17 or newer (the dump must come from a `pg_dump` at least as new as the server):
+
+```sh
+scripts/db-backup.sh dump    "$DATABASE_URL" staging.dump               # back up
+scripts/db-backup.sh drill   "$DATABASE_URL" postgres://localhost/preflop_drill   # dump, restore into a scratch db, verify
+scripts/db-backup.sh restore "$TARGET_URL"   staging.dump               # restore into a fresh, empty database
+scripts/db-backup.sh verify  "$DATABASE_URL" "$TARGET_URL"             # compare a restored copy with its source
+```
+
+The script never prints connection strings; `restore` refuses a target that already holds tables, and `drill` refuses to use the source as its scratch database. To restore staging itself after a loss: create an empty database (Supabase SQL editor, or `create database`), `restore` into it, point the Fly apps' `DATABASE_URL` at it with the Fly secrets workflow, and deploy; the API applies any newer migrations at start.
 
 ## First demo data
 See `deploy/staging-bootstrap.md` for the API calls that create a free-chip tournament and a leaderboard after the first deploy.

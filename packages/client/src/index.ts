@@ -444,7 +444,8 @@ export function createClient(o: ClientOptions) {
     limits: () => get<Limits>('/v1/me/limits'),
     setLimits: (l: Limits) => put<Limits>('/v1/me/limits', l),
     selfExclude: (days: number) => post<{ until: string }>('/v1/me/self-exclusion', { days }),
-    startKyc: () => post<{ kyc_status: string }>('/v1/me/kyc'),
+    /** Starts identity verification. `pending` with a `redirect_url` means the provider continues it there. */
+    startKyc: () => post<{ kyc_status: 'verified' | 'pending' | 'rejected'; provider: string; redirect_url?: string | null }>('/v1/me/kyc'),
     payments: () => get<{ payments: Payment[] }>('/v1/me/payments', S.paymentsSchema),
     // Money in/out: pass the same idempotencyKey to retry safely (a retry never moves money twice).
     deposit: (b: { mode: PlayMode; currency: string; amount_minor: number; method: string }, idempotencyKey = newIdempotencyKey()) => post<Payment>('/v1/me/deposits', b, { 'idempotency-key': idempotencyKey }, S.paymentSchema),

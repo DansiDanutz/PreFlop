@@ -14,7 +14,8 @@ import { acct, balance, lockAccount, post, walletPurpose } from '../lib/ledger.t
 import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import { limitParam } from '../lib/query.ts';
 import { orgStatements } from '../lib/statements.ts';
-import { buyChips, buyDiamonds, diamondPacks } from '../payments/sandbox.ts';
+import { buyChips, buyDiamonds, diamondPacks } from '../payments/service.ts';
+import { railFor, requireProvider } from '../providers/index.ts';
 import { CERT_FLAGS, type CertItem } from '../rounds/readiness.ts';
 import { withReviewDeadline } from '../rounds/service.ts';
 import { roomSelect, roomView } from './account.ts';
@@ -404,27 +405,28 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     await requireOrg(ctx, req, oid(req));
     return { packs: diamondPacks() };
   });
+  // Purchases are charged through the payment provider of the paying currency (docs/21); without one, 503 provider_not_configured.
+  const purchaseRail = (payWith: 'EUR' | 'USDT' | 'USDC') =>
+    requireProvider(railFor(ctx.providers, payWith === 'EUR' ? 'real-fiat' : 'real-crypto'), payWith === 'EUR' ? 'card and bank payments' : 'stablecoin payments');
   app.post(`${P}/diamonds/purchases`, async (req, reply) => {
-    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
-    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club'], write: true });
     const key = requireIdempotencyKey(req);
     const b = z.object({ diamonds: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
+    const rail = purchaseRail(b.pay_with);
     if (!(await ctx.modeEnabled('diamonds'))) throw conflict('mode_disabled', 'diamonds are not enabled');
     const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await buyDiamonds(c, org.id, b.diamonds, b.pay_with, ref) }));
+      ({ status: 201, body: await buyDiamonds(c, rail, org.id, b.diamonds, b.pay_with, ref) }));
     return reply.code(res.status).send(res.body);
   });
   app.post(`${P}/chips/purchases`, async (req, reply) => {
-    // The sandbox payment rail never runs in production (fail closed until a real provider charges).
-    if (ctx.config.nodeEnv === 'production') throw new ApiError(503, 'provider_not_configured', 'purchases need a real payment provider in production');
     // Partners buy chips too: their treasury funds transfer-wallet deposits to their players.
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['organizer', 'club', 'partner'], write: true });
     const key = requireIdempotencyKey(req);
     const b = z.object({ chips: z.number().int().positive(), pay_with: z.enum(['EUR', 'USDT', 'USDC']) }).parse(req.body);
+    const rail = purchaseRail(b.pay_with);
     if (!(await ctx.modeEnabled('virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
     const res = await idempotentMoneyWrite(ctx.db, `user:${user.id}`, key, req, 'pay', async (c, ref) =>
-      ({ status: 201, body: await buyChips(c, { orgId: org.id }, b.chips, b.pay_with, ref) }));
+      ({ status: 201, body: await buyChips(c, rail, { orgId: org.id }, b.chips, b.pay_with, ref) }));
     return reply.code(res.status).send(res.body);
   });
   app.get(`${P}/transfers`, async (req) => {
