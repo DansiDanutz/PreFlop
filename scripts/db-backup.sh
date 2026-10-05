@@ -85,6 +85,9 @@ cmd_verify() {
 # comparison cannot make a good restore look bad.
 # psql's errors go to $SRC_ERR, never into a result: a failed statement (psql stops on the first error,
 # so the session ends) makes the drill fail with that error, instead of handing the error text on as data.
+# Only errors count: a NOTICE or WARNING from a successful statement is shown and the drill goes on
+# (the session also asks the server for warnings and up, so routine notices never appear).
+src_failed() { grep -qE '^(ERROR|FATAL|PANIC|psql: error|psql:.*: error)' "$SRC_ERR" 2>/dev/null; }
 src_sql() {
   if [ -z "${SRC_PID:-}" ] || ! kill -0 "$SRC_PID" 2>/dev/null; then die "source session is gone: $(cat "$SRC_ERR" 2>/dev/null)"; fi
   # Every statement is terminated here: psql would otherwise buffer one without a semicolon into the next.
@@ -94,8 +97,9 @@ src_sql() {
     if [ "$line" = __PREFLOP_DONE__ ]; then done=1; break; fi
     out+="$line"$'\n'
   done
-  if [ -s "$SRC_ERR" ]; then die "source query failed: $(cat "$SRC_ERR")"; fi
-  [ "$done" = 1 ] || die "source session ended before answering"
+  if src_failed; then die "source query failed: $(cat "$SRC_ERR")"; fi
+  [ "$done" = 1 ] || die "source session ended before answering: $(cat "$SRC_ERR")"
+  if [ -s "$SRC_ERR" ]; then say "  source said: $(tr -d '\000' <"$SRC_ERR" | paste -sd' ')"; : >"$SRC_ERR"; fi
   printf '%s' "${out%$'\n'}"
 }
 
@@ -117,7 +121,7 @@ cmd_drill() {
   SRC_ERR=$(mktemp -t preflop-drill-err-XXXXXX)
   # Globals on purpose: the trap runs after this function's locals are gone.
   trap 'rm -f "$SRC_ERR" ${DRILL_TMP:+"$DRILL_TMP"}' EXIT
-  coproc SRC { psql "$src" -At -F $'\t' -q -v ON_ERROR_STOP=1 2>"$SRC_ERR"; }
+  coproc SRC { PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning" psql "$src" -At -F $'\t' -q -v ON_ERROR_STOP=1 2>"$SRC_ERR"; }
   src_sql "begin isolation level repeatable read read only;" >/dev/null
   local snapshot; snapshot=$(src_sql "select pg_export_snapshot();")
   [ -n "$snapshot" ] || die "could not export a snapshot from the source"
@@ -130,7 +134,7 @@ cmd_drill() {
   local wfd=${SRC[1]}
   exec {wfd}>&-
   wait "$SRC_PID" 2>/dev/null || true
-  [ -s "$SRC_ERR" ] && die "source session reported: $(cat "$SRC_ERR")"
+  if src_failed; then die "source session reported: $(cat "$SRC_ERR")"; fi
 
   say "recreating scratch database $name"
   psql "$admin" -q -c "drop database if exists \"$name\" with (force)" -c "create database \"$name\"" -c "comment on database \"$name\" is '$DRILL_MARK'"
