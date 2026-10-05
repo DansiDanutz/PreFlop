@@ -53,7 +53,7 @@ Staging runs the real product against **simulated tables**:
 
 ## Deploying
 - **Mobile apps.** The iOS and Android apps (`apps/mobile`) talk to the staging API from the origins `capacitor://localhost` and `https://localhost`, which `CORS_ORIGINS` allows. CI builds an installable Android APK (`.github/workflows/mobile.yml`).
-- **Automatic.** Every push to `main` runs CI. When CI passes, **Deploy staging** (`.github/workflows/deploy-staging.yml`) deploys the API, then the simulator, then smoke-checks `/v1/health/ready`. Vercel builds the three sites from the same push, and builds a preview for every pull request. Previews talk to the staging API from their unique deployment URL (`<project>-<hash>-irises-projects-ce549f63.vercel.app`, listed under the project's Deployments); the API's `CORS_ORIGINS` allows that pattern, but not the branch aliases (`…-git-<branch>-…`).
+- **Automatic.** Every push to `main` runs CI. When CI passes, **Deploy staging** (`.github/workflows/deploy-staging.yml`) deploys the API, then the simulator, smoke-checks `/v1/health/ready`, and then runs the end-to-end smoke test below against the live environment. Vercel builds the three sites from the same push, and builds a preview for every pull request. Previews talk to the staging API from their unique deployment URL (`<project>-<hash>-irises-projects-ce549f63.vercel.app`, listed under the project's Deployments); the API's `CORS_ORIGINS` allows that pattern, but not the branch aliases (`…-git-<branch>-…`).
 - **By hand.** Use Actions → Deploy staging → Run workflow, or from the repo root:
   ```sh
   flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only
@@ -70,6 +70,21 @@ Staging runs the real product against **simulated tables**:
 | Database backup and restore | Supabase keeps daily backups of the project (Pro plan), restorable from its dashboard; `pg_dump` the `preflop_staging` database before a risky migration |
 | Metrics | `GET /v1/admin/metrics` (admin token) |
 | Rotate the simulator's table keys | `fly machine restart -a preflop-staging-sim` (it re-seeds and rotates its keys on a fresh machine) |
+
+## Smoke test and uptime
+
+**End-to-end smoke test** (`scripts/staging-smoke.mjs`, Node 22, no dependencies). It runs as the last step of every staging deploy and fails the deploy run when the live environment does not work as a player would use it:
+
+1. the API is ready (database and worker heartbeat);
+2. the lobby lists a simulated play-money table that is ready and has an open round;
+3. a fresh player registers (`smoke-<time>@preflop-smoke.test`) and holds the play starting balance;
+4. the WebSocket stream authenticates the player and delivers events for that table;
+5. a play bet is accepted on the open round, settles within the budget (3 minutes per wait), and the wallet moves by exactly stake and payout;
+6. the website, console and club tablet serve the app, and in the deploy workflow the build of the commit just deployed: every site carries `<meta name="build-commit">` (`deploy/build-commit.mjs`, from Vercel's `VERCEL_GIT_COMMIT_SHA`), and the test waits until it is the deployed commit (`EXPECTED_COMMIT`) or a later commit on main (`ACCEPT_NEWER_ON=origin/main`, asked of git on every poll), since Vercel builds the sites separately from the Fly deploy and a newer push may already be live. A manual deploy of another ref checks the sites for being up only; a git failure never passes a site.
+
+Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
+
+**Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
 
 ## First demo data
 See `deploy/staging-bootstrap.md` for the API calls that create a free-chip tournament and a leaderboard after the first deploy.

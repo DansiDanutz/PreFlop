@@ -68,3 +68,41 @@ jobs:
           done
           echo "API not ready after deploy" >&2
           exit 1
+      # End to end, against the deployed environment: register → open round in the lobby → stream
+      # events → a play bet settles and the wallet moves → the three sites serve the app. Node only,
+      # no dependencies (scripts/staging-smoke.mjs).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.token.outputs.ok == 'true'
+        with:
+          node-version: 22
+      # The sites must serve the build of the deployed commit, or of a later commit on main: Vercel
+      # builds them from every push to main, deploys queue here (cancel-in-progress is off), so a
+      # newer push may already be live while this run finishes, and that push's own run checks it.
+      # The smoke test asks git on every poll (a push landing mid-check is accepted too), and
+      # anything git cannot answer keeps it waiting until it fails: never a skipped check. A manual
+      # run of another ref deploys only the Fly services; its sites are checked for being up only.
+      - name: Which commit the sites must serve
+        if: steps.token.outputs.ok == 'true'
+        id: expected
+        env:
+          DEPLOYED: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || (github.ref == 'refs/heads/main' && github.sha) || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOYED" ]; then
+            echo "not a deploy of main: the sites are checked for being up only"
+            exit 0
+          fi
+          # Full history of main: the checkout is shallow, and ancestry must hold however far main
+          # advanced while this deploy waited in the queue (the repository is small).
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --quiet --unshallow origin main; else git fetch --quiet origin main; fi
+          if ! git merge-base --is-ancestor "$DEPLOYED" origin/main; then
+            echo "::error::deployed commit $DEPLOYED is not on main"
+            exit 1
+          fi
+          echo "commit=$DEPLOYED" >> "$GITHUB_OUTPUT"
+      - name: End-to-end smoke test
+        if: steps.token.outputs.ok == 'true'
+        env:
+          EXPECTED_COMMIT: ${{ steps.expected.outputs.commit }}
+          ACCEPT_NEWER_ON: ${{ steps.expected.outputs.commit && 'origin/main' || '' }}
+        run: node scripts/staging-smoke.mjs

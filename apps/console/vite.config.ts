@@ -2,11 +2,12 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { requireBuildEnv } from '../../deploy/require-env.mjs';
+import { buildCommitPlugin } from '../../deploy/build-commit.mjs';
 import { cspMetaPlugin } from '../../deploy/security-headers.mjs';
 
 export default defineConfig({
   // A production build without VITE_API_URL fails instead of shipping the localhost fallback.
-  plugins: [react(), tailwindcss(), cspMetaPlugin('console'), requireBuildEnv()],
+  plugins: [react(), tailwindcss(), cspMetaPlugin('console'), buildCommitPlugin(), requireBuildEnv()],
   server: { port: 5174 },
   build: {
     // Fonts stay files (never data: URIs), so the CSP's font-src 'self' needs no data:.

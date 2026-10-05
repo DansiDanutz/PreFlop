@@ -1,10 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { buildCommitPlugin } from '../../deploy/build-commit.mjs';
 import { cspMetaPlugin } from '../../deploy/security-headers.mjs';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), cspMetaPlugin('table')],
+  plugins: [react(), tailwindcss(), cspMetaPlugin('table'), buildCommitPlugin()],
   server: { port: 5175, host: true },
   build: {
     target: 'es2022',
