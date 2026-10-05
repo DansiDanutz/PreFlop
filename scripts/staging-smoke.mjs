@@ -38,7 +38,11 @@ function acceptableBuild(commit) {
   if (commit === EXPECTED_COMMIT) return true;
   if (!ACCEPT_NEWER_ON) return false;
   try {
-    if (ACCEPT_NEWER_ON.startsWith('origin/')) git('fetch', '--quiet', '--depth=200', 'origin', ACCEPT_NEWER_ON.slice('origin/'.length));
+    if (ACCEPT_NEWER_ON.startsWith('origin/')) {
+      // Full history, so ancestry holds however far the branch advanced (a shallow checkout would cut it).
+      const shallow = git('rev-parse', '--is-shallow-repository') === 'true';
+      git('fetch', '--quiet', ...(shallow ? ['--unshallow'] : []), 'origin', ACCEPT_NEWER_ON.slice('origin/'.length));
+    }
     git('merge-base', '--is-ancestor', EXPECTED_COMMIT, commit);
     git('merge-base', '--is-ancestor', commit, ACCEPT_NEWER_ON);
     return true;

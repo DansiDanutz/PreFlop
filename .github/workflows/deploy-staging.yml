@@ -92,9 +92,11 @@ jobs:
             echo "not a deploy of main: the sites are checked for being up only"
             exit 0
           fi
-          git fetch --quiet --depth=200 origin main
+          # Full history of main: the checkout is shallow, and ancestry must hold however far main
+          # advanced while this deploy waited in the queue (the repository is small).
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --quiet --unshallow origin main; else git fetch --quiet origin main; fi
           if ! git merge-base --is-ancestor "$DEPLOYED" origin/main; then
-            echo "::error::deployed commit $DEPLOYED is not within the last 200 commits of main"
+            echo "::error::deployed commit $DEPLOYED is not on main"
             exit 1
           fi
           echo "commit=$DEPLOYED" >> "$GITHUB_OUTPUT"
