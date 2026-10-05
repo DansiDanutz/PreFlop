@@ -99,7 +99,8 @@ src_sql() {
   done
   if src_failed; then die "source query failed: $(cat "$SRC_ERR")"; fi
   [ "$done" = 1 ] || die "source session ended before answering: $(cat "$SRC_ERR")"
-  if [ -s "$SRC_ERR" ]; then say "  source said: $(tr -d '\000' <"$SRC_ERR" | paste -sd' ')"; : >"$SRC_ERR"; fi
+  # To stderr: callers capture this function's stdout as the query's value.
+  if [ -s "$SRC_ERR" ]; then say "  source said: $(tr -d '\000' <"$SRC_ERR" | paste -sd' ')" >&2; : >"$SRC_ERR"; fi
   printf '%s' "${out%$'\n'}"
 }
 
