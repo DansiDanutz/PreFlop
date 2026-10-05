@@ -117,7 +117,16 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
   if (/^\d{1,2}$/.test(s)) return Number(s);
   const list = s.split(',').map((x) => x.trim()).filter(Boolean);
   const KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
-  if (list.length && list.every((x) => KEYWORDS.has(x) || (() => { const m = PROXY_ENTRY.exec(x); return m !== null && isIP(m[1]!) !== 0; })())) return list;
+  // An address with a prefix length within its family (/32 for IPv4, /128 for IPv6): an out-of-range
+  // mask would pass here and crash Fastify's proxy-address compiler at startup instead of failing config.
+  const validEntry = (x: string) => {
+    const m = PROXY_ENTRY.exec(x);
+    if (!m) return false;
+    const family = isIP(m[1]!);
+    if (family === 0) return false;
+    return m[2] === undefined || Number(m[2].slice(1)) <= (family === 4 ? 32 : 128);
+  };
+  if (list.length && list.every((x) => KEYWORDS.has(x) || validEntry(x))) return list;
   throw new Error('TRUST_PROXY must be true, false, a hop count or a comma-separated list of proxy IPs/CIDRs');
 }
 const trustProxy = z.string().default('false').transform((v, ctx) => {

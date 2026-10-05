@@ -33,6 +33,9 @@ describe('validated config', () => {
     expect(loadConfig({ TRUST_PROXY: '10.0.0.0/8, fdaa::/16, uniquelocal' }).trustProxy).toEqual(['10.0.0.0/8', 'fdaa::/16', 'uniquelocal']);
     expect(problemsOf({ TRUST_PROXY: 'yes please' })[0]).toMatch(/^TRUST_PROXY:/);
     expect(problemsOf({ TRUST_PROXY: '10.0.0.0/8, evil' })[0]).toMatch(/^TRUST_PROXY:/);
+    expect(problemsOf({ TRUST_PROXY: '10.0.0.0/64' })[0]).toMatch(/^TRUST_PROXY:/);
+    expect(problemsOf({ TRUST_PROXY: 'fdaa::/129' })[0]).toMatch(/^TRUST_PROXY:/);
+    expect(loadConfig({ TRUST_PROXY: '10.0.0.0/32, fdaa::/128' }).trustProxy).toEqual(['10.0.0.0/32', 'fdaa::/128']);
     expect(problemsOf({ ...PROD, TRUST_PROXY: 'true' }).join(' ')).toMatch(/TRUST_PROXY=true trusts every X-Forwarded-For hop/);
     expect(problemsOf({ ...PROD, TRUST_PROXY: '1' })).toEqual([]);
   });
