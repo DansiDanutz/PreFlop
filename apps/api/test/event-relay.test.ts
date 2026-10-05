@@ -109,6 +109,38 @@ describe('event relay', () => {
     } finally { await stop(); bus.off('event', onEvent); }
   });
 
+  it('an overflow while a NOTIFY is in flight drops queued events, never the in-flight ones', async () => {
+    const pool = new FakePool();
+    const stop = await startEventRelay(asDb(pool));
+    try {
+      // Hold the first NOTIFY open, then flood the queue past its limit while it is in flight.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const client = pool.listeners[0]!;
+      const realQuery = client.query.bind(client);
+      let held = 0;
+      client.query = async (sql: string, params?: unknown[]) => {
+        if (sql.includes('pg_notify') && held++ === 0) await gate;
+        return realQuery(sql, params);
+      };
+      const first = new EventBatch();
+      first.push({ type: 'round.locked', tableId: 'held', roundId: 'r1', data: {} });
+      publish(first);
+      await sleep(10);
+      const flood = new EventBatch();
+      for (let i = 0; i < 2500; i++) flood.push({ type: 'round.opened', tableId: 'flood', roundId: `r${i}`, data: {} });
+      const forwardedBefore = relayStats.forwarded;
+      const droppedBefore = relayStats.dropped;
+      publish(flood);
+      expect(relayStats.dropped - droppedBefore).toBe(501); // 1 in flight + 2500 queued - 2000 limit
+      release();
+      await sleep(100);
+      // Everything still queued was sent, and the held event counted as forwarded, not dropped.
+      expect(relayStats.forwarded - forwardedBefore).toBe(1 + 2500 - 501);
+      expect(relayStats.queued).toBe(0);
+    } finally { await stop(); }
+  });
+
   it('keeps every relayed payload under the NOTIFY limit by dropping oversized data', () => {
     const small = encodeRelayed({ type: 'round.dealt', tableId: 't', roundId: 'r', data: { cards: ['Ah', 'Kd', '7c'] } });
     expect(JSON.parse(small)).toMatchObject({ i: INSTANCE_ID, e: { type: 'round.dealt', data: { cards: ['Ah', 'Kd', '7c'] } } });

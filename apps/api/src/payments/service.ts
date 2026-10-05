@@ -98,18 +98,21 @@ export async function preparePayment(c: Tx, p: PreparePayment): Promise<PaymentR
     if (p.mode !== 'real-fiat' && p.mode !== 'real-crypto') throw unprocessable('invalid_mode', 'deposits are for real-money modes');
     if (!MODES[p.mode].currencies.includes(p.currency)) throw unprocessable('invalid_currency', `${p.currency} is not valid in ${p.mode}`);
   }
-  if (p.kind === 'withdrawal') {
-    if (!MODES[p.mode].cashOut) throw unprocessable('no_cash_out', `${MODES[p.mode].label} cannot be withdrawn`);
-    const wallet = acct(p.userId!, 'wallet', p.mode, p.currency);
-    await lockAccount(c, wallet);
-    if ((await balance(c, wallet)) < p.amountMinor) throw unprocessable('insufficient_funds', 'balance too low');
-    // The money leaves the wallet now; a failed payout gives it back (failRow).
-    await postOnce(c, 'payment.withdrawal', p.id, [{ from: wallet, to: acct('external', railOfMode(p.mode), p.mode, p.currency), amountMinor: p.amountMinor }]);
-  }
+  if (p.kind === 'withdrawal' && !MODES[p.mode].cashOut) throw unprocessable('no_cash_out', `${MODES[p.mode].label} cannot be withdrawn`);
+  // The row goes in first, so a duplicate (same deterministic id) trips the payments PK here, before
+  // the ledger is touched, and the orchestrator replays the pending row; debiting first would make a
+  // retry fail on the ledger's (kind, ref) uniqueness or the already-debited balance instead.
   const row = (await c.query<FullRow>(
     `insert into payments (id, user_id, org_id, kind, method, mode, currency, amount_minor, status, provider, provider_ref, address, details)
      values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, null, $10, $11) returning ${FULL}`,
     [p.id, p.userId ?? null, p.orgId ?? null, p.kind, p.method, p.mode, p.currency, p.amountMinor, p.rail.name, p.destination ?? null, JSON.stringify(p.product ?? {})])).rows[0]!;
+  if (p.kind === 'withdrawal') {
+    const wallet = acct(p.userId!, 'wallet', p.mode, p.currency);
+    await lockAccount(c, wallet);
+    if ((await balance(c, wallet)) < p.amountMinor) throw unprocessable('insufficient_funds', 'balance too low');
+    // The money leaves the wallet now; a failed payout gives it back (refundRow).
+    await postOnce(c, 'payment.withdrawal', p.id, [{ from: wallet, to: acct('external', railOfMode(p.mode), p.mode, p.currency), amountMinor: p.amountMinor }]);
+  }
   await audit(c, { type: `payment.${p.kind}_requested`, paymentId: p.id, userId: p.userId ?? null, orgId: p.orgId ?? null, mode: p.mode, currency: p.currency, amountMinor: p.amountMinor, provider: p.rail.name });
   return shape(row);
 }

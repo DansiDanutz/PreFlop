@@ -213,10 +213,23 @@ describe('provider adapters', () => {
     expect(psp.intents.at(-1)!.id).toBe(r1.body.id);
     expect((await h.db.query('select provider_ref from payments where id = $1', [r1.body.id])).rows[0].provider_ref).toBe(`psp-test_${r1.body.id}`);
 
-    // Fund a USDT wallet, then ask for a payout the provider refuses.
+    // Fund a USDT wallet; a payout retried with the same key replays the pending row and asks the provider once.
     const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 9_000_000, method: 'crypto' }, idemKey());
     await hook('custody-test', [{ type: 'payment', ref: fund.body.provider_ref, status: 'completed' }]);
     expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(9_000_000);
+    const kw = idemKey();
+    const payouts = custody.intents.length;
+    const w1 = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 1_000_000, method: 'crypto', destination: '0xonce' }, kw);
+    const w2 = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 1_000_000, method: 'crypto', destination: '0xonce' }, kw);
+    expect(w1.status).toBe(201);
+    expect(w2.status).toBe(201);
+    expect(w2.body.id).toBe(w1.body.id);
+    expect(custody.intents.length).toBe(payouts + 1);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(8_000_000); // debited once
+    await hook('custody-test', [{ type: 'payment', ref: w1.body.provider_ref, status: 'completed' }]);
+    await hook('custody-test', [{ type: 'payment', ref: 'custody-test_refund_me', status: 'failed' }]); // unknown ref: ignored
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(8_000_000);
+    // Then ask for a payout the provider refuses.
     const k = idemKey();
     failNext.add(keyedRef('pay', `user:${p.id}`, k['idempotency-key']!)); // the id the route will derive
     const r3 = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 2_000_000, method: 'crypto', destination: '0xfail' }, k);
@@ -224,7 +237,7 @@ describe('provider adapters', () => {
     expect(r3.body.type).toBe('provider_error');
     expect(r3.body.payment).toMatchObject({ status: 'failed', kind: 'withdrawal' });
     // The phase-1 debit was refunded, the failed payment stays on record, and the same key replays the same answer.
-    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(9_000_000);
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(8_000_000);
     const again = await h.api('POST', '/v1/me/withdrawals', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 2_000_000, method: 'crypto', destination: '0xfail' }, k);
     expect(again.status).toBe(502);
     expect(again.body.payment.id).toBe(r3.body.payment.id);

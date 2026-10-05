@@ -68,6 +68,8 @@ export function encodeRelayed(e: DomainEvent): string {
 
 const outbound: string[] = [];
 let draining = false;
+/** Events at the front of `outbound` that the drain loop has handed to a NOTIFY still in flight. */
+let inFlight = 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -79,10 +81,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function forward(db: Db, events: DomainEvent[]): Promise<void> {
   for (const e of events) outbound.push(encodeRelayed(e));
   if (outbound.length > MAX_OUTBOUND) {
-    const n = outbound.length - MAX_OUTBOUND;
-    outbound.splice(0, n);
-    relayStats.dropped += n;
-    console.error(`event relay: outbound queue full, dropped ${n} oldest events`);
+    // Drop the oldest events that are NOT in flight: the drain loop removes its own batch from the
+    // front once the NOTIFY answers, so trimming that prefix here would make it discard the wrong ones.
+    const n = Math.min(outbound.length - MAX_OUTBOUND, outbound.length - inFlight);
+    if (n > 0) {
+      outbound.splice(inFlight, n);
+      relayStats.dropped += n;
+      console.error(`event relay: outbound queue full, dropped ${n} oldest events`);
+    }
   }
   relayStats.queued = outbound.length;
   if (draining) return;
@@ -91,6 +97,7 @@ async function forward(db: Db, events: DomainEvent[]): Promise<void> {
   try {
     while (outbound.length && relayDb === db) {
       const batch = outbound.slice(0, 200);
+      inFlight = batch.length;
       try {
         await db.query('select pg_notify($1, p) from unnest($2::text[]) as p', [EVENTS_CHANNEL, batch]);
         outbound.splice(0, batch.length);
@@ -105,13 +112,17 @@ async function forward(db: Db, events: DomainEvent[]): Promise<void> {
           console.error(`event relay: forwarding failed ${attempt} times, dropped ${batch.length} events`, err);
           attempt = 0;
         } else {
+          inFlight = 0;
           await sleep(Math.min(5000, 50 * 2 ** attempt));
         }
+      } finally {
+        inFlight = 0;
       }
       relayStats.queued = outbound.length;
     }
   } finally {
     draining = false;
+    inFlight = 0;
   }
 }
 
