@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
-import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider , PROSE_CHARS, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
+import { ALERT_TRIAGE, type Answers, type Decider, DecisionError, type Question, deciderFromConfig, disabledDecider, jevDecider, PROSE_CHARS, recordOutcome, SCRUB_MAX_KEYS, scrubContact, scrubDetails } from '../src/lib/decisions.ts';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
 import { HINT_RETRY_MAX, decisionsOnce, startWorker } from '../src/worker.ts';
@@ -234,6 +234,30 @@ describe('decision hints in the worker and the console API', () => {
     expect(reapplied.hint ?? null).toBeNull();
     expect(await decisionsOnce(h.db, decider)).toBe(1);
     expect((await h.api('GET', '/v1/admin/agents', admin)).body.agents.find((a: any) => a.user_id === applicant.id).hint).toMatchObject({ answers: { decision: { choice: 'hold' } } });
+  });
+
+  it("the team's decisions are recorded beside the hints and the adviser's record reports agreement per kind", async () => {
+    // Application: the hint said approve, the team approves → agreed. Promotion: the hint said edit, the team
+    // rejects with a note → agreed. Agent: the hint said hold, the team activates → a disagreement.
+    expect((await h.api('POST', '/v1/admin/applications/app_hint1/decision', admin, { decision: 'approved' })).status).toBe(200);
+    expect((await h.api('POST', '/v1/admin/promotions/promo_hint1/decision', admin, { decision: 'reject', note: 'Nothing is guaranteed; say what the offer is.' })).status).toBe(200);
+    const applicant = (await h.db.query(`select user_id from agents where code = 'PFHINT01'`)).rows[0]!.user_id as string;
+    expect((await h.api('PUT', `/v1/admin/agents/${applicant}`, admin, { status: 'active' })).status).toBe(200);
+    const rows = (await h.db.query(`select kind, ref, outcome, outcome_by from decision_hints where outcome is not null order by kind`)).rows;
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'application', ref: 'app_hint1', outcome: 'approve' }),
+      expect.objectContaining({ kind: 'promotion', ref: 'promo_hint1', outcome: 'reject' }),
+      expect.objectContaining({ kind: 'agent', ref: applicant, outcome: 'approve' }),
+    ]));
+    const record = (await h.api('GET', '/v1/admin/decisions', admin)).body;
+    const byKind = Object.fromEntries(record.kinds.map((k: any) => [k.kind, k]));
+    expect(byKind.application).toMatchObject({ decided: 1, agreed: 1 });
+    expect(byKind.promotion).toMatchObject({ decided: 1, agreed: 1 });
+    expect(byKind.agent).toMatchObject({ decided: 1, agreed: 0 });
+    expect(record.disagreements).toEqual([expect.objectContaining({ kind: 'agent', ref: applicant, suggested: 'hold', outcome: 'approve' })]);
+    // A second decision on the same case never overwrites the first.
+    await recordOutcome(h.db, 'agent', applicant, 'reject', 'someone');
+    expect((await h.db.query(`select outcome from decision_hints where kind = 'agent' and ref = $1`, [applicant])).rows[0]!.outcome).toBe('approve');
   });
 
   it('a refused question is remembered as an error (no hint), retried ten minutes later a bounded number of times; an outage pauses the pass', async () => {

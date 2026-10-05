@@ -12,3 +12,4 @@ export { Settings } from './Settings.tsx';
 export { News } from './News.tsx';
 export { ManualTables } from './ManualTables.tsx';
 export { CardReader } from './CardReader.tsx';
+export { Adviser } from './Adviser.tsx';

@@ -1,3 +1,4 @@
+import { recordOutcome } from '../lib/decisions.ts';
 import { type LinkSample, MAX_TIMESTAMP_MS, captureShapeProblems } from '@preflop/odds-engine';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -220,6 +221,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
       assertTableScope(p, r.table_id);
       return idempotent(c, p.id, key, req.method, req.url, req.rawBody ?? '', async () => {
         const out = await resolveReview(c, r, s, req.body as Parameters<typeof resolveReview>[3], ctx.timing, ev);
+        if (out.status === 200) await recordOutcome(c, 'review', r.id, (req.body as { action: string }).action, `staff:${s.id}`);
         await ensureOpenRound(c, r.table_id, ev);
         return out;
       });

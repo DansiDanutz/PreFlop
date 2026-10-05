@@ -156,6 +156,22 @@ export async function saveHint(c: Tx | Db, kind: string, ref: string, model: str
     [kind, ref, model, JSON.stringify(answers ?? {}), error ?? null]);
 }
 
+/**
+ * Measuring the adviser (docs/20): the team's actual decision is written beside the hint once it is
+ * made, never before, and nothing reads it to decide anything. `outcome` uses the hint's own
+ * vocabulary (approve, reject, settle, void, dismiss …) so agreement is a plain comparison; a hint
+ * of "edit wording" counts as agreeing with a rejection, since rejecting with a note is how the
+ * team asks for new wording. A row that already has an outcome keeps it (first decision wins).
+ */
+export async function recordOutcome(c: Tx | Db, kind: string, ref: string, outcome: string, by: string): Promise<void> {
+  await c.query(`update decision_hints set outcome = $3, outcome_by = $4, outcome_at = now() where kind = $1 and ref = $2 and outcome is null`, [kind, ref, outcome, by]);
+}
+/** The pick-one question whose answer is compared with the team's outcome, per hint kind. */
+export const HINT_QUESTION: Record<string, string> = { alert: 'triage', review: 'outcome', application: 'decision', promotion: 'decision', agent: 'decision' };
+/** SQL: the suggested choice of a decision_hints row `h`, and whether it agrees with `h.outcome`. */
+export const HINT_CHOICE_SQL = `h.answers -> (case h.kind when 'alert' then 'triage' when 'review' then 'outcome' else 'decision' end) ->> 'choice'`;
+export const HINT_AGREES_SQL = `(${HINT_CHOICE_SQL} = h.outcome or (${HINT_CHOICE_SQL} = 'edit' and h.outcome = 'reject'))`;
+
 // ---------------------------------------------------------------- the questions PreFlop asks
 
 /** Alert triage: what the on-duty operator should do first with an open alert. */

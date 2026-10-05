@@ -8,6 +8,7 @@ import {
 } from '../growth/leaderboards.ts';
 import { type PromotionRow, claim, isLive } from '../growth/promotions.ts';
 import { audit } from '../lib/audit.ts';
+import { recordOutcome } from '../lib/decisions.ts';
 import { type Tx, tx } from '../lib/db.ts';
 import { forbidden, notFound, unprocessable } from '../lib/errors.ts';
 import { newId } from '../lib/ids.ts';
@@ -310,6 +311,7 @@ export async function growthRoutes(app: FastifyInstance, ctx: AppContext) {
       if (mine) throw forbidden('self_approval', 'another team member reviews this promotion');
       const status = b.decision === 'approve' ? 'approved' : 'rejected';
       await c.query('update promotions set status = $2, review_note = $3, reviewed_by = $4 where id = $1', [id, status, b.note ?? null, u.id]);
+      await recordOutcome(c, 'promotion', id, b.decision, u.id);
       await audit(c, { type: 'promotion.reviewed', promotionId: id, decision: b.decision, by: u.id });
       return { id, status };
     });

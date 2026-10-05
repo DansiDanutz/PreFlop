@@ -33,6 +33,12 @@ The reading check runs on request: `POST /v1/admin/manual/reading-check` (admin 
 
 **Free text is a known blind spot.** An applicant's message reaches the adviser only as its length, so the `complete` answer is about the structured fields; the questions say so and tell the adviser to answer near even when a long message is present, and to keep suggesting *ask more* for thin structured facts, with lower confidence rather than a different choice. The reviewer, who reads the message, decides.
 
+## Measuring the adviser
+
+Advice is only worth showing if it is usually right. When the team closes a case that has a hint, the decision is written beside the hint (`decision_hints.outcome`, `outcome_by`, `outcome_at`), in the hint's own vocabulary: an application approved or rejected, a promotion approved or rejected (a hint of *edit wording* counts as agreeing with a rejection, since rejecting with a note is how the team asks for new wording), an agent activated or rejected, a round in review settled or voided (by the club's floor manager or the team), an alert resolved (*dismiss*). The first decision stands; nothing reads the outcome to decide anything.
+
+Console → Integrity → **Adviser** (`GET /v1/admin/decisions`) shows, per kind of decision, how many hints were stored, how many cases the team has decided, and the share where the team did what the adviser suggested, plus the latest fifty disagreements. Below about 60 % agreement a question's instructions or criteria in `decisions.ts` want revising against those cases; the disagreements are the examples to read.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -52,4 +58,4 @@ Both the API (when `RUN_WORKER=true`) and the standalone worker read the key; th
 
 ## Code
 
-`apps/api/src/lib/decisions.ts` (the client, the questions, hint storage), `apps/api/src/worker.ts` (`decisionsOnce`), `apps/api/src/routes/admin.ts` (`/v1/admin/alerts`, `/v1/admin/review-queue`, `/v1/admin/applications`, `/v1/admin/manual/reading-check`), `routes/growth.ts` (`/v1/admin/promotions`), `routes/agents.ts` (`/v1/admin/agents`), `packages/db/migrations/022_decision_hints.sql`, `apps/console/src/components/decisions.tsx`. Tests: `apps/api/test/decisions.test.ts` (request shape, parsing, retries, worker pass, routes, config).
+`apps/api/src/lib/decisions.ts` (the client, the questions, hint storage), `apps/api/src/worker.ts` (`decisionsOnce`), `apps/api/src/routes/admin.ts` (`/v1/admin/alerts`, `/v1/admin/review-queue`, `/v1/admin/applications`, `/v1/admin/manual/reading-check`), `routes/growth.ts` (`/v1/admin/promotions`), `routes/agents.ts` (`/v1/admin/agents`), `/v1/admin/decisions` (the adviser's record), `packages/db/migrations/022_decision_hints.sql`, `024_decision_outcomes.sql`, `apps/console/src/components/decisions.tsx`, `apps/console/src/portals/admin/Adviser.tsx`. Tests: `apps/api/test/decisions.test.ts` (request shape, parsing, retries, worker pass, routes, config).
