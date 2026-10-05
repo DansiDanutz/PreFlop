@@ -158,6 +158,20 @@ describe('provider adapters', () => {
     expect(await wallet(p.id, 'real-fiat', 'EUR')).toBe(5_000);
   });
 
+  it('deposit: pending deposits count toward the daily limit, so the webhook can never settle above it', async () => {
+    const p = await verifiedPlayer('Lim');
+    expect((await h.api('PUT', '/v1/me/limits', p.token, { deposit_day_minor: 1_000 })).body.deposit_day_minor).toBe(1_000);
+    const dep = (n: number) => ({ mode: 'real-fiat', currency: 'EUR', amount_minor: n, method: 'card' });
+    const first = await h.api('POST', '/v1/me/deposits', p.token, dep(800), idemKey());
+    expect(first.body.status).toBe('pending');
+    // Nothing is credited yet, but the pending 800 is reserved: another 800 would settle at 1 600.
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep(800), idemKey())).body.type).toBe('limit_reached');
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep(200), idemKey())).status).toBe(201);
+    await hook('psp-test', [{ type: 'payment', ref: first.body.provider_ref, status: 'completed' }]);
+    expect(await wallet(p.id, 'real-fiat', 'EUR')).toBe(800);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, dep(1), idemKey())).body.type).toBe('limit_reached');
+  });
+
   it('payout: the wallet is debited when requested; a failed payout is refunded, a completed one is final', async () => {
     const p = await verifiedPlayer('Pay');
     const r = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 30_000_000, method: 'crypto' }, idemKey());

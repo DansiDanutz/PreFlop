@@ -21,10 +21,16 @@ export function Diamonds() {
   const dil = useQuery({ queryKey: ['org', id, 'dilution', period], queryFn: () => api.orgDilution(id, period), placeholderData: keepPreviousData, refetchInterval: 30_000 });
   const [pick, setPick] = useState<DiamondPack | null>(null);
   const [payWith, setPayWith] = useState<PayWith>('EUR');
+  const payments = useQuery({ queryKey: ['org', id, 'payments'], queryFn: () => api.orgPayments(id), refetchInterval: 30_000 });
+  const pending = payments.data?.payments.filter((p) => p.status === 'pending') ?? [];
   const buy = useAction((x: { pack: DiamondPack; pay: PayWith }) => api.buyDiamonds(id, { diamonds: x.pack.diamonds, pay_with: x.pay }), {
-    invalidate: [['org', id, 'dilution'], ['org', id, 'treasury']],
-    success: (p, x) => `${nf(x.pack.diamonds)} ◆ — payment ${p.status}${x.pay !== 'EUR' ? ' (credited after on-chain confirmation)' : ''}.`,
-    onSuccess: () => setPick(null),
+    invalidate: [['org', id, 'dilution'], ['org', id, 'treasury'], ['org', id, 'payments']],
+    success: (p, x) => `${nf(x.pack.diamonds)} ◆ — payment ${p.status}${p.status === 'pending' ? (p.redirect_url ? ': finish the checkout in the tab that opened' : ', credited once the provider confirms') : ''}.`,
+    onSuccess: (p) => {
+      setPick(null);
+      // A provider with a hosted checkout continues there; the link stays in "Pending payments" too.
+      if (p.redirect_url) window.open(p.redirect_url, '_blank', 'noopener');
+    },
   });
 
   return (
@@ -52,6 +58,18 @@ export function Diamonds() {
           </QueryView>
         </Section>
 
+        {pending.length > 0 && (
+          <Section title="Pending payments" subtitle="Purchases the payment provider has not confirmed yet. Diamonds land in your treasury when it does.">
+            <ul className="divide-y divide-line text-sm">
+              {pending.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                  <span>{p.product === 'diamonds' ? 'Diamonds' : 'Chips'} · {formatMoney(p.amount_minor, p.currency)} · {new Date(p.created_at).toLocaleString()}</span>
+                  {p.redirect_url ? <a className="text-accent underline" href={p.redirect_url} target="_blank" rel="noopener noreferrer">Continue checkout</a> : <span className="text-muted">awaiting confirmation</span>}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
         <Section title="Dilution tracker" subtitle="Where your diamonds went this period." actions={<PeriodPicker value={period} onChange={setPeriod} />}>
           <QueryView q={dil} what="the dilution tracker">
             {(d) => (

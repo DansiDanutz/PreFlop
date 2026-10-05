@@ -56,7 +56,9 @@ async function record(c: Tx, p: {
     `insert into payments (id, user_id, org_id, kind, method, mode, currency, amount_minor, status, provider, provider_ref, address, details, completed_at)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, case when $9 = 'completed' then now() end) returning ${RETURNING}`,
     [p.id, p.userId ?? null, p.orgId ?? null, p.kind, p.method, p.mode, p.currency, p.amountMinor, p.result.status, p.provider, p.result.ref,
-      p.result.address ?? null, JSON.stringify({ ...(p.result.details ?? {}), ...(p.details ?? {}) })])).rows[0]!;
+      p.result.address ?? null,
+      // The continuation link is kept with a pending payment, so it can be offered again (GET …/payments).
+      JSON.stringify({ ...(p.result.details ?? {}), ...(p.details ?? {}), ...(p.result.redirect_url && p.result.status === 'pending' ? { redirect_url: p.result.redirect_url } : {}) })])).rows[0]!;
   row.amount_minor = Number(row.amount_minor);
   return { ...row, redirect_url: p.result.redirect_url ?? null };
 }

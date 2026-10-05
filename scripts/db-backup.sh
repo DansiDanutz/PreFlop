@@ -6,6 +6,9 @@
 #   scripts/db-backup.sh verify  <SOURCE_URL> <TARGET_URL>       the restored copy matches the source
 #   scripts/db-backup.sh drill   <SOURCE_URL> <SCRATCH_URL> [file.dump]
 #       dump the source, restore it into the scratch database (dropped and recreated), verify, report.
+#       The scratch database must not exist, or must be one an earlier drill created (it is marked with
+#       a database comment); anything else is refused, so an alias of the source can never be dropped.
+#       The expectations are read in the dump's own snapshot, so live writes never fail a good restore.
 #
 # Needs pg_dump/pg_restore/psql of a version at least the server's (PostgreSQL 17 client dumps 15–17).
 # Supabase signs its certificate with its own CA: with sslmode=verify-full set PGSSLROOTCERT, or let this
@@ -23,11 +26,13 @@ die() { say "error: $*" >&2; exit 1; }
 db_of() { local p; p=${1#*://}; p=${p#*/}; p=${p%%\?*}; printf '%s' "$p"; }
 admin_url() { local u=$1 name; name=$(db_of "$u"); printf '%s' "${u/\/$name/\/postgres}"; }
 
+DRILL_MARK='preflop-drill scratch'
+
 cmd_dump() {
-  local url=$1 out=$2
+  local url=$1 out=$2 snapshot=${3:-}
   [ -n "$url" ] && [ -n "$out" ] || die "usage: dump <SOURCE_URL> <file.dump>"
   say "dumping $(db_of "$url") → $out"
-  pg_dump --format=custom --compress=6 --no-owner --no-privileges --file="$out" "$url"
+  pg_dump --format=custom --compress=6 --no-owner --no-privileges ${snapshot:+--snapshot="$snapshot"} --file="$out" "$url"
   say "dump: $(du -h "$out" | cut -f1), $(pg_restore --list "$out" | grep -c '^[0-9]') objects"
 }
 
@@ -42,37 +47,87 @@ cmd_restore() {
   pg_restore --no-owner --no-privileges --single-transaction --exit-on-error --dbname="$url" "$in"
 }
 
-# Prints "name<TAB>count" for every public table, ordered. Ledger and audit checks follow.
-counts() { psql "$1" -At -F $'\t' -c "select c.relname, (xpath('/row/n/text()', query_to_xml(format('select count(*) as n from %I.%I', n.nspname, c.relname), false, true, '')))[1]::text::bigint from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' order by 1"; }
+COUNTS_SQL="select c.relname, (xpath('/row/n/text()', query_to_xml(format('select count(*) as n from %I.%I', n.nspname, c.relname), false, true, '')))[1]::text::bigint from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' order by 1"
+MIGRATIONS_SQL="select string_agg(name, ',' order by name) from schema_migrations"
 
-cmd_verify() {
-  local src=$1 dst=$2 ok=1
-  [ -n "$src" ] && [ -n "$dst" ] || die "usage: verify <SOURCE_URL> <TARGET_URL>"
-  say "verifying $(db_of "$dst") against $(db_of "$src")"
-  local m1 m2; m1=$(psql "$src" -At -c "select string_agg(name, ',' order by name) from schema_migrations"); m2=$(psql "$dst" -At -c "select string_agg(name, ',' order by name) from schema_migrations")
-  if [ "$m1" = "$m2" ]; then say "  migrations: same $(printf '%s' "$m1" | tr ',' '\n' | wc -l) applied"; else say "  migrations differ"; ok=0; fi
-  local c1 c2; c1=$(counts "$src"); c2=$(counts "$dst")
-  if [ "$c1" = "$c2" ]; then say "  row counts: same across $(printf '%s\n' "$c1" | wc -l) tables ($(printf '%s\n' "$c1" | awk -F'\t' '{s+=$2} END {print s}') rows)"; else say "  row counts differ:"; diff <(printf '%s\n' "$c1") <(printf '%s\n' "$c2") | redact || true; ok=0; fi
+# Compares a restored database with what the source held: the applied migrations and the row count of
+# every table (both as text), plus checks the copy must pass on its own: the ledger sums to zero per
+# currency, and every audit event's hash recomputes from its predecessor and its text, the links hold
+# and the head is the last event.
+verify_against() {
+  local dst=$1 migrations=$2 counts=$3 ok=1
+  local m2; m2=$(psql "$dst" -At -c "$MIGRATIONS_SQL")
+  if [ "$migrations" = "$m2" ]; then say "  migrations: same $(printf '%s' "$migrations" | tr ',' '\n' | wc -l) applied"; else say "  migrations differ"; ok=0; fi
+  local c2; c2=$(psql "$dst" -At -F $'\t' -c "$COUNTS_SQL")
+  if [ "$counts" = "$c2" ]; then say "  row counts: same across $(printf '%s\n' "$counts" | wc -l) tables ($(printf '%s\n' "$counts" | awk -F'\t' '{s+=$2} END {print s}') rows)"; else say "  row counts differ:"; diff <(printf '%s\n' "$counts") <(printf '%s\n' "$c2") | redact || true; ok=0; fi
   local unbalanced; unbalanced=$(psql "$dst" -At -c "select count(*) from (select currency from ledger_entries group by currency having sum(amount_minor) <> 0) x")
   if [ "$unbalanced" = 0 ]; then say "  ledger: every currency sums to zero"; else say "  ledger: $unbalanced currencies do not sum to zero"; ok=0; fi
-  local chain; chain=$(psql "$dst" -At -c "select count(*) from audit_log a left join audit_log p on p.seq = a.seq - 1 where a.seq > 1 and a.prev_hash <> p.hash")
+  # The hash of every event is sha256(prev_hash || event) (lib/audit.ts); a changed event or a changed
+  # hash fails here, a broken link or a wrong head below.
+  local bad; bad=$(psql "$dst" -At -c "select count(*) from audit_log where hash <> encode(sha256(convert_to(prev_hash || event, 'UTF8')), 'hex')")
+  # Sequence numbers may skip (a rolled-back append consumes one), so the predecessor is the previous row in order.
+  local chain; chain=$(psql "$dst" -At -c "select count(*) from (select prev_hash, lag(hash) over (order by seq) as ph from audit_log) x where prev_hash is distinct from coalesce(ph, 'genesis')")
   local head; head=$(psql "$dst" -At -c "select (h.seq = coalesce((select max(seq) from audit_log), 0)) and (h.hash = coalesce((select hash from audit_log order by seq desc limit 1), 'genesis')) from audit_head h")
-  if [ "$chain" = 0 ] && [ "$head" = t ]; then say "  audit: hash chain intact and the head matches"; else say "  audit: $chain broken links, head ok = $head"; ok=0; fi
+  if [ "$bad" = 0 ] && [ "$chain" = 0 ] && [ "$head" = t ]; then say "  audit: every event hash recomputes, the chain is intact and the head matches"; else say "  audit: $bad events with a wrong hash, $chain broken links, head ok = $head"; ok=0; fi
   [ "$ok" = 1 ] && say "verify: OK" || die "verify: FAILED"
+}
+
+cmd_verify() {
+  local src=$1 dst=$2
+  [ -n "$src" ] && [ -n "$dst" ] || die "usage: verify <SOURCE_URL> <TARGET_URL>"
+  say "verifying $(db_of "$dst") against $(db_of "$src") as it is now (rows written since the dump show as a difference; the drill compares against the dump's own snapshot)"
+  verify_against "$dst" "$(psql "$src" -At -c "$MIGRATIONS_SQL")" "$(psql "$src" -At -F $'\t' -c "$COUNTS_SQL")"
+}
+
+# One psql session on the source, driven through a coprocess: `src_sql` runs a statement and returns
+# its output. The drill opens a REPEATABLE READ transaction in it, exports its snapshot for pg_dump
+# and reads the expectations in the same transaction, so a write that lands between the dump and the
+# comparison cannot make a good restore look bad.
+src_sql() {
+  # Every statement is terminated here: psql would otherwise buffer one without a semicolon into the next.
+  printf '%s;\n\\echo __PREFLOP_DONE__\n' "${1%;}" >&"${SRC[1]}"
+  local line out=""
+  while IFS= read -r line <&"${SRC[0]}"; do
+    [ "$line" = __PREFLOP_DONE__ ] && break
+    out+="$line"$'\n'
+  done
+  printf '%s' "${out%$'\n'}"
 }
 
 cmd_drill() {
   local src=$1 scratch=$2 file=${3:-}
   [ -n "$src" ] && [ -n "$scratch" ] || die "usage: drill <SOURCE_URL> <SCRATCH_URL> [file.dump]"
-  [ "$(db_of "$src")" != "$(db_of "$scratch")" ] || [ "${src%%\?*}" != "${scratch%%\?*}" ] || die "the scratch database must not be the source"
-  local tmp=""; if [ -z "$file" ]; then tmp=$(mktemp -t preflop-drill-XXXXXX.dump); file=$tmp; fi
-  local t0; t0=$(date +%s)
-  cmd_dump "$src" "$file"
   local name; name=$(db_of "$scratch")
+  [ "$name" != "$(db_of "$src")" ] || die "the scratch database must not carry the source's name"
+  # The scratch database is dropped and recreated. Only a database this drill created before (marked
+  # by its comment), or one that does not exist yet, may be dropped: an alias or other credentials
+  # pointing the scratch URL at a real database stop here.
+  local admin; admin=$(admin_url "$scratch")
+  local mark; mark=$(psql "$admin" -At -c "select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = '$name'")
+  if [ -n "$mark" ] && [ "$mark" != "$DRILL_MARK" ]; then die "scratch database $name exists and was not created by this drill (comment: '$mark'); refusing to drop it"; fi
+  if [ -z "$mark" ] && [ "$(psql "$admin" -At -c "select count(*) from pg_database where datname = '$name'")" != 0 ]; then die "scratch database $name exists without the drill marker; refusing to drop it"; fi
+  local tmp=""; if [ -z "$file" ]; then tmp=$(mktemp -t preflop-drill-XXXXXX.dump); file=$tmp; trap 'rm -f "$tmp"' EXIT; fi
+  local t0; t0=$(date +%s)
+
+  coproc SRC { psql "$src" -At -F $'\t' -q -v ON_ERROR_STOP=1 2>&1; }
+  src_sql "begin isolation level repeatable read read only;" >/dev/null
+  local snapshot; snapshot=$(src_sql "select pg_export_snapshot();")
+  [ -n "$snapshot" ] || die "could not export a snapshot from the source"
+  say "source snapshot $snapshot"
+  cmd_dump "$src" "$file" "$snapshot"
+  local migrations counts
+  migrations=$(src_sql "$MIGRATIONS_SQL")
+  counts=$(src_sql "$COUNTS_SQL")
+  src_sql "commit;" >/dev/null
+  local wfd=${SRC[1]}
+  exec {wfd}>&-
+  wait "$SRC_PID" 2>/dev/null || true
+
   say "recreating scratch database $name"
-  psql "$(admin_url "$scratch")" -q -c "drop database if exists \"$name\" with (force)" -c "create database \"$name\""
+  psql "$admin" -q -c "drop database if exists \"$name\" with (force)" -c "create database \"$name\"" -c "comment on database \"$name\" is '$DRILL_MARK'"
   cmd_restore "$scratch" "$file"
-  cmd_verify "$src" "$scratch"
+  say "verifying $name against the source as of the dump's snapshot"
+  verify_against "$scratch" "$migrations" "$counts"
   say "drill: restored and verified in $(( $(date +%s) - t0 ))s"
   [ -n "$tmp" ] && rm -f "$tmp"
   return 0

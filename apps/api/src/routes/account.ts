@@ -213,7 +213,10 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
   };
   app.get('/v1/me/payments', async (req) => {
     const u = await ctx.user(req);
-    return { payments: (await ctx.db.query('select id, kind, method, mode, currency, amount_minor, status, created_at, address from payments where user_id = $1 order by created_at desc limit 100', [u.id])).rows };
+    // A pending payment keeps the provider's continuation link, so the player can finish it later.
+    return { payments: (await ctx.db.query(`select id, kind, method, mode, currency, amount_minor, status, provider, created_at, address,
+        case when status = 'pending' then details->>'redirect_url' end as redirect_url
+      from payments where user_id = $1 order by created_at desc limit 100`, [u.id])).rows };
   });
   /**
    * Money in and out needs an Idempotency-Key (8–200 characters, as POST /v1/bets). The payment id
@@ -238,10 +241,11 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
       if (l?.deposit_day_minor != null) {
         // Limits are in EUR cents. Deposits are summed per currency in exact minor units, the new one
         // included, and converted once (stablecoins round up): splitting a deposit into sub-cent
-        // pieces never makes it count for less.
+        // pieces never makes it count for less. Pending deposits count too: a provider's webhook
+        // credits them later without asking again, so they are reserved against the limit now.
         const rows = (await c.query<{ currency: string; n: number }>(
           `select currency, coalesce(sum(amount_minor), 0)::bigint as n from payments
-            where user_id = $1 and kind = 'deposit' and status = 'completed' and created_at > now() - interval '24 hours' group by currency`, [u.id])).rows;
+            where user_id = $1 and kind = 'deposit' and status in ('pending', 'completed') and created_at > now() - interval '24 hours' group by currency`, [u.id])).rows;
         const totals = new Map(rows.map((x) => [x.currency, Number(x.n)]));
         totals.set(b.currency, (totals.get(b.currency) ?? 0) + b.amount_minor);
         const cents = [...totals].reduce((a, [cur, n]) => a + toEurCents(cur, n), 0);

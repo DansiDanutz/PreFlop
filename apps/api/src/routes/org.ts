@@ -405,6 +405,13 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
     await requireOrg(ctx, req, oid(req));
     return { packs: diamondPacks() };
   });
+  /** The organization's purchases; a pending one keeps the provider's checkout link (docs/21). */
+  app.get(`${P}/payments`, async (req) => {
+    const { org } = await requireOrg(ctx, req, oid(req));
+    return { payments: (await ctx.db.query(`select id, kind, method, mode, currency, amount_minor, status, provider, created_at, details->>'product' as product,
+        case when status = 'pending' then details->>'redirect_url' end as redirect_url
+      from payments where org_id = $1 order by created_at desc limit 100`, [org.id])).rows };
+  });
   // Purchases are charged through the payment provider of the paying currency (docs/21); without one, 503 provider_not_configured.
   const purchaseRail = (payWith: 'EUR' | 'USDT' | 'USDC') =>
     requireProvider(railFor(ctx.providers, payWith === 'EUR' ? 'real-fiat' : 'real-crypto'), payWith === 'EUR' ? 'card and bank payments' : 'stablecoin payments');

@@ -38,7 +38,15 @@ export const EVENTS_CHANNEL = 'preflop_events';
 /** NOTIFY payloads are limited to 8000 bytes; a larger event is relayed without its data. */
 const MAX_PAYLOAD_BYTES = 7900;
 
-export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false };
+export const relayStats = { forwarded: 0, received: 0, truncated: 0, errors: 0, connected: false, gaps: 0 };
+
+/**
+ * Emitted on this process's bus when its listener reconnects after a drop: notifications sent by
+ * other instances while it was down are gone, so the stream closes its sockets (code 1012) and the
+ * clients reconnect and refetch what the events would have patched, exactly as they do after a
+ * socket drop of their own. A gap is never silent.
+ */
+export const RELAY_GAP: DomainEvent = { type: 'relay.gap', data: {} };
 
 let relayDb: Db | null = null;
 
@@ -75,6 +83,7 @@ export async function startEventRelay(db: Db): Promise<() => Promise<void>> {
   let stopped = false;
   let client: pg.PoolClient | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  let wasConnected = false;
 
   const onNotification = (msg: pg.Notification) => {
     if (msg.channel !== EVENTS_CHANNEL || !msg.payload) return;
@@ -102,15 +111,24 @@ export async function startEventRelay(db: Db): Promise<() => Promise<void>> {
   };
   const connect = async (attempt = 0): Promise<void> => {
     if (stopped) return;
+    let c: pg.PoolClient | null = null;
     try {
-      const c = await db.connect();
-      c.on('notification', onNotification);
-      c.on('error', () => dropped(c));
-      c.on('end', () => dropped(c));
+      c = await db.connect();
       await c.query(`listen ${EVENTS_CHANNEL}`);
+      c.on('notification', onNotification);
+      c.on('error', () => dropped(c!));
+      c.on('end', () => dropped(c!));
       client = c;
       relayStats.connected = true;
+      if (wasConnected) {
+        // Back after a drop: whatever the other instances sent meanwhile is lost; tell the stream.
+        relayStats.gaps++;
+        bus.emit('event', RELAY_GAP);
+      }
+      wasConnected = true;
     } catch (err) {
+      // A client acquired but not listening goes back to the pool; a leak here would starve the API.
+      if (c) { try { c.release(true); } catch { /* already gone */ } }
       relayStats.errors++;
       console.error('event relay: listen failed', err);
       schedule(attempt + 1);

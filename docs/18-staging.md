@@ -91,11 +91,15 @@ Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against
 Two layers, so losing the database is a bad hour and not a bad month:
 
 1. **Supabase** keeps daily backups of the whole project (Pro plan), restorable from its dashboard. They are the first line, and they belong to the project, not to this repository.
-2. **Our own weekly dump** (`.github/workflows/backup.yml`, Sundays 03:23 UTC and on demand). The run takes a `pg_dump` of the staging database (custom format, compressed), **restores it into a scratch PostgreSQL 17 on the runner**, verifies the copy, and keeps the dump as a workflow artifact for 30 days (Actions → the run → Artifacts). A backup nobody has restored is a hope, so every weekly run is also the restore drill; a failing run means the backup or the restore is broken, and GitHub emails the owner about failed scheduled runs.
+2. **Our own weekly dump** (`.github/workflows/backup.yml`, Sundays 03:23 UTC and on demand). The run takes a `pg_dump` of the staging database (custom format, compressed), **restores it into a scratch PostgreSQL 17 on the runner**, verifies the copy, encrypts the dump and keeps it as a workflow artifact for 30 days (Actions → the run → Artifacts). A backup nobody has restored is a hope, so every weekly run is also the restore drill; a failing run means the backup or the restore is broken, and GitHub emails the owner about failed scheduled runs.
 
-The verification (`scripts/db-backup.sh verify`) checks that the restored copy has the same applied migrations and the same row count in every table as the source, that the ledger sums to zero in every currency, and that the audit log's hash chain is intact and ends at `audit_head`. Any difference fails the run.
+The verification checks that the restored copy has the same applied migrations and the same row count in every table as the source **as of the dump's snapshot** (the drill reads those in the transaction whose snapshot `pg_dump` uses, so a bet placed while the dump runs never fails a good restore), that the ledger sums to zero in every currency, and that every audit event's hash recomputes from its predecessor and its text, the chain is unbroken and `audit_head` is its last event. Any difference fails the run.
 
-The workflow reads the repository secret `DATABASE_URL` (the same connection string the Fly apps use, with `sslmode=verify-full`; the Supabase CA in `deploy/supabase-ca.crt` is used to verify the server). The Fly secrets workflow already expects that secret under this name, so one secret serves both; without it the backup run fails with a message saying so.
+The workflow reads two repository secrets: `DATABASE_URL` (the same connection string the Fly apps use, with `sslmode=verify-full`; the Supabase CA in `deploy/supabase-ca.crt` verifies the server; the Fly secrets workflow already expects it under this name, so one secret serves both) and `BACKUP_PASSPHRASE` (at least 32 random characters, e.g. `openssl rand -base64 48`). The artifact is the dump encrypted with that passphrase (`openssl enc -aes-256-cbc -pbkdf2 -iter 600000`): a dump holds accounts, password hashes and 2FA secrets, and anyone who can read the repository can download its artifacts. Keep the passphrase where the team keeps secrets, outside GitHub too; without it the artifacts are noise. Without either secret the run fails saying which one is missing. To use an artifact:
+
+```sh
+BACKUP_PASSPHRASE='…' openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in preflop-staging-<time>.dump.enc -out staging.dump -pass env:BACKUP_PASSPHRASE
+```
 
 By hand, from a machine with PostgreSQL client tools of version 17 or newer (the dump must come from a `pg_dump` at least as new as the server):
 
@@ -106,7 +110,7 @@ scripts/db-backup.sh restore "$TARGET_URL"   staging.dump               # restor
 scripts/db-backup.sh verify  "$DATABASE_URL" "$TARGET_URL"             # compare a restored copy with its source
 ```
 
-The script never prints connection strings; `restore` refuses a target that already holds tables, and `drill` refuses to use the source as its scratch database. To restore staging itself after a loss: create an empty database (Supabase SQL editor, or `create database`), `restore` into it, point the Fly apps' `DATABASE_URL` at it with the Fly secrets workflow, and deploy; the API applies any newer migrations at start.
+The script never prints connection strings. `restore` refuses a target that already holds tables. `drill` drops and recreates its scratch database, and only one that does not exist yet or that an earlier drill created (it marks its scratch databases with a database comment): a scratch URL that reaches a real database by another host name or role is refused, so the drill can never drop what it protects. To restore staging itself after a loss: create an empty database (Supabase SQL editor, or `create database`), `restore` into it, point the Fly apps' `DATABASE_URL` at it with the Fly secrets workflow, and deploy; the API applies any newer migrations at start.
 
 ## First demo data
 See `deploy/staging-bootstrap.md` for the API calls that create a free-chip tournament and a leaderboard after the first deploy.

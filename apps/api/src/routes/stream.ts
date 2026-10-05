@@ -54,6 +54,12 @@ export async function streamRoutes(app: FastifyInstance, ctx: AppContext) {
       socket.send(JSON.stringify(m));
     };
     const onEvent = (e: DomainEvent) => {
+      if (e.type === 'relay.gap') {
+        // This process missed other instances' events while its relay was down (lib/events.ts):
+        // 1012 "service restart" makes the client reconnect and refetch, as after any drop.
+        socket.close(1012, 'stream resync');
+        return;
+      }
       const forUser = e.userId !== undefined;
       const forTopic = e.topic !== undefined && topics.has(e.topic);
       if (forTopic || (forUser ? userId !== null && e.userId === userId : e.topic === undefined && (topics.has('lobby') || (e.tableId && topics.has(`table:${e.tableId}`))))) {
