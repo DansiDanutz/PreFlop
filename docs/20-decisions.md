@@ -31,7 +31,7 @@ All but the reading check run in the **worker** (`decisionsOnce`, on its own loo
 
 The reading check runs on request: `POST /v1/admin/manual/reading-check` (admin or ops) with the cards and scores, one question per card. Without a key it answers `{ enabled: false }` and the console shows nothing; the reading stands on its own.
 
-**Free text is a known blind spot.** An applicant's message reaches the adviser only as its length, so the `complete` answer is about the structured fields; the questions say so and tell the adviser to answer near even when a long message is present. The reviewer, who reads the message, decides.
+**Free text is a known blind spot.** An applicant's message reaches the adviser only as its length, so the `complete` answer is about the structured fields; the questions say so and tell the adviser to answer near even when a long message is present, and to keep suggesting *ask more* for thin structured facts, with lower confidence rather than a different choice. The reviewer, who reads the message, decides.
 
 ## Configuration
 
