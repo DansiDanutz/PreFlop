@@ -198,6 +198,8 @@ export const REVIEW_HINT: Record<string, Question> = {
 const CONTACT_KEY = /e-?mail|phone|mobile|\btel\b|telephone|whatsapp|telegram|signal|contact|name|surname|applicant|person|owner|manager|director|ceo|founder|representative/i;
 const EMAIL_TEXT = /[\w.+-]+@[\w-]+(\.[\w-]+)+/g;
 const PHONE_TEXT = /(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)/g;
+/** Fields per object the adviser is shown; a real application has a few dozen at most. */
+export const SCRUB_MAX_KEYS = 200;
 const scrubText = (text: string): string =>
   text.replace(EMAIL_TEXT, '[email]').replace(PHONE_TEXT, (m) => (m.replace(/\D/g, '').length >= 7 ? '[phone]' : m));
 export function scrubContact(value: unknown, withheld?: string[], path = ''): unknown {
@@ -205,16 +207,28 @@ export function scrubContact(value: unknown, withheld?: string[], path = ''): un
   if (Array.isArray(value)) return value.map((v, i) => scrubContact(v, withheld, `${path}[${i}]`));
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      // Keys are applicant-controlled text too: the same redaction applies to them, kept or withheld.
-      // Two keys that redact (or truncate) to the same text stay distinct, so no value is lost.
+    const entries = Object.entries(value as Record<string, unknown>);
+    // Keys are applicant-controlled text too: the same redaction applies to them, kept or withheld.
+    // Two keys that redact (or truncate) to the same text stay distinct, so no value is lost; the
+    // next free suffix per base is remembered, so a flood of colliding keys costs linear time, and
+    // an object is cut at SCRUB_MAX_KEYS fields (the rest is counted, not sent).
+    const used = new Set<string>();
+    const next = new Map<string, number>();
+    for (const [k, v] of entries.slice(0, SCRUB_MAX_KEYS)) {
       const base = scrubText(k).slice(0, 64);
       let key = base;
-      for (let n = 2; key in out || withheld?.includes(path ? `${path}.${key}` : key); n++) key = `${base} (${n})`;
+      if (used.has(key)) {
+        let n = next.get(base) ?? 2;
+        while (used.has(`${base} (${n})`)) n++;
+        key = `${base} (${n})`;
+        next.set(base, n + 1);
+      }
+      used.add(key);
       const here = path ? `${path}.${key}` : key;
       if (CONTACT_KEY.test(k)) withheld?.push(here);
       else out[key] = scrubContact(v, withheld, here);
     }
+    if (entries.length > SCRUB_MAX_KEYS) withheld?.push(`${path ? `${path}.` : ''}… (${entries.length - SCRUB_MAX_KEYS} more fields not shown)`);
     return out;
   }
   return value;
