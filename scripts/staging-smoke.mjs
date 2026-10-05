@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 /**
  * End-to-end smoke test against a deployed environment (docs/18 §Smoke test). Runs after every
  * staging deploy and can be run by hand: node scripts/staging-smoke.mjs
@@ -13,8 +14,11 @@
  *   6. the website, console and club tablet are served (HTML with the app root).
  *
  * Environment: API_URL, SITE_URLS (comma-separated), SMOKE_TIMEOUT_MS (per wait, default 180000),
- * SMOKE_PLAY_START (the play-money starting grant, default 10000) and EXPECTED_COMMIT (when set, each
- * site must serve the build of that commit: its <meta name="build-commit">, see deploy/build-commit.mjs).
+ * SMOKE_PLAY_START (the play-money starting grant, default 10000), EXPECTED_COMMIT (when set, each site
+ * must serve the build of that commit, read from its <meta name="build-commit">, see
+ * deploy/build-commit.mjs) and ACCEPT_NEWER_ON (a git ref such as origin/main: a site serving a
+ * descendant of EXPECTED_COMMIT reachable from that ref passes too, since a newer push may already be
+ * live; git is asked on every poll, and a git failure never passes a site).
  * Exit code 0 on success; 1 with a one-line reason per failed step otherwise.
  */
 const API = (process.env.API_URL ?? 'https://preflop-staging-api.fly.dev').replace(/\/$/, '');
@@ -23,9 +27,26 @@ const SITES = (process.env.SITE_URLS ?? 'https://preflop-staging-web.vercel.app,
 const WAIT_MS = Number(process.env.SMOKE_TIMEOUT_MS ?? 180_000);
 const PLAY_START = Number(process.env.SMOKE_PLAY_START ?? 10_000);
 const EXPECTED_COMMIT = process.env.EXPECTED_COMMIT?.trim() || null;
+const ACCEPT_NEWER_ON = process.env.ACCEPT_NEWER_ON?.trim() || null;
 const STAKE = 10;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const git = (...args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }).toString().trim();
+/** Whether a site's build commit is acceptable: the deployed commit, or a later commit on ACCEPT_NEWER_ON. Git failures are "no". */
+function acceptableBuild(commit) {
+  if (!commit) return false;
+  if (commit === EXPECTED_COMMIT) return true;
+  if (!ACCEPT_NEWER_ON) return false;
+  try {
+    if (ACCEPT_NEWER_ON.startsWith('origin/')) git('fetch', '--quiet', '--depth=200', 'origin', ACCEPT_NEWER_ON.slice('origin/'.length));
+    git('merge-base', '--is-ancestor', EXPECTED_COMMIT, commit);
+    git('merge-base', '--is-ancestor', commit, ACCEPT_NEWER_ON);
+    return true;
+  } catch (e) {
+    log(`git could not confirm ${commit.slice(0, 7)} as a later commit on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
+    return false;
+  }
+}
 const log = (msg) => console.log(`[smoke ${new Date().toISOString().slice(11, 19)}] ${msg}`);
 const fail = (msg) => { console.error(`[smoke] FAIL: ${msg}`); process.exit(1); };
 
@@ -147,18 +168,20 @@ const tableEvents = events.filter((e) => e.table_id === table.id && e.round_id =
 if (tableEvents.length === 0) fail(`no round.* events received on table:${table.id} for ${roundId} while it settled (${events.length} other events)`);
 log(`${events.length} stream events received, ${tableEvents.length} for the table (${[...new Set(events.map((e) => e.type))].join(', ')})`);
 
-// 6. the sites are served, and (when EXPECTED_COMMIT is set) by the build of this very commit:
-// Vercel deploys them separately, so an older build may still be live while the new one builds.
+// 6. the sites are served, and (when EXPECTED_COMMIT is set) by the build of that commit or of a
+// later one on ACCEPT_NEWER_ON: Vercel deploys them separately, so an older build may still be
+// live while the new one builds, or a newer push may already have replaced it.
 const fetchSite = async (site) => {
   const res = await fetch(site, { redirect: 'follow', signal: AbortSignal.timeout(20_000) }).catch((e) => ({ status: 0, text: async () => e.message }));
   const html = await res.text();
   return { status: res.status, root: /<div id="root"/.test(html), commit: /<meta name="build-commit" content="([^"]*)"/.exec(html)?.[1] ?? null };
 };
 for (const site of SITES) {
-  const page = await until(`${site} serving ${EXPECTED_COMMIT ? `commit ${EXPECTED_COMMIT.slice(0, 7)}` : 'the app'}`, async () => {
+  const wanted = EXPECTED_COMMIT ? `${EXPECTED_COMMIT.slice(0, 7)}${ACCEPT_NEWER_ON ? ` or later on ${ACCEPT_NEWER_ON}` : ''}` : null;
+  const page = await until(`${site} serving ${wanted ? `a build of ${wanted}` : 'the app'}`, async () => {
     const p = await fetchSite(site);
     if (p.status !== 200 || !p.root) { log(`${site}: HTTP ${p.status}, app root ${p.root ? 'present' : 'missing'}`); return null; }
-    if (EXPECTED_COMMIT && p.commit !== EXPECTED_COMMIT) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${EXPECTED_COMMIT.slice(0, 7)}`); return null; }
+    if (EXPECTED_COMMIT && !acceptableBuild(p.commit)) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${wanted}`); return null; }
     return p;
   }, 10_000);
   log(`${site} serves the app${page.commit ? ` (build ${page.commit.slice(0, 7)})` : ''}`);

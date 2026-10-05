@@ -75,27 +75,32 @@ jobs:
         if: steps.token.outputs.ok == 'true'
         with:
           node-version: 22
-      # The sites must serve the build of this commit: Vercel builds them from every push to main.
-      # Two cases skip that exact match and check only that the sites are up: a manual run of
-      # another ref (the sites were never built from it), and a deploy that a newer push to main
-      # has overtaken while it ran (deploys queue, cancel-in-progress is off; Vercel already serves
-      # the newer build, and that push's own deploy run verifies it).
+      # The sites must serve the build of the deployed commit, or of a later commit on main: Vercel
+      # builds them from every push to main, deploys queue here (cancel-in-progress is off), so a
+      # newer push may already be live while this run finishes, and that push's own run checks it.
+      # The smoke test asks git on every poll (a push landing mid-check is accepted too), and
+      # anything git cannot answer keeps it waiting until it fails: never a skipped check. A manual
+      # run of another ref deploys only the Fly services; its sites are checked for being up only.
       - name: Which commit the sites must serve
         if: steps.token.outputs.ok == 'true'
         id: expected
         env:
           DEPLOYED: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha) || (github.ref == 'refs/heads/main' && github.sha) || '' }}
         run: |
-          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          set -euo pipefail
           if [ -z "$DEPLOYED" ]; then
             echo "not a deploy of main: the sites are checked for being up only"
-          elif [ "$head" != "$DEPLOYED" ]; then
-            echo "::notice::main moved on to $head while this run deployed $DEPLOYED; its own deploy run checks the sites, this one checks they are up"
-          else
-            echo "commit=$DEPLOYED" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          git fetch --quiet --depth=200 origin main
+          if ! git merge-base --is-ancestor "$DEPLOYED" origin/main; then
+            echo "::error::deployed commit $DEPLOYED is not within the last 200 commits of main"
+            exit 1
+          fi
+          echo "commit=$DEPLOYED" >> "$GITHUB_OUTPUT"
       - name: End-to-end smoke test
         if: steps.token.outputs.ok == 'true'
         env:
           EXPECTED_COMMIT: ${{ steps.expected.outputs.commit }}
+          ACCEPT_NEWER_ON: ${{ steps.expected.outputs.commit && 'origin/main' || '' }}
         run: node scripts/staging-smoke.mjs
