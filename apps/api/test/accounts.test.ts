@@ -325,6 +325,14 @@ describe('two-factor authentication (TOTP)', () => {
     const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
     const invalid = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: 'not-a-code' });
     expect(invalid.status).toBe(400);
+    const now = Date.now();
+    const nearbyCodes = new Set([-2, -1, 0, 1, 2].map((offset) => totpAt(setup.secret, now + offset * 30_000)));
+    let wrongCode = '000000';
+    while (nearbyCodes.has(wrongCode)) wrongCode = String(Number(wrongCode) + 1).padStart(6, '0');
+    const wrong = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: wrongCode });
+    expect(wrong.status).toBe(422);
+    expect(wrong.body.type).toBe('invalid_otp');
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(200);
     expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
