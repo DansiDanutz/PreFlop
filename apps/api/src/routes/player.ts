@@ -123,6 +123,9 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       // leaving a session its sessions purge never saw.
       const now = (await c.query<{ password_hash: string; status: string }>('select password_hash, status from users where id = $1 for update', [u.id])).rows[0];
       if (!now || now.password_hash !== u.password_hash) throw unauthorized('invalid_credentials', 'wrong email or password');
+      // Read after acquiring the lock: MFA enrolment may have committed while sign-in waited.
+      const mfaNow = (await c.query('select 1 from user_mfa where user_id = $1 and enabled_at is not null', [u.id])).rowCount;
+      if (mfaNow && !u.mfa) throw new ApiError(401, 'mfa_required', 'two-factor authentication changed; sign in again with a code');
       // A self-exclusion lifts itself only once its period has ended.
       await c.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
       if (now.status === 'closed' || now.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${now.status}`);

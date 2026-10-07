@@ -318,6 +318,50 @@ describe('two-factor authentication (TOTP)', () => {
     expect((await login()).status).toBe(200);
   });
 
+  it('enabling MFA revokes older sessions while retaining the enrolment session', async () => {
+    const p = await register('mfa-sessions');
+    const other = await h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' });
+    expect(other.status).toBe(200);
+    const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
+    const invalid = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: 'not-a-code' });
+    expect(invalid.status).toBe(400);
+    expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(200);
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
+    expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
+  });
+
+  it('refuses a password-only sign-in that waits while MFA is enabled', async () => {
+    const p = await register('mfa-race');
+    await h.api('POST', '/v1/me/mfa/setup', p.token);
+    const c = await h.db.connect();
+    let login: ReturnType<typeof h.api> | undefined;
+    try {
+      await c.query('begin');
+      await c.query('select 1 from users where id = $1 for update', [p.id]);
+      login = h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' });
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const r = await h.db.query(`select 1 from pg_stat_activity where datname = current_database()
+          and wait_event_type = 'Lock' and query like 'select password_hash, status from users%'`);
+        if (r.rowCount) { waiting = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+      // Model enrolment committing while session issuance is waiting on the same account lock.
+      await c.query('update user_mfa set enabled_at = now() where user_id = $1', [p.id]);
+      await c.query('commit');
+      const result = await login;
+      expect(result.status).toBe(401);
+      expect(result.body.type).toBe('mfa_required');
+      expect(result.body.token).toBeUndefined();
+    } finally {
+      await c.query('rollback');
+      c.release();
+      await login;
+    }
+  });
+
   it('require_staff_mfa: team accounts without 2FA can only enrol; players are not affected', async () => {
     const s = await register('ops');
     await h.api('PUT', `/v1/admin/users/${s.id}`, admin, { platform_role: 'ops' });
