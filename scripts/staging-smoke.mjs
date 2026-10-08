@@ -32,8 +32,34 @@ const STAKE = 10;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const git = (...args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }).toString().trim();
-/** Whether a site's build commit is acceptable: the deployed commit, or a later commit on ACCEPT_NEWER_ON. Git failures are "no". */
-function acceptableBuild(commit) {
+/** Whether a site's build commit is acceptable: the deployed commit, a later commit on
+ * ACCEPT_NEWER_ON, or an earlier commit when nothing that site builds changed in between (Vercel
+ * builds each site separately and skips the ones whose inputs did not change, so an unaffected
+ * site keeps serving its previous build — still the newest one that affects it). Git failures are "no". */
+const SITE_ROOTS = (process.env.SITE_ROOTS ?? 'apps/web,apps/console,apps/table')
+  .split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+/** Paths that every site build consumes, whatever its app root: workspace packages the sites
+ * import, the root lockfile and workspace manifest, and the deploy helpers (build-commit.mjs and
+ * friends run in every site build). A change here affects all sites. */
+const SHARED_INPUTS = (process.env.SHARED_INPUTS ?? 'packages/,pnpm-lock.yaml,pnpm-workspace.yaml,tsconfig.base.json,deploy/,Dockerfile,docker-compose.yml')
+  .split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+/** Whether a changed path belongs to a site's own build inputs: its app root, or a shared input. */
+const affectsSite = (path, siteRoot) =>
+  path === siteRoot || path.startsWith(`${siteRoot}/`) || SHARED_INPUTS.some((p) => path === p || path.startsWith(`${p}/`));
+/** Whether a served build is an ancestor of EXPECTED_COMMIT with no site-affecting change in
+ * between. The predicate is per site: a commit that changed only apps/web makes Vercel rebuild the
+ * web site while console and table keep older builds, which stay correct for those sites. */
+function unaffectedAncestor(commit, siteRoot) {
+  git('merge-base', '--is-ancestor', commit, EXPECTED_COMMIT);
+  const changed = git('diff', '--name-only', commit, EXPECTED_COMMIT).split('\n').filter(Boolean);
+  const hit = changed.find((p) => affectsSite(p, siteRoot));
+  if (hit) {
+    log(`served build ${commit.slice(0, 7)} predates ${EXPECTED_COMMIT.slice(0, 7)} and ${hit} changed: waiting for the ${siteRoot} rebuild`);
+    return false;
+  }
+  return true;
+}
+function acceptableBuild(commit, siteRoot) {
   if (!commit) return false;
   if (commit === EXPECTED_COMMIT) return true;
   if (!ACCEPT_NEWER_ON) return false;
@@ -46,11 +72,20 @@ function acceptableBuild(commit) {
     git('merge-base', '--is-ancestor', EXPECTED_COMMIT, commit);
     git('merge-base', '--is-ancestor', commit, ACCEPT_NEWER_ON);
     return true;
+  } catch { /* not a descendant: fall through to the unaffected-ancestor check */ }
+  try {
+    if (unaffectedAncestor(commit, siteRoot)) {
+      log(`served build ${commit.slice(0, 7)} predates ${EXPECTED_COMMIT.slice(0, 7)} but nothing ${siteRoot ?? 'the site'} builds changed in between: the site is unaffected`);
+      return true;
+    }
+    return false;
   } catch (e) {
-    log(`git could not confirm ${commit.slice(0, 7)} as a later commit on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
+    log(`git could not confirm ${commit.slice(0, 7)} relative to ${EXPECTED_COMMIT.slice(0, 7)} on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
     return false;
   }
 }
+/** The app root a site is built from, matched from its URL host (e.g. preflop-staging-web → apps/web). */
+const siteRootOf = (site) => SITE_ROOTS.find((root) => site.includes(root.slice('apps/'.length).replace(/-/g, ''))) ?? null;
 const log = (msg) => console.log(`[smoke ${new Date().toISOString().slice(11, 19)}] ${msg}`);
 const fail = (msg) => { console.error(`[smoke] FAIL: ${msg}`); process.exit(1); };
 
@@ -185,10 +220,11 @@ const fetchSite = async (site) => {
 };
 for (const site of SITES) {
   const wanted = EXPECTED_COMMIT ? `${EXPECTED_COMMIT.slice(0, 7)}${ACCEPT_NEWER_ON ? ` or later on ${ACCEPT_NEWER_ON}` : ''}` : null;
+  const root = siteRootOf(site);
   const page = await until(`${site} serving ${wanted ? `a build of ${wanted}` : 'the app'}`, async () => {
     const p = await fetchSite(site);
     if (p.status !== 200 || !p.root) { log(`${site}: HTTP ${p.status}, app root ${p.root ? 'present' : 'missing'}`); return null; }
-    if (EXPECTED_COMMIT && !acceptableBuild(p.commit)) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${wanted}`); return null; }
+    if (EXPECTED_COMMIT && !acceptableBuild(p.commit, root)) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${wanted}`); return null; }
     return p;
   }, 10_000);
   log(`${site} serves the app${page.commit ? ` (build ${page.commit.slice(0, 7)})` : ''}`);
