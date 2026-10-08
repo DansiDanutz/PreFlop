@@ -140,6 +140,7 @@ create table rounds (
   unique (table_id, hand_no)
 );
 create index rounds_table_state on rounds (table_id, state);
+create unique index rounds_one_open_per_table on rounds (table_id) where state = 'OPEN';  -- at most one round open for betting per table, even under concurrent opens
 
 create table flop_entries (
   round_id       text not null references rounds(id),
