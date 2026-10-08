@@ -45,6 +45,7 @@ function TwoFactor() {
   const qc = useQueryClient();
   const [setup, setSetup] = useState<MfaSetup | null>(null);
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -54,11 +55,13 @@ function TwoFactor() {
       await fn();
       setDone(ok);
       setCode('');
+      setPassword('');
       await qc.invalidateQueries({ queryKey: ['me'] });
     } catch (e) { setErr(errorMessage(e)); } finally { setBusy(false); }
   };
   const enabled = !!me?.mfa_enabled;
   const codeOk = /^\d{6}$/.test(code);
+  const enableOk = codeOk && password.length > 0;
   return (
     <Card className="space-y-4 p-6">
       <div className="flex items-center justify-between gap-3">
@@ -72,10 +75,11 @@ function TwoFactor() {
         </>
       )}
       {!enabled && setup && (
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (codeOk) void run(() => api.mfaEnable(code), 'Two-factor authentication is on.'); }}>
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (enableOk) void run(() => api.mfaEnable(code, password), 'Two-factor authentication is on.'); }}>
           <ol className="list-decimal space-y-2 pl-5 text-sm text-ink/85">
             <li>In your authenticator app, add an account with this setup key (time-based, 6 digits, 30 seconds), or open the otpauth link on the device that has the app.</li>
             <li>Enter the code the app shows.</li>
+            <li>Confirm your password to turn on two-factor authentication.</li>
           </ol>
           <div className="space-y-2">
             <div className="text-[13px] font-medium text-muted">Setup key</div>
@@ -93,7 +97,10 @@ function TwoFactor() {
           <Field label="Code from the app">
             {(p) => <TextInput {...p} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />}
           </Field>
-          <Button type="submit" disabled={busy || !codeOk}>Turn on</Button>
+          <Field label="Password">
+            {(p) => <TextInput {...p} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
+          </Field>
+          <Button type="submit" disabled={busy || !enableOk}>Turn on</Button>
         </form>
       )}
       {enabled && (

@@ -286,8 +286,8 @@ describe('two-factor authentication (TOTP)', () => {
     const p = await register('mfa');
     const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
     expect(setup.otpauth_uri).toContain(`secret=${setup.secret}`);
-    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: '000000' })).body.type).toBe('invalid_otp');
-    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).body).toEqual({ mfa_enabled: true });
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: '000000' })).body.type).toBe('invalid_otp');
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: totpAt(setup.secret, Date.now()) })).body).toEqual({ mfa_enabled: true });
     expect((await h.api('GET', '/v1/me', p.token)).body.mfa_enabled).toBe(true);
     expect((await h.api('POST', '/v1/me/mfa/setup', p.token)).body.type).toBe('mfa_already_enabled');
 
@@ -323,20 +323,41 @@ describe('two-factor authentication (TOTP)', () => {
     const other = await h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' });
     expect(other.status).toBe(200);
     const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
-    const invalid = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: 'not-a-code' });
+    const invalid = await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: 'not-a-code' });
     expect(invalid.status).toBe(400);
     const now = Date.now();
     const nearbyCodes = new Set([-2, -1, 0, 1, 2].map((offset) => totpAt(setup.secret, now + offset * 30_000)));
     let wrongCode = '000000';
     while (nearbyCodes.has(wrongCode)) wrongCode = String(Number(wrongCode) + 1).padStart(6, '0');
-    const wrong = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: wrongCode });
+    const wrong = await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: wrongCode });
     expect(wrong.status).toBe(422);
     expect(wrong.body.type).toBe('invalid_otp');
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(200);
-    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
+  });
+
+  it('enabling MFA requires the password; a wrong one neither consumes the code nor breaks enrolment', async () => {
+    const p = await register('mfa-reauth');
+    const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
+    // Missing password → 400 like a missing code.
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(400);
+    // Wrong password → 403 wrong_password, and the TOTP code stays usable (it was not consumed).
+    const code = totpAt(setup.secret, Date.now());
+    const wrong = await h.api('POST', '/v1/me/mfa/enable', p.token, { code, password: 'not the password' });
+    expect(wrong.status).toBe(403);
+    expect(wrong.body.type).toBe('wrong_password');
+    // Enrolment is still pending, the session stays signed in, no enabled audit row.
+    const m = (await h.db.query<{ enabled_at: Date | null }>('select enabled_at from user_mfa where user_id = $1', [p.id])).rows[0]!;
+    expect(m.enabled_at).toBeNull();
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
+    // The same code now enables with the right password (it was never spent).
+    const ok = await h.api('POST', '/v1/me/mfa/enable', p.token, { code, password: 'correct horse' });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ mfa_enabled: true });
+    expect((await h.api('GET', '/v1/me', p.token)).body.mfa_enabled).toBe(true);
   });
 
   it('refuses a password-only sign-in that waits while MFA is enabled', async () => {
@@ -375,7 +396,7 @@ describe('two-factor authentication (TOTP)', () => {
     await h.api('PUT', `/v1/admin/users/${s.id}`, admin, { platform_role: 'ops' });
     // The admin enrols first, so turning it on does not lock them out.
     const as = (await h.api('POST', '/v1/me/mfa/setup', admin)).body;
-    await h.api('POST', '/v1/me/mfa/enable', admin, { code: totpAt(as.secret, Date.now()) });
+    await h.api('POST', '/v1/me/mfa/enable', admin, { password: 'admin-pass-1', code: totpAt(as.secret, Date.now()) });
     expect((await h.api('PUT', '/v1/admin/settings/require_staff_mfa', admin, { value: 'yes' })).body.type).toBe('invalid_value');
     expect((await h.api('PUT', '/v1/admin/settings/require_staff_mfa', admin, { value: true })).status).toBe(200);
     try {
@@ -385,7 +406,7 @@ describe('two-factor authentication (TOTP)', () => {
       expect((await h.api('GET', '/v1/me', s.token)).body).toMatchObject({ mfa_enabled: false, mfa_enrollment_required: true });
       expect((await h.api('GET', '/v1/me/bets', s.token)).body.type).toBe('mfa_enrollment_required');
       const setup = (await h.api('POST', '/v1/me/mfa/setup', s.token)).body;
-      expect((await h.api('POST', '/v1/me/mfa/enable', s.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
+      expect((await h.api('POST', '/v1/me/mfa/enable', s.token, { password: 'correct horse', code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
       expect((await h.api('GET', '/v1/admin/overview', s.token)).status).toBe(200);
       expect((await h.api('GET', '/v1/me', s.token)).body.mfa_enrollment_required).toBe(false);
       const player = await register('plain');

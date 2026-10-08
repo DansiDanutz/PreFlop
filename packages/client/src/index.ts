@@ -415,7 +415,7 @@ export function createClient(o: ClientOptions) {
     /** Signs out every other session. 401 invalid_credentials when `current` is wrong. */
     changePassword: (current: string, next: string) => post<{ ok: true }>('/v1/me/password', { current, new: next }),
     mfaSetup: () => post<MfaSetup>('/v1/me/mfa/setup'),
-    mfaEnable: (code: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code }),
+    mfaEnable: (code: string, password: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code, password }),
     mfaDisable: (code: string) => post<{ mfa_enabled: false }>('/v1/me/mfa/disable', { code }),
     mySession: () => get<PlaySession>('/v1/me/session'),
     wallets: () => get<{ wallets: Wallet[] }>('/v1/me/wallets', S.walletsSchema),
