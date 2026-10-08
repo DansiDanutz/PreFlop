@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
     env:
       API_URL: https://preflop-staging-api.fly.dev
       SITES: https://preflop-staging-web.vercel.app https://preflop-staging-console.vercel.app https://preflop-staging-table.vercel.app

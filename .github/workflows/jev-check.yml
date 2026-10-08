@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
     timeout-minutes: 5
     steps:
       - name: Ask one question

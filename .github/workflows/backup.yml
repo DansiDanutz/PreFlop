@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
     timeout-minutes: 30
     services:
       scratch:

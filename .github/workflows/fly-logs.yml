@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   logs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
     timeout-minutes: 10
     env:
       FLYCTL_VERSION: 0.4.111
