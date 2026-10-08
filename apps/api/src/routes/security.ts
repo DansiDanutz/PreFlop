@@ -53,6 +53,8 @@ export async function checkOtp(c: Tx, userId: string, code: string): Promise<boo
 }
 
 const Code = z.object({ code: z.string().trim().regex(/^\d{6}$/, 'a 6-digit code') });
+/** The enable request also proves the password: a stolen session alone cannot turn 2FA on. */
+const EnableCode = Code.extend({ password: z.string().min(1).max(200) });
 
 export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- email verification
@@ -151,9 +153,16 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/me/mfa/enable', async (req) => {
     const u = await ctx.user(req);
     ctx.limits.otp.consume(`user:${u.id}`);
-    const { code } = Code.parse(req.body);
+    const { code, password } = EnableCode.parse(req.body);
     return tx(ctx.db, async (c) => {
       await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and disable
+      // The password is re-checked under the account lock (the same proof sign-in asks for): a
+      // stolen session token alone cannot enrol its own second factor. A wrong password returns
+      // before the TOTP check, so the code is not consumed and enrolment stays pending.
+      const row = (await c.query<{ password_hash: string }>('select password_hash from users where id = $1', [u.id])).rows[0];
+      if (!row || !(await verifyPassword(password, row.password_hash))) {
+        throw new ApiError(403, 'wrong_password', 'confirm your password to turn on two-factor authentication');
+      }
       const m = (await c.query<{ secret: string; enabled_at: Date | null }>('select secret, enabled_at from user_mfa where user_id = $1 for update', [u.id])).rows[0];
       if (!m) throw conflict('mfa_not_set_up', 'start with POST /v1/me/mfa/setup');
       if (m.enabled_at) throw conflict('mfa_already_enabled', 'two-factor authentication is already on');

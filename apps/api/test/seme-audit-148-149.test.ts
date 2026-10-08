@@ -58,7 +58,7 @@ describe('SEM-148 rollback and isolation of failed MFA enable', () => {
     const u = await newUser('mfa-rollback');
     const setup = await h.api('POST', '/v1/me/mfa/setup', u.token);
     expect(setup.status).toBe(200);
-    const enable = await h.api('POST', '/v1/me/mfa/enable', u.token, { code: '000000' });
+    const enable = await h.api('POST', '/v1/me/mfa/enable', u.token, { password: 'correct horse', code: '000000' });
     expect(enable.status).toBe(422);
     const m = (await h.db.query<{ enabled_at: Date | null }>('select enabled_at from user_mfa where user_id = $1', [u.id])).rows[0]!;
     expect(m.enabled_at).toBeNull();
