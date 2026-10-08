@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
     env:
       # Pinned flyctl release, verified against its published checksum before it runs.
       FLYCTL_VERSION: 0.4.111
