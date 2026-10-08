@@ -160,7 +160,10 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       const step = verifyTotp(m.secret, code, null);
       if (step === null) throw unprocessable('invalid_otp', 'that code is not valid; check the time on your device');
       await c.query('update user_mfa set enabled_at = now(), last_step = $2 where user_id = $1', [u.id, step]);
-      await audit(c, { type: 'mfa.enabled', userId: u.id });
+      // Previously issued sessions did not prove possession of the new second factor.
+      const keep = tokenHash(bearer(req.headers.authorization) ?? '');
+      const revoked = await revokeSessions(c, u.id, keep);
+      await audit(c, { type: 'mfa.enabled', userId: u.id, sessionsRevoked: revoked });
       return { mfa_enabled: true };
     });
   });
