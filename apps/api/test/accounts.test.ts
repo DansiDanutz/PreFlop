@@ -342,6 +342,9 @@ describe('two-factor authentication (TOTP)', () => {
   it('enabling MFA requires the password; a wrong one neither consumes the code nor breaks enrolment', async () => {
     const p = await register('mfa-reauth');
     const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
+    // A second session exists; a wrong password must not revoke it.
+    const other = await h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' });
+    expect(other.status).toBe(200);
     // Missing password → 400 like a missing code.
     expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()) })).status).toBe(400);
     // Wrong password → 403 wrong_password, and the TOTP code stays usable (it was not consumed).
@@ -349,15 +352,21 @@ describe('two-factor authentication (TOTP)', () => {
     const wrong = await h.api('POST', '/v1/me/mfa/enable', p.token, { code, password: 'not the password' });
     expect(wrong.status).toBe(403);
     expect(wrong.body.type).toBe('wrong_password');
-    // Enrolment is still pending, the session stays signed in, no enabled audit row.
+    // Enrolment is still pending, both sessions stay signed in, and no audit row was written.
     const m = (await h.db.query<{ enabled_at: Date | null }>('select enabled_at from user_mfa where user_id = $1', [p.id])).rows[0]!;
     expect(m.enabled_at).toBeNull();
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
+    expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(200);
+    const audited = (await h.db.query<{ event: string }>('select event from audit_log')).rows
+      .filter((r) => { try { const e = JSON.parse(r.event); return e.type === 'mfa.enabled' && e.userId === p.id; } catch { return false; } });
+    expect(audited).toEqual([]);
     // The same code now enables with the right password (it was never spent).
     const ok = await h.api('POST', '/v1/me/mfa/enable', p.token, { code, password: 'correct horse' });
     expect(ok.status).toBe(200);
     expect(ok.body).toEqual({ mfa_enabled: true });
     expect((await h.api('GET', '/v1/me', p.token)).body.mfa_enabled).toBe(true);
+    // The other session was revoked by the successful enable, as before.
+    expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
   });
 
   it('refuses a password-only sign-in that waits while MFA is enabled', async () => {
