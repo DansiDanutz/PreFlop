@@ -32,7 +32,12 @@ const STAKE = 10;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const git = (...args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }).toString().trim();
-/** Whether a site's build commit is acceptable: the deployed commit, or a later commit on ACCEPT_NEWER_ON. Git failures are "no". */
+/** Whether a site's build commit is acceptable: the deployed commit, a later commit on
+ * ACCEPT_NEWER_ON, or an earlier commit when nothing the sites build changed in between (Vercel
+ * skips site builds for commits that touch only other apps, so the older build stays live and is
+ * still the newest one that affects the sites). Git failures are "no". */
+const SITE_ROOTS = (process.env.SITE_ROOTS ?? 'apps/web,apps/console,apps/table')
+  .split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
 function acceptableBuild(commit) {
   if (!commit) return false;
   if (commit === EXPECTED_COMMIT) return true;
@@ -46,8 +51,19 @@ function acceptableBuild(commit) {
     git('merge-base', '--is-ancestor', EXPECTED_COMMIT, commit);
     git('merge-base', '--is-ancestor', commit, ACCEPT_NEWER_ON);
     return true;
+  } catch { /* not a descendant: fall through to the unaffected-ancestor check */ }
+  try {
+    git('merge-base', '--is-ancestor', commit, EXPECTED_COMMIT);
+    const changed = git('diff', '--name-only', commit, EXPECTED_COMMIT).split('\n').filter(Boolean);
+    const siteChange = changed.find((p) => SITE_ROOTS.some((root) => p === root || p.startsWith(`${root}/`)));
+    if (siteChange) {
+      log(`served build ${commit.slice(0, 7)} predates ${EXPECTED_COMMIT.slice(0, 7)} and ${siteChange} changed: waiting for the site rebuild`);
+      return false;
+    }
+    log(`served build ${commit.slice(0, 7)} predates ${EXPECTED_COMMIT.slice(0, 7)}, but only non-site paths changed (${[...new Set(changed.map((p) => p.split('/')[1] ? `${p.split('/')[0]}/${p.split('/')[1]}` : p))].join(', ')}): the sites are unaffected`);
+    return true;
   } catch (e) {
-    log(`git could not confirm ${commit.slice(0, 7)} as a later commit on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
+    log(`git could not confirm ${commit.slice(0, 7)} relative to ${EXPECTED_COMMIT.slice(0, 7)} on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
     return false;
   }
 }
