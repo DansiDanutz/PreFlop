@@ -218,8 +218,34 @@ describe('passwords', () => {
     const token = await linkToken(p.email, 'reset_password');
     const passwords = ['race winner alpha', 'race winner bravo'];
 
-    const results = await Promise.all(passwords.map((password) =>
-      h.api('POST', '/v1/auth/reset-password', undefined, { token, password })));
+    const blocker = await h.db.connect();
+    let requests: Promise<{ status: number; body: any }>[] = [];
+    try {
+      await blocker.query('begin');
+      await blocker.query("select token_hash from email_tokens where user_id = $1 and purpose = 'reset' for update", [p.id]);
+      requests = passwords.map((password) =>
+        h.api('POST', '/v1/auth/reset-password', undefined, { token, password }));
+      // Hashing completes independently. Observe both requests at the token lock,
+      // rather than assuming Promise.all makes token consumption concurrent.
+      const deadline = Date.now() + 5_000;
+      let waiting = 0;
+      do {
+        const row = (await h.db.query<{ n: number }>(
+          `select count(*)::int as n from pg_stat_activity
+           where datname = current_database() and pid <> pg_backend_pid()
+             and state = 'active' and wait_event_type = 'Lock'
+             and query ilike '%email_tokens%'`)).rows[0];
+        waiting = row?.n ?? 0;
+        if (waiting === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } while (Date.now() < deadline);
+      expect(waiting, 'both reset requests must overlap at token consumption').toBe(2);
+    } finally {
+      try { await blocker.query('rollback'); } finally { blocker.release(); }
+      // Always release the held lock and drain requests, including assertion failure.
+      await Promise.allSettled(requests);
+    }
+    const results = await Promise.all(requests);
     expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
     expect(results.find((r) => r.status === 200)?.body).toEqual({ ok: true });
     expect(results.find((r) => r.status === 400)?.body.type).toBe('invalid_token');
