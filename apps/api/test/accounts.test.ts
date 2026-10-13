@@ -209,6 +209,35 @@ describe('passwords', () => {
     expect((await h.api('GET', '/v1/me', s.body.token)).body.email_verified).toBe(true);
   });
 
+  it('allows only one of two simultaneous resets with the same token', async () => {
+    const p = await register('reset-race');
+    const other = (await h.api('POST', '/v1/auth/login', undefined, {
+      email: p.email, password: 'correct horse',
+    })).body.token;
+    await h.api('POST', '/v1/auth/forgot-password', undefined, { email: p.email });
+    const token = await linkToken(p.email, 'reset_password');
+    const passwords = ['race winner alpha', 'race winner bravo'];
+
+    const results = await Promise.all(passwords.map((password) =>
+      h.api('POST', '/v1/auth/reset-password', undefined, { token, password })));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
+    expect(results.find((r) => r.status === 200)?.body).toEqual({ ok: true });
+    expect(results.find((r) => r.status === 400)?.body.type).toBe('invalid_token');
+
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(401);
+    expect((await h.api('GET', '/v1/me', other)).status).toBe(401);
+    expect((await h.api('POST', '/v1/auth/login', undefined, {
+      email: p.email, password: 'correct horse',
+    })).status).toBe(401);
+    const winner = results.findIndex((r) => r.status === 200);
+    expect((await h.api('POST', '/v1/auth/login', undefined, {
+      email: p.email, password: passwords[winner],
+    })).status).toBe(200);
+    expect((await h.api('POST', '/v1/auth/login', undefined, {
+      email: p.email, password: passwords[1 - winner],
+    })).status).toBe(401);
+  });
+
   it('forgot-password is rate-limited per address', async () => {
     const limited = await harness('accounts_rl', { rateLimit: { enabled: true, authPerMinute: 100, partnerTokenPerMinute: 10, betsPerMinute: 10 } });
     try {
@@ -366,6 +395,27 @@ describe('two-factor authentication (TOTP)', () => {
     expect(ok.body).toEqual({ mfa_enabled: true });
     expect((await h.api('GET', '/v1/me', p.token)).body.mfa_enabled).toBe(true);
     // The other session was revoked by the successful enable, as before.
+    expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
+  });
+
+  it('disabling MFA signs out every other session', async () => {
+    const p = await register('mfa-disable-sessions');
+    const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, {
+      password: 'correct horse', code: totpAt(setup.secret, Date.now()),
+    })).status).toBe(200);
+
+    const other = await h.api('POST', '/v1/auth/login', undefined, {
+      email: p.email, password: 'correct horse', otp: totpAt(setup.secret, Date.now() + 30_000),
+    });
+    expect(other.status).toBe(200);
+
+    // Re-open the current TOTP window so the original session can perform the downgrade.
+    await h.db.query('update user_mfa set last_step = last_step - 5 where user_id = $1', [p.id]);
+    expect((await h.api('POST', '/v1/me/mfa/disable', p.token, {
+      code: totpAt(setup.secret, Date.now()),
+    })).body).toEqual({ mfa_enabled: false });
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
   });
 
