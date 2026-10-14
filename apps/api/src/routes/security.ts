@@ -186,7 +186,11 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and enable
       if (!(await checkOtp(c, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
       await c.query('delete from user_mfa where user_id = $1', [u.id]);
-      await audit(c, { type: 'mfa.disabled', userId: u.id });
+      // Sessions authenticated while MFA was enabled must not survive a downgrade of the
+      // account's sign-in protection. Keep only the session that proved the current code.
+      const keep = tokenHash(bearer(req.headers.authorization) ?? '');
+      const revoked = await revokeSessions(c, u.id, keep);
+      await audit(c, { type: 'mfa.disabled', userId: u.id, sessionsRevoked: revoked });
       return { mfa_enabled: false };
     });
   });
