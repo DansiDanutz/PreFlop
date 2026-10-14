@@ -7,11 +7,11 @@ import { describe, expect, it } from 'vitest';
 import { missingBuildEnv } from '../../../deploy/require-env.mjs';
 import { LiveBanner } from '../src/components/table/LiveBanner.tsx';
 import { StakeConfirmSheet } from '../src/components/table/StakeConfirmSheet.tsx';
-import { GuestPanel } from '../src/components/table/TableScreen.tsx';
+import { GuestPanel, TableRoundPrompt } from '../src/components/table/TableScreen.tsx';
 import { trapFocus } from '../src/components/ui.tsx';
 import { isEmail, loginErrors, registerErrors } from '../src/lib/authForms.ts';
 import { centsToEuros, eurosToCents, limitsErrors, limitsForm, limitsPayload } from '../src/lib/limits.ts';
-import { streamGate } from '../src/lib/live.ts';
+import { streamGate, tableStatus } from '../src/lib/live.ts';
 import { qk } from '../src/lib/queries.ts';
 import { amountLabel, amountRange, isLargeStake } from '../src/lib/rooms.ts';
 import { resetFirstRunHelp, takeFirstRunHelp } from '../src/lib/storage.ts';
@@ -55,6 +55,22 @@ describe('live connection: refetch after a reconnect', () => {
     expect(renderToStaticMarkup(<LiveBanner ws="open" resyncing />)).toContain('updating the table');
     expect(renderToStaticMarkup(<LiveBanner ws="open" />)).toBe('');
     expect(renderToStaticMarkup(<LiveBanner ws="closed" />)).toContain('Reconnecting… bets paused');
+  });
+});
+
+describe('table prompt respects availability despite a stale open round', () => {
+  const table = { status: 'active' as const, ready: true, stream_live: true, open_round_id: 'round-7', current_round: null };
+  it.each(['paused', 'offline'] as const)('does not advertise predictions for a %s table', (state) => {
+    const status = tableStatus({ ...table, ...(state === 'paused' ? { status: 'paused' as const } : { stream_live: false }) });
+    const html = renderToStaticMarkup(<TableRoundPrompt status={status} openId={table.open_round_id} hand={7} unavailable />);
+    expect(status.open).toBe(false);
+    expect(html).toContain(`This table is ${state}`);
+    expect(html).not.toContain('open for predictions');
+  });
+  it('keeps the open-round instructions for an available table', () => {
+    const html = renderToStaticMarkup(<TableRoundPrompt status={tableStatus(table)} openId={table.open_round_id} hand={7} unavailable={false} />);
+    expect(html).toContain('open for predictions');
+    expect(html).toContain('previous flop');
   });
 });
 

@@ -62,6 +62,19 @@ describe('signed evidence (docs/13 §8.4)', () => {
     const again = await h.sim.call('device', 'POST', `/v1/provider/tables/sim-1/hands/${n}/capture`, { ...signed });
     expect(again.status).toBe(200);
     expect(again.body.authentic).toBe(true);
+    // JSONB and independent clients may serialize object keys in a different order.
+    const reordered = { ...signed, capture: Object.fromEntries(Object.entries(signed.capture).reverse()) };
+    const reorderedReplay = await h.sim.call('device', 'POST', `/v1/provider/tables/sim-1/hands/${n}/capture`, reordered);
+    expect(reorderedReplay.status).toBe(200);
+    expect(reorderedReplay.body).toEqual(again.body);
+    const checkpoint = await device();
+    const stored = (await h.db.query('select capture from captures where round_id = $1', [`sim-1:h${n}`])).rows;
+    const altered = { ...signed, capture: { ...signed.capture, capturedAt: signed.capture.capturedAt + 1 } };
+    const tampered = await h.sim.call('device', 'POST', `/v1/provider/tables/sim-1/hands/${n}/capture`, altered);
+    expect(tampered.status).toBe(409);
+    expect(tampered.body.type).toBe('capture_conflict');
+    expect(await device()).toEqual(checkpoint);
+    expect((await h.db.query('select capture from captures where round_id = $1', [`sim-1:h${n}`])).rows).toEqual(stored);
     // same seq, different content/signature → conflict, not accepted
     const other = signCapture({ ...signed.capture, capturedAt: signed.capture.capturedAt + 1 }, generateKeyPairSync('ed25519').privateKey);
     const conflictRes = await h.sim.call('device', 'POST', `/v1/provider/tables/sim-1/hands/${n}/capture`, other);
