@@ -29,6 +29,20 @@ import { EmptyFavoriteSlot, FavoriteTile } from './Tiles.tsx';
 
 const PRESET_COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'grid-cols-3', 4: 'grid-cols-4', 5: 'grid-cols-5' };
 
+export function TableRoundPrompt({ status, openId, hand, unavailable }: {
+  status: ReturnType<typeof tableStatus> | null;
+  openId: string | null | undefined;
+  hand: number | null | undefined;
+  unavailable: boolean;
+}) {
+  if (!status) return <>Loading…</>;
+  if (status.label === 'Paused') return <>This table is paused. Predictions will reopen when the table resumes.</>;
+  if (unavailable) return <>This table is offline right now. Check back later or choose another table.</>;
+  if (status.open && openId && hand) return <>{roundLabel(hand)} is <span className="text-accent">open for predictions</span>. Pick one of your six favorites or explore the full catalogue. The cards above are the previous flop, not the round you are predicting.</>;
+  if (!status.open && status.label !== 'Round in progress') return <>{status.label}. The next round opens shortly.</>;
+  return <>Predictions are closed for this round. The next round opens after this flop.</>;
+}
+
 /** Choose → Lock → Reveal, numbered, as on the practice table. */
 function Steps({ phase }: { phase: RoundPhase }) {
   const steps: { key: RoundPhase; label: string }[] = [{ key: 'open', label: 'Choose' }, { key: 'locked', label: 'Lock' }, { key: 'reveal', label: 'Reveal' }];
@@ -278,10 +292,7 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">{prompt.eyebrow}</p>
               <h2 className="mt-3 max-w-[460px] font-serif text-[28px] leading-[1.2] tracking-[-0.04em]">{prompt.title}</h2>
               <p className="mt-4 max-w-[500px] text-[14px] leading-relaxed text-ink/80" aria-live="polite">
-                {!t ? 'Loading…' : openId && hand ? (
-                  <>{roundLabel(hand)} is <span className="text-accent">open for predictions</span>. Pick one of your six favorites or explore the full catalogue. The cards above are the previous flop, not the round you are predicting.</>
-                ) : unavailable ? 'This table is offline right now. Check back later or choose another table.'
-                  : status && !status.open && status.label !== 'Round in progress' ? `${status.label}. The next round opens shortly.` : 'Predictions are closed for this round. The next round opens after this flop.'}
+                <TableRoundPrompt status={status} openId={openId} hand={hand} unavailable={unavailable} />
               </p>
               {(thisRound.length > 0 || inFlight.length > 0) && (
                 <div className="mt-5">
