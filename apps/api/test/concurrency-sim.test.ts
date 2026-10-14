@@ -1,4 +1,4 @@
-import { DECK, RoundExposure, formatCard, getSelection, isRed, statsFor } from '@preflop/odds-engine';
+import { DECK, RoundExposure, formatCard, getSelection, isRed, payoutMinor, statsFor } from '@preflop/odds-engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hooks } from '../src/bets/service.ts';
 import { verifyAuditChain } from '../src/lib/audit.ts';
@@ -41,16 +41,43 @@ describe('concurrency and crash safety (docs/13 §8.2, §8.6, §8.10)', () => {
   it('dealer and floor entries submitted in parallel settle the round exactly once', async () => {
     const p = await h.register();
     const n = await open();
-    await bet(h, p.token, `sim-1:h${n}`, 'colour:mixed', 100);
-    const { cards } = await h.sim.procedure(n);
+    const rid = `sim-1:h${n}`;
+    const stake = 100;
+    const before = await walletOf(h, p.token);
+    const reds = new Set(DECK.filter(isRed).map(formatCard));
+    const flopPositions = new Set<number>();
+    for (let c = 15; c <= 37; c++) for (let k = 19; k <= 21; k++) flopPositions.add((c + k) % 52);
+    await bet(h, p.token, rid, 'colour:all-red', stake);
+    const accepted = (await h.db.query<{ id: string; odds_centi: number }>(
+      'select id, odds_centi from bets where round_id = $1 and user_id = $2', [rid, p.id])).rows[0]!;
+    const expectedPayout = payoutMinor(stake, accepted.odds_centi);
+    let cards: string[];
+    h.sim.stackDeck = (deck) => {
+      const r = deck.filter((c) => reds.has(c));
+      const rest = [...r.slice(25), ...deck.filter((c) => !reds.has(c))];
+      return Array.from({ length: 52 }, (_, i) => (flopPositions.has(i) ? r.shift()! : rest.shift()!));
+    };
+    try {
+      ({ cards } = await h.sim.procedure(n));
+    } finally {
+      h.sim.stackDeck = undefined;
+    }
+    expect(cards.every((card) => reds.has(card))).toBe(true);
     const { signed, image } = h.sim.buildCapture(n, cards);
     await h.sim.sendCapture(n, signed, image);
     await Promise.all([h.sim.enter(n, 'dealer', cards), h.sim.enter(n, 'floor', cards)]);
     await Promise.all([h.work(), h.work(), h.work()]);
-    const r = (await h.db.query('select state from rounds where id = $1', [`sim-1:h${n}`])).rows[0];
+    const r = (await h.db.query('select state from rounds where id = $1', [rid])).rows[0];
     expect(r.state).toBe('SETTLED');
-    const payouts = (await h.db.query(`select count(*)::int as n from ledger_tx where kind = 'bet.payout' and ref in (select id from bets where round_id = $1)`, [`sim-1:h${n}`])).rows[0].n;
-    expect(payouts).toBeLessThanOrEqual(1);
+    const payouts = (await h.db.query<{ n: number }>(
+      `select count(*)::int as n from ledger_tx where kind = 'bet.payout' and ref = $1`, [accepted.id])).rows[0]!.n;
+    expect(payouts).toBe(1);
+    const settledBalance = await walletOf(h, p.token);
+    expect(settledBalance).toBe(before - stake + expectedPayout);
+    await Promise.all([h.work(), h.work(), h.work()]);
+    expect(await walletOf(h, p.token)).toBe(settledBalance);
+    expect((await h.db.query<{ n: number }>(
+      `select count(*)::int as n from ledger_tx where kind = 'bet.payout' and ref = $1`, [accepted.id])).rows[0]!.n).toBe(1);
   });
 
   it('settlement racing a void ends in exactly one terminal state; no bet is both refunded and paid', async () => {
