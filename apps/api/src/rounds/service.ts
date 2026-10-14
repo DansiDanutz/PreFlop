@@ -280,13 +280,13 @@ export async function receiveCapture(c: Tx, tableId: string, handNo: number, dev
 
   // 1. Idempotent replay, in any round state, before any other check.
   if (!malformed.length && cap && Number.isSafeInteger(cap.seq)) {
-    const prev = (await c.query<{ signature: string; admitted: boolean; round_id: string }>('select signature, admitted, round_id from captures where device_id = $1 and seq = $2', [deviceId, cap.seq])).rows[0];
+    const prev = (await c.query<{ signature: string; admitted: boolean; round_id: string; capture: FlopCapture }>('select signature, admitted, round_id, capture from captures where device_id = $1 and seq = $2', [deviceId, cap.seq])).rows[0];
     if (prev) {
       // A replay is acknowledged only for the hand it was stored for; the same record sent to another hand is a conflict.
-      if (prev.signature === body.signature && prev.round_id === rid) return { status: 200, body: { authentic: true, admitted: prev.admitted } };
-      await attempt(['capture_conflict: same seq, different signature']);
+      if (prev.signature === body.signature && prev.round_id === rid && captureHash(prev.capture) === captureHash(cap)) return { status: 200, body: { authentic: true, admitted: prev.admitted } };
+      await attempt(['capture_conflict: same seq, different record']);
       await alert(c, { tableId, roundId: rid, kind: 'capture_conflict', severity: 'critical', details: { deviceId, seq: cap.seq } });
-      return { status: 409, body: { type: 'capture_conflict', title: 'same sequence number with a different signature', status: 409, last_seq: d.last_seq, last_hash: d.last_hash } };
+      return { status: 409, body: { type: 'capture_conflict', title: 'same sequence number with a different record', status: 409, last_seq: d.last_seq, last_hash: d.last_hash } };
     }
   }
 
