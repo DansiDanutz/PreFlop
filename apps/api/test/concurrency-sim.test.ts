@@ -74,7 +74,13 @@ describe('concurrency and crash safety (docs/13 §8.2, §8.6, §8.10)', () => {
     expect(payouts).toBe(1);
     const settledBalance = await walletOf(h, p.token);
     expect(settledBalance).toBe(before - stake + expectedPayout);
+    // Redeliver the completed resolution job, rather than polling an empty queue.
+    const retry = await h.db.query<{ id: string }>(
+      `update outbox set done_at = null where kind = 'resolve_round' and ref = $1
+       and done_at is not null returning id`, [rid]);
+    expect(retry.rows).toHaveLength(1);
     await Promise.all([h.work(), h.work(), h.work()]);
+    expect((await h.db.query('select done_at from outbox where id = $1', [retry.rows[0]!.id])).rows[0].done_at).not.toBeNull();
     expect(await walletOf(h, p.token)).toBe(settledBalance);
     expect((await h.db.query<{ n: number }>(
       `select count(*)::int as n from ledger_tx where kind = 'bet.payout' and ref = $1`, [accepted.id])).rows[0]!.n).toBe(1);
