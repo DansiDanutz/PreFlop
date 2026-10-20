@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RoundExposure, getSelection, payoutMinor, statsFor } from '@preflop/odds-engine';
@@ -13,11 +14,13 @@ import { type Harness, harness, testDbName } from './helpers.ts';
  * has its own in-process mutex. Bets race on both instances at once.
  */
 const API_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+// Run tsx through the current Node binary: `node_modules/.bin/tsx` is a shell script that Windows cannot spawn.
+const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 let h: Harness;
 const instances: { proc: ChildProcess; url: string }[] = [];
 
 function startInstance(databaseUrl: string): Promise<{ proc: ChildProcess; url: string }> {
-  const proc = spawn(join(API_DIR, 'node_modules', '.bin', 'tsx'), ['--conditions=preflop-source', 'test/fixtures/apiInstance.ts'], {
+  const proc = spawn(process.execPath, [TSX_CLI, '--conditions=preflop-source', 'test/fixtures/apiInstance.ts'], {
     cwd: API_DIR, env: { ...process.env, DATABASE_URL: databaseUrl, NODE_ENV: 'test' }, stdio: ['ignore', 'pipe', 'inherit'],
   });
   return new Promise((resolve, reject) => {
