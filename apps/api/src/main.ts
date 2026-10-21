@@ -14,7 +14,7 @@ const mailProblem = mailWarning(config);
 if (mailProblem) console.warn(`warning: ${mailProblem}`);
 const decider = deciderFromConfig(config);
 console.log(decider.enabled ? `decision hints: ${decider.model} (docs/20)` : 'decision hints: off (set JEV_API_KEY to turn them on)');
-const db = createPool(config.databaseUrl);
+const db = createPool(config.databaseUrl, config.dbPoolMax);
 const applied = await migrate(db);
 if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 // Stream events cross API machines through PostgreSQL NOTIFY (lib/events.ts).

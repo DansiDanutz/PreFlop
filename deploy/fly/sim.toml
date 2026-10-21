@@ -14,6 +14,11 @@ primary_region = "fra"
   # Secrets (fly secrets set, or the "Fly secrets" workflow): DATABASE_URL (the same Supabase URL as
   # the API), ADMIN_EMAIL and ADMIN_PASSWORD (the first console admin, seeded on first run).
 
+# The simulator has no health check: a dead process is only visible as a lobby without open rounds
+# (uptime.yml), so the machine always restarts it.
+[[restart]]
+  policy = "always"
+
 [[vm]]
   memory = "512mb"
   cpu_kind = "shared"

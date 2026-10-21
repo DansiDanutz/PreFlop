@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { hostname } from 'node:os';
 import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
+import { localWorkerPrefix } from './lib/workerId.ts';
 import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubContact, scrubDetails } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
@@ -194,7 +194,7 @@ export async function beat(db: Db, workerId: string): Promise<void> {
     on conflict (worker_id) do update set beat_at = now(), ticks = worker_heartbeats.ticks + 1`, [workerId]);
 }
 
-export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
+export const newWorkerId = () => `${localWorkerPrefix()}${randomBytes(4).toString('hex')}`;
 
 /** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
 export interface WorkerMail { transport: MailTransport | null; from: string }

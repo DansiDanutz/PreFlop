@@ -27,6 +27,12 @@ describe('validated config', () => {
     expect(loadConfig({ RUN_WORKER: 'false', PORT: '8080', LOG: '1', CORS_ORIGINS: 'http://a.dev, http://b.dev' })).toMatchObject({ runWorker: false, port: 8080, log: true, corsOrigins: ['http://a.dev', 'http://b.dev'] });
   });
 
+  it('DB_POOL_MAX sizes the pool: 20 by default, an integer from 2 to 100 (the event relay keeps one)', () => {
+    expect(loadConfig({}).dbPoolMax).toBe(20);
+    expect(loadConfig({ DB_POOL_MAX: '12' }).dbPoolMax).toBe(12);
+    for (const v of ['0', '1', '101', '-1', '2.5', 'many']) expect(problemsOf({ DB_POOL_MAX: v })[0]).toMatch(/^DB_POOL_MAX:/);
+  });
+
   it('TRUST_PROXY is false, true, a hop count or the proxies\' CIDRs; production refuses a bare true', () => {
     expect(loadConfig({ TRUST_PROXY: '1' }).trustProxy).toBe(1);
     expect(loadConfig({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
