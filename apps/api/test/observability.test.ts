@@ -135,7 +135,7 @@ describe('health', () => {
       values ('prune', 'old', 'POST', '/x', 's', 200, '{}', now() - interval '8 days'), ('prune', 'recent', 'POST', '/x', 's', 200, '{}', now() - interval '1 day')`);
     await h.db.query(`insert into login_failures (email, ip, at) values ('stale@prune.dev', null, now() - interval '8 days'), ('fresh@prune.dev', null, now() - interval '1 hour')`);
 
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
     try { await new Promise((r) => setTimeout(r, 300)); } finally { await stop(); }
 
     const keys = async (sql: string) => (await h.db.query<{ k: string }>(sql)).rows.map((r) => r.k).sort();
