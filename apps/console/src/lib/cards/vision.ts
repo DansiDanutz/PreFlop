@@ -37,6 +37,15 @@ export const SUIT_GLYPHS: readonly { glyph: string; code: string; red: boolean }
   { glyph: '♠', code: 's', red: false }, { glyph: '♥', code: 'h', red: true }, { glyph: '♦', code: 'd', red: true }, { glyph: '♣', code: 'c', red: false },
 ];
 
+/**
+ * The font the glyph templates are drawn with, from bundled files only. Inter has no card suits
+ * (U+2660–2667 are in none of its subsets), so the suits come from the bundled DejaVu Sans instead
+ * of whatever symbol font the operating system has: Segoe UI Symbol and DejaVu draw a club differently.
+ */
+export const GLYPH_FONT = 'bold 120px "Inter", "DejaVu Sans"';
+/** Every glyph the templates draw: loading GLYPH_FONT for this text fetches each font file they use. */
+export const GLYPH_TEXT = [...RANK_GLYPHS, ...SUIT_GLYPHS].map((g) => g.glyph).join('');
+
 /** A guess below this is shown but never pre-filled. */
 export const MIN_CONFIDENCE = 0.45;
 
