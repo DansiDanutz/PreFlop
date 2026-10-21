@@ -153,6 +153,23 @@ export function crownAgreement(sample: readonly number[], template: readonly num
   return Math.max(0, Math.min(1, 1 - diff / rows));
 }
 
+/**
+ * Each candidate's score at one shared focus level: the level whose best candidate fits the sample
+ * best (`perLevel[candidate][level]`). Taking each candidate's own best level instead lets a blurrier
+ * template win only because it is blurrier: a heavily softened club then beats a crisper spade on a
+ * mildly blurred spade, and the reverse. Compared at one level, every candidate is as soft as the others.
+ */
+export function scoresAtSharedLevel(perLevel: readonly (readonly number[])[]): number[] {
+  const levels = Math.min(...perLevel.map((p) => p.length));
+  if (!perLevel.length || !Number.isFinite(levels) || levels < 1) return perLevel.map(() => -Infinity);
+  let shared = 0, bestFit = -Infinity;
+  for (let l = 0; l < levels; l++) {
+    const fit = Math.max(...perLevel.map((p) => (Number.isFinite(p[l]) ? p[l]! : -Infinity)));
+    if (fit > bestFit) { bestFit = fit; shared = l; }
+  }
+  return perLevel.map((p) => p[shared]!);
+}
+
 /** The gap between the best and the second-best score (0..1); 0 with fewer than two finite scores. */
 export function runnerUpMargin(scores: readonly { score: number }[]): number {
   const sorted = scores.map((s) => s.score).filter(Number.isFinite).sort((a, b) => b - a);
