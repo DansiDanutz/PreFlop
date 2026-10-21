@@ -21,7 +21,7 @@ if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 const stopRelay = await startEventRelay(db);
 const providers = providersFromConfig(config);
 const app = await buildApp(db, config, { decider, providers });
-const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providers) : async () => {};
+const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providers) : async () => {};
 const stopGrowth = config.runWorker ? startGrowthWorker(db) : () => {};
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`PreFlop API on :${config.port}`);

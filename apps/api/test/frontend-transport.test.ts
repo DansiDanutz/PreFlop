@@ -180,7 +180,9 @@ describe('client response schemas match the API', () => {
     await check('/v1/me/stats', S.myStatsSchema);
     await check('/v1/me/payments', S.paymentsSchema);
     await check('/v1/tournaments', S.tournamentsSchema);
-    const reset = await h.api('POST', '/v1/me/play/reset', p.token, {});
+    // A player with an open play bet cannot reset (409 play_bets_open); the shape is checked on one without.
+    const idle = await h.register('Contract idle');
+    const reset = await h.api('POST', '/v1/me/play/reset', idle.token, {});
     expect(S.balanceSchema.safeParse(reset.body).success).toBe(true);
   });
 

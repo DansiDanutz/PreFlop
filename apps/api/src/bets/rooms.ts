@@ -123,8 +123,10 @@ async function collateralReserved(c: Tx | Db, orgId: string, currency: string, e
   };
   for (const r of rows) add(r.round_id, r.selection_id, r.stake, r.odds_centi);
   if (extra) add(extra.roundId, extra.selectionId, extra.atRisk, extra.odds);
+  // Per round: the larger of its max payout and its stakes. A VOID refunds every stake, so a round
+  // with complementary bets (stakes above any payout) must never lend that surplus to another round.
   let reserved = 0;
-  for (const e of byRound.values()) reserved += Math.max(0, e.totalStakesMinor - e.minNet().netMinor);
+  for (const e of byRound.values()) reserved += Math.max(e.totalStakesMinor, e.totalStakesMinor - e.minNet().netMinor);
   return reserved;
 }
 

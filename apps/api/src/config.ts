@@ -10,6 +10,8 @@ export interface Config {
   resultSlaMs: number;
   /** A REVIEW decision must be made within this time, otherwise the round voids. */
   reviewSlaMs: number;
+  /** An OPEN round this old at a table that is no longer ready is voided and refunded. */
+  openSlaMs: number;
   /** Largest gap between deal-start and the capture. */
   maxCaptureDelayMs: number;
   /** Run the outbox worker and sweeper inside the API process. */
@@ -153,6 +155,7 @@ const Env = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   RESULT_SLA_MS: ms(5 * 60_000),
   REVIEW_SLA_MS: ms(30 * 60_000),
+  OPEN_SLA_MS: ms(30 * 60_000),
   MAX_CAPTURE_DELAY_MS: ms(180_000),
   RUN_WORKER: bool(true),
   PLAY_START: z.coerce.number().int().nonnegative().default(10_000),
@@ -291,6 +294,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     resultSlaMs: e.RESULT_SLA_MS,
     reviewSlaMs: e.REVIEW_SLA_MS,
+    openSlaMs: e.OPEN_SLA_MS,
     maxCaptureDelayMs: e.MAX_CAPTURE_DELAY_MS,
     runWorker: e.RUN_WORKER,
     playStartMinor: e.PLAY_START,

@@ -73,6 +73,7 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `RUN_WORKER` | `true` | `false` when the worker runs separately (`pnpm --filter @preflop/api worker`); several workers may run |
 | `WORKER_HEARTBEAT_MAX_AGE_MS` | `15000` | `GET /v1/health/ready` fails when no worker has beaten for this long |
 | `RESULT_SLA_MS` · `REVIEW_SLA_MS` · `MAX_CAPTURE_DELAY_MS` | 5 min · 30 min · 3 min | Round deadlines (`docs/13` §4) |
+| `OPEN_SLA_MS` | 30 min | An OPEN round this old at a table that is no longer ready is voided and refunded by the sweeper (`docs/13` §4) |
 | `PLAY_START` | `10000` | Starting play-money balance |
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
 | `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
