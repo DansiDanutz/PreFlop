@@ -152,7 +152,8 @@ const ms = (def: number) => z.coerce.number().int().positive().default(def);
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().url().default('postgres://postgres@localhost:5432/preflop'),
-  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
+  // At least 2: the stream's event relay holds one pool connection for as long as it runs (lib/events.ts).
+  DB_POOL_MAX: z.coerce.number().int().min(2, 'DB_POOL_MAX must be at least 2: the event relay keeps one connection').max(100).default(20),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   RESULT_SLA_MS: ms(5 * 60_000),
   REVIEW_SLA_MS: ms(30 * 60_000),

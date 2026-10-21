@@ -63,7 +63,7 @@ The API and the worker validate their environment at start (`apps/api/src/config
 |---|---|---|
 | `NODE_ENV` | `development` | Set to `production` to turn on the checks in this column |
 | `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 16 characters and not a demo value (`postgres`, `password`, `changeme`, …). A host outside a private network (anything but `localhost`, a bare service name, or a `.internal` / `.flycast` / `.local` name) must carry `?sslmode=verify-full` (or `require`) |
-| `DB_POOL_MAX` | `20` | Connections in this process's pool, 1 to 100. Instances × this (plus the simulator's 4) must stay under the database role's connection limit |
+| `DB_POOL_MAX` | `20` | Connections in this process's pool, 2 to 100 (the stream's event relay holds one for as long as it runs). Instances × this (plus the simulator's 4) must stay under the database role's connection limit |
 | `CORS_ORIGINS` | `*` | **Required.** A comma-separated list of the web, console and table origins. `*` or empty is refused |
 | `ADMIN_EMAIL` | `admin@preflop.local` | Email of the admin the seed scripts create (`sim`, `demo`); re-seeding updates the email and keeps the existing password |
 | `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not be or contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts; the simulator (`sim`) refuses a weak one in every environment |

@@ -7,12 +7,21 @@ let h: Harness;
 beforeAll(async () => { h = await harness('seedadmin'); });
 afterAll(async () => h?.close());
 
+const login = async (email: string, password: string) => (await h.api('POST', '/v1/auth/login', undefined, { email, password })).status;
+
 describe('seedAdmin', () => {
-  it('re-seeding follows the email but keeps the first password (the simulator re-seeds on every fresh machine)', async () => {
-    await tx(h.db, (c) => seedAdmin(c, 'first-admin@test.dev', 'First-Pass-2026!'));
-    await tx(h.db, (c) => seedAdmin(c, 'second-admin@test.dev', 'Second-Pass-2026!'));
-    expect((await h.api('POST', '/v1/auth/login', undefined, { email: 'second-admin@test.dev', password: 'First-Pass-2026!' })).status).toBe(200);
-    expect((await h.api('POST', '/v1/auth/login', undefined, { email: 'second-admin@test.dev', password: 'Second-Pass-2026!' })).status).not.toBe(200);
-    expect((await h.api('POST', '/v1/auth/login', undefined, { email: 'first-admin@test.dev', password: 'First-Pass-2026!' })).status).not.toBe(200);
+  it('with keepPassword (the simulator, re-seeding on every fresh machine) follows the email but keeps the first password', async () => {
+    await tx(h.db, (c) => seedAdmin(c, 'first-admin@test.dev', 'First-Pass-2026!', { keepPassword: true }));
+    await tx(h.db, (c) => seedAdmin(c, 'second-admin@test.dev', 'Second-Pass-2026!', { keepPassword: true }));
+    expect(await login('second-admin@test.dev', 'First-Pass-2026!')).toBe(200);
+    expect(await login('second-admin@test.dev', 'Second-Pass-2026!')).not.toBe(200);
+    expect(await login('first-admin@test.dev', 'First-Pass-2026!')).not.toBe(200);
+  });
+
+  it('by default (the demo seeder, which prints the password it used) a re-run sets the new password', async () => {
+    await tx(h.db, (c) => seedAdmin(c, 'demo-admin@test.dev', 'Demo-Pass-One-1!'));
+    await tx(h.db, (c) => seedAdmin(c, 'demo-admin@test.dev', 'Demo-Pass-Two-2!'));
+    expect(await login('demo-admin@test.dev', 'Demo-Pass-Two-2!')).toBe(200);
+    expect(await login('demo-admin@test.dev', 'Demo-Pass-One-1!')).not.toBe(200);
   });
 });
