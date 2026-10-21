@@ -18,10 +18,15 @@ import { type Harness, bet, harness, walletOf } from './helpers.ts';
 const ADMIN = { email: 'e2e-admin@test.dev', password: 'admin-pass-1' };
 const FLOP = ['Ah', 'Kd', '7c'];
 
-/** Replaces the page's camera with a canvas showing three cards on a felt, redrawn every 100 ms (so the app's fonts are in by the time it is read). */
+/**
+ * Replaces the page's camera with a canvas showing three cards on a felt, redrawn every 100 ms. The
+ * cards use the console's bundled fonts, as the reader's templates do: Inter for ranks, DejaVu Sans
+ * for the suits (Inter has none), never a system font. The camera opens only once they are loaded.
+ */
 const FAKE_CAMERA = `
   (() => {
     const SUIT = { s: '♠', h: '♥', d: '♦', c: '♣' };
+    const INDEX_FONT = '600 56px "Inter", "DejaVu Sans"', PIP_FONT = '110px "Inter", "DejaVu Sans"';
     const CARDS = [{ card: 'Ah', x: 350 }, { card: 'Kd', x: 640 }, { card: '7c', x: 930 }];
     const canvas = document.createElement('canvas'); canvas.width = 1280; canvas.height = 720;
     const g = canvas.getContext('2d');
@@ -34,13 +39,18 @@ const FAKE_CAMERA = `
         g.fillStyle = '#fff'; g.beginPath(); g.roundRect(-95, -133, 190, 266, 10); g.fill();
         g.fillStyle = suit === 'h' || suit === 'd' ? '#d10f1f' : '#111';
         g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.font = '600 56px "Inter", sans-serif'; g.fillText(rank, -65, -97); g.fillText(SUIT[suit], -65, -41);
-        g.font = '110px "Inter", sans-serif'; g.fillText(SUIT[suit], 0, 10);
+        g.font = INDEX_FONT; g.fillText(rank, -65, -97); g.fillText(SUIT[suit], -65, -41);
+        g.font = PIP_FONT; g.fillText(SUIT[suit], 0, 10);
         g.restore();
       }
     };
     draw(); setInterval(draw, 100);
-    const fake = async () => canvas.captureStream(10);
+    const fake = async () => {
+      const text = 'AK7♠♥♦♣';
+      await Promise.all([document.fonts.load(INDEX_FONT, text), document.fonts.load(PIP_FONT, text)]);
+      draw();
+      return canvas.captureStream(10);
+    };
     if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: {} });
     Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fake, configurable: true });
   })();
