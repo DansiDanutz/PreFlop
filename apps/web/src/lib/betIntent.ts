@@ -171,13 +171,20 @@ export async function submitIntent(api: Api, i: BetIntent, o: { attempts?: numbe
  * can hold no bet, so the intent is not_placed. Anything else stays unknown.
  */
 export async function reconcileIntent(api: Api, i: BetIntent): Promise<Outcome> {
+  let round: Awaited<ReturnType<Api['round']>>;
   try {
-    const round = await api.round(i.roundId);
+    round = await api.round(i.roundId);
+  } catch (e) {
+    // Only the round lookup proves absence: a 404 from any other call (a partial deploy, a proxy
+    // misroute) says nothing about whether the bet committed.
+    if (e instanceof ApiError && e.status === 404) return { kind: 'not_placed' };
+    return { kind: 'unknown', error: e };
+  }
+  try {
     const bet = await findPlaced(api, i);
     if (bet) return { kind: 'placed', bet };
     return round.state !== 'OPEN' ? { kind: 'not_placed' } : { kind: 'unknown', error: null };
   } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return { kind: 'not_placed' };
     return { kind: 'unknown', error: e };
   }
 }

@@ -17,6 +17,9 @@ export function loadChunk<M>(load: () => Promise<M>): Promise<M> {
   }, (e: unknown) => {
     if (readString(CHUNK_RELOAD_KEY, 'session')) throw e;
     writeString(CHUNK_RELOAD_KEY, '1', 'session');
+    // Blocked or full storage: the flag would be missing again after the reload, so every boot would
+    // reload once more. Without a stored flag, go straight to the error boundary instead.
+    if (readString(CHUNK_RELOAD_KEY, 'session') !== '1') throw e;
     window.location.reload();
     return new Promise<M>(() => {});
   });

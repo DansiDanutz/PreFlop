@@ -43,6 +43,15 @@ describe('F1: a route chunk missing after a deploy reloads the tab once', () => 
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it('storage that refuses the flag: the import error goes to the boundary, never a reload (no loop on every boot)', async () => {
+    const reload2 = vi.fn();
+    const refusing = { getItem: () => null, setItem: () => { throw new DOMException('blocked', 'SecurityError'); }, removeItem: () => {} };
+    vi.stubGlobal('window', { sessionStorage: refusing, localStorage: refusing, location: { reload: reload2, pathname: '/app' } });
+    const err = new TypeError('Failed to fetch dynamically imported module');
+    await expect(loadChunk(() => Promise.reject(err))).rejects.toBe(err);
+    expect(reload2).not.toHaveBeenCalled();
+  });
+
   it('a successful load clears the flag, so a later deploy gets its one reload too', async () => {
     window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
     await expect(loadChunk(() => Promise.resolve({ Page: 1 }))).resolves.toEqual({ Page: 1 });
@@ -76,16 +85,18 @@ describe('F4: a 500 shows the API request id', () => {
 describe('F5: stake limit refusals in the player\'s words', () => {
   const p = (type: string, extra: Record<string, unknown> = {}) => betProblem(new ApiError(422, { type, title: type, status: 422, ...extra }));
 
-  it('invalid_stake: above the currency maximum', () => {
-    const r = p('invalid_stake');
-    expect(r.kind).toBe('limit_exceeded');
-    expect(r.message).toBe('This stake is above the maximum for this currency. Try a smaller amount.');
+  it('invalid_stake: either end of the range (the API uses it below a minimum and above a maximum), named by its title', () => {
+    const below = betProblem(new ApiError(422, { type: 'invalid_stake', title: 'minimum stake is 200', status: 422 }));
+    expect(below.kind).toBe('limit_exceeded');
+    expect(below.message).toBe('This stake is not allowed here (minimum stake is 200). Choose a different amount.');
+    expect(below.message).not.toMatch(/smaller|above/);
   });
 
-  it('house_limit: the house cannot cover the payout, with the maximum when the API gives one', () => {
+  it('house_limit: the house cannot cover the payout, with the maximum only when the API names its currency', () => {
     expect(p('house_limit').message).toBe('The house cannot cover a payout this large. Try a smaller amount.');
     expect(p('house_limit', { max_payout_minor: 250000, currency: 'EUR' }).message).toBe('The house cannot cover a payout this large (max €2,500.00). Try a smaller amount.');
-    expect(p('house_limit', { max_payout_minor: 1000 }).message).toContain('(max 1,000)');
+    // minor units without a currency would read as 100× the cap (250,000 for €2,500): left out
+    expect(p('house_limit', { max_payout_minor: 250000 }).message).toBe('The house cannot cover a payout this large. Try a smaller amount.');
   });
 
   it('user_round_limit: the player\'s own bets on the round', () => {

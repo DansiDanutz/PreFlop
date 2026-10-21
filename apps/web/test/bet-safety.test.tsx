@@ -228,6 +228,15 @@ describe('F07: a pending intent survives a reload and is reconciled before anoth
     expect(intentStore.load()).toBeNull();
   });
 
+  it('a 404 from the bets lookup proves nothing: unknown, never not_placed (the bet may have committed)', async () => {
+    const f = fakeApi();
+    const real = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (new URL(url).pathname.startsWith('/v1/me/bets')
+      ? new Response(JSON.stringify({ type: 'not_found', title: 'not found', status: 404 }), { status: 404 })
+      : real(url, init)));
+    expect((await reconcileIntent(f.api, { ...newIntent(inputs), sentAt: 1 })).kind).toBe('unknown');
+  });
+
   it('a 5xx from the round lookup stays unknown (the bet may exist)', async () => {
     const f = fakeApi();
     const real = f.fetchMock.getMockImplementation()!;

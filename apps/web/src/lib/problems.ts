@@ -41,7 +41,8 @@ export function betProblem(err: unknown): BetProblem {
     case 'limit_exceeded':
       return { kind: 'limit_exceeded', message: `This stake is above the table limit (${p.title}). Try a smaller amount.` };
     case 'invalid_stake':
-      return { kind: 'limit_exceeded', message: 'This stake is above the maximum for this currency. Try a smaller amount.' };
+      // The API uses invalid_stake for both ends (below a room's minimum, above the currency maximum): its title says which.
+      return { kind: 'limit_exceeded', message: `This stake is not allowed here (${p.title}). Choose a different amount.` };
     case 'house_limit':
       return { kind: 'limit_exceeded', message: `The house cannot cover a payout this large${maxPayout(p)}. Try a smaller amount.` };
     case 'user_round_limit':
@@ -70,10 +71,13 @@ export function betProblem(err: unknown): BetProblem {
   }
 }
 
-/** " (max 1,000 free chips)" from the problem's max_payout_minor, in its currency when the problem names one; else nothing. */
+/**
+ * " (max €2,500.00)" from the problem's max_payout_minor, only when the problem also names its currency:
+ * a bare minor-unit number would read as ten or a hundred times the real cap.
+ */
 function maxPayout(p: ApiError['problem']): string {
-  if (typeof p.max_payout_minor !== 'number') return '';
-  return ` (max ${typeof p.currency === 'string' ? formatMoney(p.max_payout_minor, p.currency) : p.max_payout_minor.toLocaleString('en-US')})`;
+  if (typeof p.max_payout_minor !== 'number' || typeof p.currency !== 'string') return '';
+  return ` (max ${formatMoney(p.max_payout_minor, p.currency)})`;
 }
 
 /** True when an endpoint simply does not exist yet on the running API. */

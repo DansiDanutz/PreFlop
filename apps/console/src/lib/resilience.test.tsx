@@ -36,6 +36,13 @@ describe('F1: a portal chunk missing after a deploy reloads the tab once', () =>
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it('storage that refuses the flag: the import error goes to the boundary, never a reload (no loop on every boot)', async () => {
+    vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => { throw new DOMException('blocked', 'SecurityError'); }, removeItem: () => {} });
+    const err = new TypeError('Failed to fetch dynamically imported module');
+    await expect(loadChunk(() => Promise.reject(err))).rejects.toBe(err);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('a successful load clears the flag', async () => {
     sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
     await expect(loadChunk(() => Promise.resolve({ Page: 1 }))).resolves.toEqual({ Page: 1 });
