@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type CardGuess, type Point, bestMatch, cardLike, crownAgreement, runnerUpMargin, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
+import { type CardGuess, type Point, bestMatch, cardLike, crownAgreement, runnerUpMargin, scoresAtSharedLevel, indexBands, inkRuns, isRedInk, orderCorners, pickFlop, portraitCorners } from './vision.ts';
 
 const quad = (x: number, y: number, w: number, h: number): [Point, Point, Point, Point] => [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
 const guess = (card: string, confidence: number, x: number): CardGuess => ({ card, confidence, margin: 0.2, corners: quad(x, 100, 70, 100) });
@@ -85,5 +85,16 @@ describe('card recognition helpers (docs/19)', () => {
     const t = (code: string) => ({ code });
     expect(bestMatch([{ template: t('A'), score: 0.4 }, { template: t('K'), score: NaN }, { template: t('Q'), score: 0.7 }])?.template.code).toBe('Q');
     expect(bestMatch([])).toBeNull();
+  });
+
+  it('scoresAtSharedLevel: every candidate is scored at the one level the sample fits best, never each at its own', () => {
+    // [candidate][level]: the club only "wins" at a blurrier level than the sample really has (level 2),
+    // where its softer template happens to score 0.80. At the level that fits best (1: spade 0.86) the spade leads.
+    const spade = [0.40, 0.86, 0.78], club = [0.35, 0.70, 0.80];
+    expect(Math.max(...club)).toBeGreaterThan(Math.max(...spade) - 0.1); // per-candidate best: nearly a tie
+    expect(scoresAtSharedLevel([spade, club])).toEqual([0.86, 0.70]);
+    expect(scoresAtSharedLevel([[0.5]])).toEqual([0.5]);
+    expect(scoresAtSharedLevel([[NaN, 0.6], [0.2, 0.4]])).toEqual([0.6, 0.4]);
+    expect(scoresAtSharedLevel([])).toEqual([]);
   });
 });

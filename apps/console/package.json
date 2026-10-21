@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/dejavu-sans": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@preflop/client": "workspace:*",
@@ -31,7 +32,7 @@
     "playwright": "1.56.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vite": "^7.0.0",
-    "vitest": "^3.0.0"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   }
 }

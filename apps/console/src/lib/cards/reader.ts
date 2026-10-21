@@ -1,7 +1,7 @@
 import type { CV } from './opencv.ts';
 import {
-  type CardGuess, type Point, type Reading, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
-  crownAgreement, orderCorners, pickFlop, portraitCorners, runnerUpMargin,
+  type CardGuess, type Point, type Reading, GLYPH_FONT, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
+  crownAgreement, orderCorners, pickFlop, portraitCorners, runnerUpMargin, scoresAtSharedLevel,
 } from './vision.ts';
 
 /**
@@ -24,29 +24,36 @@ type Mat = InstanceType<CV['Mat']>;
 
 /**
  * Each glyph is kept at several focus levels: crisp, and softened as a camera out of focus softens the
- * card. A soft sample is compared with the soft templates too, and the best level counts, so a blurred
- * spade meets a blurred spade rather than a crisp club (whose round top lobe is what a blurred point
- * looks like). Sigmas in template pixels (the glyph is drawn at 120 px, then shrunk about 4×).
+ * card. A soft sample is compared with the soft templates too, so a blurred spade meets a blurred spade
+ * rather than a crisp club (whose round top lobe is what a blurred point looks like). Sigmas in template
+ * pixels (the glyph is drawn at 120 px, then shrunk about 4×). Ranks take each template's best level.
  */
 const FOCUS_LEVELS = [0, 4, 8];
+/**
+ * Suits go softer and finer: in a badly focused frame the corner pip is ~40 px tall, so its blur is a
+ * larger share of the glyph than sigma 8 at 120 px. They are compared at one shared level
+ * (vision.ts scoresAtSharedLevel), never each at its own best: a softer template must not win for being
+ * softer. Past 12 every pip is a blob and the levels stop telling anything apart.
+ */
+const SUIT_FOCUS_LEVELS = [0, 3, 6, 9, 12];
 
 interface Templates { rank: { code: string; mats: Mat[] }[]; suit: { code: string; red: boolean; mats: Mat[] }[] }
 let templates: Templates | null = null;
 
-/** Glyph templates drawn with the browser's own bold sans-serif, binarised and cut to their ink, at each focus level. */
+/** Glyph templates drawn in GLYPH_FONT (loaded by loadCv), binarised and cut to their ink, at each focus level. */
 function glyphTemplates(cv: CV): Templates {
   if (templates) return templates;
-  const draw = (text: string, w: number, h: number): Mat[] => {
+  const draw = (text: string, w: number, h: number, levels: readonly number[]): Mat[] => {
     const c = document.createElement('canvas');
     c.width = 160; c.height = 200;
     const g = c.getContext('2d')!;
     g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = '#000'; g.font = 'bold 120px "Inter", "Helvetica Neue", Arial, sans-serif';
+    g.fillStyle = '#000'; g.font = GLYPH_FONT;
     g.textBaseline = 'middle'; g.textAlign = 'center';
     g.fillText(text, c.width / 2, c.height / 2);
     const rgba = cv.imread(c);
     const gray = new cv.Mat(); cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
-    const mats = FOCUS_LEVELS.map((sigma) => {
+    const mats = levels.map((sigma) => {
       const soft = new cv.Mat();
       if (sigma > 0) cv.GaussianBlur(gray, soft, new cv.Size(0, 0), sigma); else gray.copyTo(soft);
       const bin = new cv.Mat(); cv.threshold(soft, bin, 128, 255, cv.THRESH_BINARY_INV);
@@ -61,8 +68,8 @@ function glyphTemplates(cv: CV): Templates {
     return mats;
   };
   templates = {
-    rank: RANK_GLYPHS.map((r) => ({ code: r.code, mats: draw(r.glyph, RANK_SIZE.w, RANK_SIZE.h) })),
-    suit: SUIT_GLYPHS.map((s) => ({ code: s.code, red: s.red, mats: draw(s.glyph, SUIT_SIZE.w, SUIT_SIZE.h) })),
+    rank: RANK_GLYPHS.map((r) => ({ code: r.code, mats: draw(r.glyph, RANK_SIZE.w, RANK_SIZE.h, FOCUS_LEVELS) })),
+    suit: SUIT_GLYPHS.map((s) => ({ code: s.code, red: s.red, mats: draw(s.glyph, SUIT_SIZE.w, SUIT_SIZE.h, SUIT_FOCUS_LEVELS) })),
   };
   return templates;
 }
@@ -137,7 +144,9 @@ function readCorner(cv: CV, card: Mat, t: Templates): { rank: string; suit: stri
     const mean = cv.mean(suitRgba, suit.strip);
     const red = isRedInk({ r: mean[0] ?? 0, g: mean[1] ?? 0, b: mean[2] ?? 0 });
     const rankScores = t.rank.map((x) => ({ template: x, score: Math.max(...x.mats.map((m) => correlate(cv, rank.out, m))) }));
-    const suitScores = t.suit.filter((x) => x.red === red).map((x) => ({ template: x, score: Math.max(...x.mats.map((m) => correlateSuit(cv, suit.out, m))) }));
+    const suits = t.suit.filter((x) => x.red === red);
+    const atLevel = scoresAtSharedLevel(suits.map((x) => x.mats.map((m) => correlateSuit(cv, suit.out, m))));
+    const suitScores = suits.map((x, i) => ({ template: x, score: atLevel[i]! }));
     const r = bestMatch(rankScores), s = bestMatch(suitScores);
     if (!r || !s) return null;
     return { rank: r.template.code, suit: s.template.code, score: Math.max(0, Math.min(r.score, s.score)), margin: Math.min(runnerUpMargin(rankScores), runnerUpMargin(suitScores)) };
