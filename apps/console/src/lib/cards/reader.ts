@@ -1,6 +1,6 @@
 import type { CV } from './opencv.ts';
 import {
-  type CardGuess, type Point, type Reading, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
+  type CardGuess, type Point, type Reading, GLYPH_FONT, RANK_GLYPHS, SUIT_GLYPHS, bestMatch, cardLike, indexBands, inkRuns, isRedInk,
   crownAgreement, orderCorners, pickFlop, portraitCorners, runnerUpMargin,
 } from './vision.ts';
 
@@ -33,7 +33,7 @@ const FOCUS_LEVELS = [0, 4, 8];
 interface Templates { rank: { code: string; mats: Mat[] }[]; suit: { code: string; red: boolean; mats: Mat[] }[] }
 let templates: Templates | null = null;
 
-/** Glyph templates drawn with the browser's own bold sans-serif, binarised and cut to their ink, at each focus level. */
+/** Glyph templates drawn in GLYPH_FONT (loaded by loadCv), binarised and cut to their ink, at each focus level. */
 function glyphTemplates(cv: CV): Templates {
   if (templates) return templates;
   const draw = (text: string, w: number, h: number): Mat[] => {
@@ -41,7 +41,7 @@ function glyphTemplates(cv: CV): Templates {
     c.width = 160; c.height = 200;
     const g = c.getContext('2d')!;
     g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = '#000'; g.font = 'bold 120px "Inter", "Helvetica Neue", Arial, sans-serif';
+    g.fillStyle = '#000'; g.font = GLYPH_FONT;
     g.textBaseline = 'middle'; g.textAlign = 'center';
     g.fillText(text, c.width / 2, c.height / 2);
     const rgba = cv.imread(c);
