@@ -212,6 +212,40 @@ describe('F07: a pending intent survives a reload and is reconciled before anoth
     expect(f.posts).toHaveLength(0);
   });
 
+  it('a round the API does not know (404) can hold no bet: not placed, and the stored intent is cleared', async () => {
+    const f = fakeApi();
+    const real = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (new URL(url).pathname.startsWith('/v1/rounds/')
+      ? new Response(JSON.stringify({ type: 'not_found', title: 'no such round', status: 404 }), { status: 404 })
+      : real(url, init)));
+    const pending: BetIntent = { ...newIntent(inputs), sentAt: Date.now() };
+    intentStore.save(pending);
+    const out = await reconcileIntent(f.api, pending);
+    expect(out.kind).toBe('not_placed');
+    expect(f.bets).toHaveLength(0);
+    // what useBetIntent does with that verdict: the intent is settled and no longer blocks the slip
+    intentStore.clearIf(pending.key);
+    expect(intentStore.load()).toBeNull();
+  });
+
+  it('a 404 from the bets lookup proves nothing: unknown, never not_placed (the bet may have committed)', async () => {
+    const f = fakeApi();
+    const real = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (new URL(url).pathname.startsWith('/v1/me/bets')
+      ? new Response(JSON.stringify({ type: 'not_found', title: 'not found', status: 404 }), { status: 404 })
+      : real(url, init)));
+    expect((await reconcileIntent(f.api, { ...newIntent(inputs), sentAt: 1 })).kind).toBe('unknown');
+  });
+
+  it('a 5xx from the round lookup stays unknown (the bet may exist)', async () => {
+    const f = fakeApi();
+    const real = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (new URL(url).pathname.startsWith('/v1/rounds/')
+      ? new Response('<html>502</html>', { status: 502, statusText: 'Bad Gateway' })
+      : real(url, init)));
+    expect((await reconcileIntent(f.api, { ...newIntent(inputs), sentAt: 1 })).kind).toBe('unknown');
+  });
+
   it('the API unreachable during reconciliation keeps the intent pending', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     const api = createClient({ baseUrl: 'https://api.test' });

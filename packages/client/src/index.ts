@@ -264,6 +264,8 @@ export class ApiError extends Error {
   get type() { return this.problem.type; }
   /** Seconds to wait before retrying a 429 (rate_limited, login_locked), else null. */
   get retryAfterS(): number | null { return typeof this.problem.retry_after_s === 'number' ? this.problem.retry_after_s : null; }
+  /** The API's request id on a 500 (`request_id`, also the X-Request-Id header), to quote in a support ticket; else null. */
+  get requestId(): string | null { return typeof this.problem.request_id === 'string' && this.problem.request_id ? this.problem.request_id : null; }
 }
 
 export const newIdempotencyKey = () =>
@@ -412,7 +414,7 @@ export function createClient(o: ClientOptions) {
     updateMe: (b: { display_name?: string; date_of_birth?: string; country?: string }) =>
       req<{ id: string; display_name: string; date_of_birth: string | null; country: string | null }>('PATCH', '/v1/me', b),
     resendVerification: () => post<{ ok: true }>('/v1/me/resend-verification'),
-    /** Signs out every other session. 401 invalid_credentials when `current` is wrong. */
+    /** Signs out every other session. 403 wrong_password when `current` is wrong. */
     changePassword: (current: string, next: string) => post<{ ok: true }>('/v1/me/password', { current, new: next }),
     mfaSetup: () => post<MfaSetup>('/v1/me/mfa/setup'),
     mfaEnable: (code: string, password: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code, password }),

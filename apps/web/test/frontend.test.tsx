@@ -50,11 +50,12 @@ describe('partner widget options', () => {
     expect(p('table=a%20b').table).toBeNull();
   });
 
-  it('takes the session from the fragment first, then the query', () => {
-    expect(embedToken(new URLSearchParams(''), '#token=abc')).toBe('abc');
-    expect(embedToken(new URLSearchParams('token=old'), '#token=new')).toBe('new');
-    expect(embedToken(new URLSearchParams('token=old'), '')).toBe('old');
-    expect(embedToken(new URLSearchParams(''), '')).toBeNull();
+  it('takes the session from the fragment only, never the query', () => {
+    expect(embedToken('#token=abc')).toBe('abc');
+    expect(embedToken('#accent=1&token=abc')).toBe('abc');
+    // a ?token= query (an old snippet) is ignored: the fragment is the only place
+    expect(embedToken('')).toBeNull();
+    expect(embedToken('#')).toBeNull();
   });
 
   it('derives readable accent variables', () => {

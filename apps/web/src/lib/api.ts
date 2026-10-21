@@ -27,9 +27,11 @@ export function onTokenChange(l: () => void) {
 
 let unauthorizedHandler: (() => void) | null = null;
 export const setUnauthorizedHandler = (h: (() => void) | null) => (unauthorizedHandler = h);
+/** The session was refused (a REST 401, or the stream's auth frame): same handling wherever it comes from. */
+export const notifyUnauthorized = () => unauthorizedHandler?.();
 
 export const api = createClient({
   baseUrl: API_URL,
   getToken,
-  onUnauthorized: () => unauthorizedHandler?.(),
+  onUnauthorized: notifyUnauthorized,
 });

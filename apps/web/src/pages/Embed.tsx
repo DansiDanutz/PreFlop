@@ -10,8 +10,8 @@ import { accentVars, embedToken, parseEmbedParams } from '../lib/embed.ts';
 
 /**
  * /embed/table/:id#token=…&… (or /embed?table=:id) — the table screen for partners' iframes: no
- * website chrome and no tab bar. The partner's player token (URL fragment, or ?token= from older
- * snippets) is moved into sessionStorage and removed from the address right away.
+ * website chrome and no tab bar. The partner's player token (URL fragment only) is moved into
+ * sessionStorage and removed from the address right away.
  * Partner options, all validated: accent=#rrggbb (theme colour), markets=id,id (markets shown),
  * stakes=10,50,200 (stake pills).
  */
@@ -24,10 +24,11 @@ export function EmbedTablePage() {
   const tableId = id || opts.table || '';
 
   useEffect(() => {
+    const t = embedToken(window.location.hash);
+    if (t) setToken(t);
+    // The fragment (and a ?token= an old snippet may still send, which is never read) leave the address right away.
     const search = new URLSearchParams(window.location.search);
-    const t = embedToken(search, window.location.hash);
-    if (t) {
-      setToken(t);
+    if (t || search.has('token')) {
       search.delete('token');
       const qs = search.toString();
       window.history.replaceState(window.history.state, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
