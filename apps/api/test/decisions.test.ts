@@ -84,7 +84,7 @@ describe('the Jev decider', () => {
     const on = deciderFromConfig(loadConfig({ JEV_API_KEY: 'k'.repeat(24), JEV_MODEL: 'jev-2' }));
     expect(on).toMatchObject({ enabled: true, model: 'jev-2' });
     expect(() => loadConfig({ JEV_API_KEY: 'short' })).toThrow(/JEV_API_KEY/);
-    const prod = { NODE_ENV: 'production', DATABASE_URL: 'postgres://u:p3k9x2m8q1w7e5r4t6y0@db.example.com/pf?sslmode=verify-full', CORS_ORIGINS: 'https://a.example.com', JEV_API_KEY: 'k'.repeat(24) };
+    const prod = { NODE_ENV: 'production', DATABASE_URL: 'postgres://u:p3k9x2m8q1w7e5r4t6y0@db.example.com/pf?sslmode=verify-full', CORS_ORIGINS: 'https://a.example.com', TRUST_PROXY: '1', JEV_API_KEY: 'k'.repeat(24) };
     expect(() => loadConfig({ ...prod, JEV_API_URL: 'http://api.typesafe.ai/v1/systemone' })).toThrow(/JEV_API_URL must be https/);
     expect(() => loadConfig({ ...prod, JEV_API_KEY: 'changeme-changeme-changeme' })).toThrow(/JEV_API_KEY is a known demo/);
     expect(loadConfig(prod).decisions).toMatchObject({ url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' });

@@ -34,7 +34,7 @@ const Register = z.object({
   ref: z.string().trim().max(20).optional(),
 });
 const Login = z.object({
-  email: z.string().email().transform((s) => s.toLowerCase()),
+  email: z.string().email().max(200).transform((s) => s.toLowerCase()),
   password: z.string().max(200),
   // One-time code, required when the account has two-factor authentication on.
   otp: z.string().trim().max(10).optional(),
@@ -160,6 +160,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
    */
   app.patch('/v1/me', async (req) => {
     const u = await ctx.user(req);
+    ctx.limits.account.consume(`user:${u.id}`);
     const b = z.object({
       display_name: z.string().trim().min(1).max(60).optional(),
       date_of_birth: DateOfBirth.optional(),
@@ -192,6 +193,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/v1/me/play/reset', async (req) => {
     const u = await ctx.user(req);
+    ctx.limits.account.consume(`user:${u.id}`);
     return resetPlay(ctx.db, u.id, ctx.config.playStartMinor);
   });
 

@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app.ts';
 import { tx } from '../src/lib/db.ts';
 import { EventBatch } from '../src/lib/events.ts';
 import { signWebhook, deliverDue } from '../src/routes/partner.ts';
@@ -195,6 +196,15 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     expect((await h.api('POST', '/v1/partner/players', undefined, { player_ref: 'p-42' }, auth)).status).toBe(201);
     const session = (await h.api('POST', '/v1/partner/players/p-42/session', undefined, {}, auth)).body.token;
     expect((await h.api('GET', '/v1/me', session)).body.partner_id).toBe(orgId);
+    // the path parameter is bounded like player_ref in the bodies (100 characters): an over-long ref
+    // creates nothing. Fastify's router refuses it first (414, maxParamLength 100); the route's own
+    // schema is the same bound, so a larger router setting could never widen it.
+    const longRef = 'r'.repeat(101);
+    const usersBefore = (await h.db.query('select count(*)::int as n from users where partner_id = $1', [orgId])).rows[0].n;
+    expect([400, 414]).toContain((await h.api('POST', `/v1/partner/players/${longRef}/session`, undefined, {}, auth)).status);
+    expect([400, 414]).toContain((await h.api('POST', `/v1/partner/players/${longRef}/deposits`, undefined, { amount_minor: 10, mode: 'play' }, { ...auth, ...idemKey() })).status);
+    expect((await h.db.query('select count(*)::int as n from users where partner_id = $1', [orgId])).rows[0].n).toBe(usersBefore);
+    expect((await h.db.query('select 1 from users where partner_id = $1 and external_ref = $2', [orgId, longRef])).rowCount).toBe(0);
 
     const n = await open();
     const odds = (await h.api('GET', '/v1/book?channel=partner')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
@@ -279,6 +289,39 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     expect(await rows(a.hook.id)).toEqual(['bet.voided', 'round.voided']);
     expect(await rows(other.hook.id)).toEqual(['round.voided']);
     for (const x of [a, other]) await h.db.query(`update webhooks set active = false where id = $1`, [x.hook.id]);
+  });
+});
+
+describe('partner widget snippet', () => {
+  it('points at the configured WEB_URL', async () => {
+    const owner = await userWithEmail('widget-owner');
+    const orgId = await createOrg('partner', owner, 'WidgetCo');
+    const configured = await buildApp(h.db, { ...h.config, mail: { ...h.config.mail, webUrl: 'https://play.example.com' } });
+    try {
+      const r = await configured.inject({ method: 'GET', url: `/v1/org/${orgId}/widget`, headers: { authorization: `Bearer ${owner.token}` } });
+      expect(r.statusCode).toBe(200);
+      expect(r.json().snippet).toContain('src="https://play.example.com/embed/table/');
+      expect(r.json().snippet).not.toContain('localhost');
+    } finally {
+      await configured.close();
+    }
+    expect((await h.api('GET', `/v1/org/${orgId}/widget`, owner.token)).body.snippet).toContain(`src="${h.config.mail.webUrl}/embed/table/`);
+  });
+});
+
+describe('security headers', () => {
+  it('sends HSTS in production only', async () => {
+    const dev = await h.app.inject({ method: 'GET', url: '/v1/health' });
+    expect(dev.headers['strict-transport-security']).toBeUndefined();
+    const prod = await buildApp(h.db, { ...h.config, nodeEnv: 'production' });
+    try {
+      const r = await prod.inject({ method: 'GET', url: '/v1/health' });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['strict-transport-security']).toBe('max-age=63072000; includeSubDomains');
+      expect(r.headers['x-content-type-options']).toBe('nosniff');
+    } finally {
+      await prod.close();
+    }
   });
 });
 

@@ -43,6 +43,8 @@ export interface AppContext {
   /** In-process rate limiters (one set per app instance; see lib/rateLimit.ts). */
   limits: {
     login: Limiter; register: Limiter; partnerToken: Limiter; bets: Limiter;
+    /** Per user: cheap audited account writes (play reset, profile, 2FA setup, limits, self-exclusion). */
+    account: Limiter;
     /** Per IP: verify-email, forgot-password and reset-password. */
     emailLinks: Limiter;
     /** Per account or address: emails we send on request (3 per 15 minutes). */
@@ -88,9 +90,11 @@ const logSerializers = {
 /**
  * Security headers on every API answer. Responses are JSON for scripts, never documents, so they
  * get a deny-all CSP, and are never cached by browsers or shared proxies (they carry balances,
- * bets and sessions) unless a route opts in by setting its own Cache-Control.
+ * bets and sessions) unless a route opts in by setting its own Cache-Control. In production the
+ * API is only ever reached over TLS, so clients are told to keep it that way (HSTS, two years).
  */
-function securityHeaders(reply: FastifyReply) {
+export function securityHeaders(reply: FastifyReply, production: boolean) {
+  if (production) reply.header('strict-transport-security', 'max-age=63072000; includeSubDomains');
   reply.header('x-content-type-options', 'nosniff');
   reply.header('referrer-policy', 'no-referrer');
   reply.header('x-frame-options', 'DENY');
@@ -126,7 +130,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     reply.header('x-request-id', req.id);
   });
   app.addHook('onSend', async (_req, reply, payload) => {
-    securityHeaders(reply);
+    securityHeaders(reply, config.nodeEnv === 'production');
     return payload;
   });
 
@@ -182,6 +186,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
       register: limiter('register', rl.authPerMinute),
       partnerToken: limiter('partner token', rl.partnerTokenPerMinute),
       bets: limiter('bets', rl.betsPerMinute),
+      account: limiter('account', rl.accountPerMinute),
       emailLinks: limiter('email links', rl.authPerMinute),
       accountEmail: limiter('account email', 3, 15 * 60_000),
       otp: limiter('one-time codes', 10, 15 * 60_000),

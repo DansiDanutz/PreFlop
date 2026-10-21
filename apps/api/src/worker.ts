@@ -16,7 +16,8 @@ import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRo
  * - outbox jobs: resolve_round (idempotent) and void_round (rejected evidence → refund);
  * - the sweeper: result deadline for LOCKED/DEALT, review SLA for REVIEW, immediate void of
  *   EVIDENCE_REJECTED, re-enqueue of DEALT rounds, and reopening betting on healthy tables;
- * - webhook delivery (claimed rows, safe with several workers) and nonce pruning;
+ * - webhook delivery (claimed rows, safe with several workers), nonce pruning and the purge of
+ *   expired sessions, tokens, stored idempotent responses and stale login failures;
  * - payment recovery: pending payments without a provider reference are asked again (docs/21).
  */
 
@@ -82,6 +83,34 @@ export async function sweepOnce(db: Db, t: Timing): Promise<{ voided: number; re
     if (id) opened++;
   }
   return { voided, reenqueued, opened };
+}
+
+/** Rows that expired (or were spent) this long ago are of no use to anyone and are purged. */
+export const EXPIRED_RETENTION = '7 days';
+
+/**
+ * Purges rows past their use, in batches (as pruneNonces): sessions and partner tokens expired for
+ * EXPIRED_RETENTION, email tokens used or expired for that long, stored idempotent responses that
+ * old, and login failures that old (a success deletes them at once; what is left is an account
+ * nobody signed in to since). Returns the number of rows deleted.
+ */
+export async function pruneExpired(db: Db, batch = 5000, maxBatches = 20): Promise<number> {
+  const sweeps = [
+    ['sessions', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
+    ['partner_tokens', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
+    ['email_tokens', `coalesce(used_at, expires_at) < now() - interval '${EXPIRED_RETENTION}'`],
+    ['idempotency_responses', `created_at < now() - interval '${EXPIRED_RETENTION}'`],
+    ['login_failures', `at < now() - interval '${EXPIRED_RETENTION}'`],
+  ] as const;
+  let total = 0;
+  for (const [table, where] of sweeps) {
+    for (let i = 0; i < maxBatches; i++) {
+      const r = await db.query(`delete from ${table} where ctid = any(array(select ctid from ${table} where ${where} limit $1))`, [batch]);
+      total += r.rowCount ?? 0;
+      if ((r.rowCount ?? 0) < batch) break;
+    }
+  }
+  return total;
 }
 
 /** Records that this worker loop is alive (GET /v1/health/ready checks the freshest beat). */
@@ -209,11 +238,13 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       const swept = await sweepOnce(db, t);
       // Payments whose provider call never finished are asked again (payments/recovery.ts).
       const recovered = providers ? await recoverPayments(db, providers) : { asked: 0, final: 0 };
-      // Housekeeping once a minute: consumed request nonces past the replay window.
+      // Housekeeping once a minute: consumed request nonces past the replay window, and rows
+      // (sessions, tokens, idempotent responses, login failures) long expired.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
         await pruneBetChanges(db);
+        await pruneExpired(db);
       }
       return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0 || recovered.asked > 0;
     } catch (e) {

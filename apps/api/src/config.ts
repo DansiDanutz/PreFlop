@@ -73,6 +73,8 @@ export interface RateLimitConfig {
   partnerTokenPerMinute: number;
   /** POST /v1/bets, per signed-in user. */
   betsPerMinute: number;
+  /** Cheap audited account writes (play reset, profile, 2FA setup, limits, self-exclusion), per signed-in user. */
+  accountPerMinute: number;
 }
 
 /** Thrown when the environment is invalid; `problems` lists every reason, one per line. */
@@ -119,13 +121,15 @@ const bool = (def: boolean) => z.enum(['true', 'false', '1', '0']).default(def ?
  * TRUST_PROXY: `false` (default), `true` (every X-Forwarded-For hop; refused in production, since
  * a client then forges its own address and every per-IP limit), a hop count (`1` behind Fly or one
  * load balancer: the last address a trusted proxy appended) or a comma-separated list of the
- * proxies' IPs/CIDRs (or proxy-addr's names loopback, linklocal, uniquelocal).
+ * proxies' IPs/CIDRs (or proxy-addr's names loopback, linklocal, uniquelocal). Production requires
+ * an explicit value: `none` says "no proxy, trust nothing" (the same as false), so an unset variable
+ * behind a load balancer can never key every per-IP limit on the proxy's address.
  */
 const PROXY_ENTRY = /^([0-9a-fA-F:.]+)(\/\d{1,3})?$/;
 export function parseTrustProxy(v: string): boolean | number | string[] {
   const s = v.trim();
   if (s === 'true') return true;
-  if (s === 'false' || s === '0' || s === '') return false;
+  if (s === 'false' || s === 'none' || s === '0' || s === '') return false;
   if (/^\d{1,2}$/.test(s)) return Number(s);
   const list = s.split(',').map((x) => x.trim()).filter(Boolean);
   const KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
@@ -139,7 +143,7 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
     return m[2] === undefined || Number(m[2].slice(1)) <= (family === 4 ? 32 : 128);
   };
   if (list.length && list.every((x) => KEYWORDS.has(x) || validEntry(x))) return list;
-  throw new Error('TRUST_PROXY must be true, false, a hop count or a comma-separated list of proxy IPs/CIDRs');
+  throw new Error('TRUST_PROXY must be true, false, none, a hop count or a comma-separated list of proxy IPs/CIDRs');
 }
 const trustProxy = z.string().default('false').transform((v, ctx) => {
   try { return parseTrustProxy(v); } catch (e) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: (e as Error).message }); return z.NEVER; }
@@ -166,6 +170,7 @@ const Env = z.object({
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_PARTNER_TOKEN_PER_MIN: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_BETS_PER_MIN: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_ACCOUNT_PER_MIN: z.coerce.number().int().positive().default(30),
   WEB_URL: z.string().url().default('http://localhost:5173'),
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
   SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
@@ -223,7 +228,9 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
       problems.push(`CORS_ORIGINS entry ${o} is too broad; a wildcard must be one "-*-" inside an https host label`);
     }
   }
-  if (raw.TRUST_PROXY?.trim() === 'true') {
+  if (!raw.TRUST_PROXY?.trim()) {
+    problems.push('TRUST_PROXY must be set in production: the number of proxy hops (1 behind Fly or one load balancer), the proxies\' CIDRs, or none when nothing is in front of the API (unset, every per-IP limit would key on the proxy address)');
+  } else if (raw.TRUST_PROXY.trim() === 'true') {
     problems.push('TRUST_PROXY=true trusts every X-Forwarded-For hop, so a client can forge its address and bypass per-IP limits; set the number of proxy hops (1 behind Fly or one load balancer) or the proxies\' CIDRs');
   }
   if (!raw.DATABASE_URL) problems.push('DATABASE_URL must be set in production (the localhost default is for development)');
@@ -302,6 +309,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       authPerMinute: e.RATE_LIMIT_AUTH_PER_MIN,
       partnerTokenPerMinute: e.RATE_LIMIT_PARTNER_TOKEN_PER_MIN,
       betsPerMinute: e.RATE_LIMIT_BETS_PER_MIN,
+      accountPerMinute: e.RATE_LIMIT_ACCOUNT_PER_MIN,
     },
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
