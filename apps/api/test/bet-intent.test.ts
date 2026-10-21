@@ -17,7 +17,8 @@ let betQuote: (stake: number, oddsCenti: number, room: { mode: string; house: st
 let h: Harness;
 let admin: string;
 beforeAll(async () => {
-  const quotePath = '../../web/src/lib/quote.ts';
+  // An absolute file URL: a relative specifier in a dynamic import is resolved against the project root by vitest 4.
+  const quotePath = new URL('../../web/src/lib/quote.ts', import.meta.url).href;
   ({ betQuote } = (await import(/* @vite-ignore */ quotePath)) as { betQuote: typeof betQuote });
   h = await harness('betintent');
   await tx(h.db, (c) => seedAdmin(c, 'bi-admin@test.dev', 'admin-pass-1'));
