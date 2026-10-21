@@ -19,7 +19,7 @@ import { type Harness, harness, idemKey, ledgerSums, realMoneyReady } from './he
  */
 
 const STRONG_DB = `postgres://preflop:${'k'.repeat(20)}Q7-${'z'.repeat(12)}@db.internal:5432/preflop`;
-const PROD = { NODE_ENV: 'production', DATABASE_URL: STRONG_DB, CORS_ORIGINS: 'https://preflop.example.com' };
+const PROD = { NODE_ENV: 'production', DATABASE_URL: STRONG_DB, CORS_ORIGINS: 'https://preflop.example.com', TRUST_PROXY: '1' };
 const problemsOf = (env: NodeJS.ProcessEnv): string[] => {
   try { loadConfig(env); return []; } catch (e) { if (e instanceof ConfigError) return e.problems; throw e; }
 };

@@ -14,14 +14,14 @@ const mailProblem = mailWarning(config);
 if (mailProblem) console.warn(`warning: ${mailProblem}`);
 const decider = deciderFromConfig(config);
 console.log(decider.enabled ? `decision hints: ${decider.model} (docs/20)` : 'decision hints: off (set JEV_API_KEY to turn them on)');
-const db = createPool(config.databaseUrl);
+const db = createPool(config.databaseUrl, config.dbPoolMax);
 const applied = await migrate(db);
 if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 // Stream events cross API machines through PostgreSQL NOTIFY (lib/events.ts).
 const stopRelay = await startEventRelay(db);
 const providers = providersFromConfig(config);
 const app = await buildApp(db, config, { decider, providers });
-const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providers) : async () => {};
+const stop = config.runWorker ? startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providers) : async () => {};
 const stopGrowth = config.runWorker ? startGrowthWorker(db) : () => {};
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`PreFlop API on :${config.port}`);

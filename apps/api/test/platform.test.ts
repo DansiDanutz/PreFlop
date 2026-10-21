@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app.ts';
 import { tx } from '../src/lib/db.ts';
 import { EventBatch } from '../src/lib/events.ts';
 import { signWebhook, deliverDue } from '../src/routes/partner.ts';
@@ -119,6 +120,81 @@ describe('organizer house in diamonds (docs/08, docs/10)', () => {
     expect(await wallet(player.token, 'diamonds', orgId)).toBe(before);
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
   });
+
+  it('the reserve of a round is at least its stakes: a void of round N never leaves N+1 paid from money that is not there', async () => {
+    // A round with complementary bets (Σ stakes > max payout) used to reserve only the max payout;
+    // the surplus was lent to the next round. A VOID refunds every stake, so settling N+1 then paid
+    // from collateral that was not there.
+    const o = await userWithEmail('reserve-owner');
+    const p = await userWithEmail('reserve-player');
+    const org = await createOrg('organizer', o, 'Reserve Test');
+    expect((await h.api('POST', `/v1/org/${org}/diamonds/purchases`, o.token, { diamonds: 30_000, pay_with: 'USDT' }, idemKey())).status).toBe(201);
+    expect((await h.api('POST', `/v1/org/${org}/collateral/deposits`, o.token, { mode: 'diamonds', currency: 'DIAMOND', amount_minor: 1_000 }, idemKey())).status).toBe(200);
+    expect((await h.api('POST', `/v1/org/${org}/transfers`, o.token, { email: p.email, mode: 'diamonds', amount_minor: 20_000 }, idemKey())).status).toBe(201);
+    const room = (await h.api('POST', `/v1/org/${org}/rooms`, o.token, { name: 'Reserve', table_id: 'sim-1', mode: 'diamonds', house: 'organizer', rules: { margin_bps: 600, min_stake_minor: 20, rake_bps: 0 }, visibility: 'public' })).body;
+    const odds = (await h.api('GET', `/v1/rooms/${room.id}`, o.token)).body.odds as Record<string, number>;
+    const oNo = odds['any-ace:no']!, oYes = odds['any-ace:yes']!;
+    const payout = (atRisk: number, o: number) => Math.floor((atRisk * o) / 100);
+    const atRisk = (stake: number) => stake - 1; // 1 ◆ fee, no rake
+    const place = (rid: string, sel: string, stake: number) =>
+      h.api('POST', '/v1/bets', p.token, { round_id: rid, selection_id: sel, stake_minor: stake, odds_centi: odds[sel], room_id: room.id }, idemKey());
+    const collateral = async () => (await h.api('GET', `/v1/org/${org}/treasury`, o.token)).body.accounts.find((a: any) => a.purpose === 'collateral').balance_minor as number;
+    const noAce = ['2h', '7d', 'Kc'];
+    const dealt = async (n: number) => {
+      await h.sim.procedure(n);
+      const { signed, image } = h.sim.buildCapture(n, noAce);
+      expect((await h.sim.sendCapture(n, signed, image)).status).toBe(200);
+      for (const role of ['dealer', 'floor'] as const) expect((await h.sim.enter(n, role, noAce)).status).toBe(200);
+    };
+
+    // Round N: balanced complementary bets, so the house keeps the margin whatever the flop.
+    const n = await open();
+    const yesRisk = 1_000;
+    const noRisk = Math.ceil((payout(yesRisk, oYes) * 100) / oNo);
+    expect((await place(`sim-1:h${n}`, 'any-ace:no', noRisk + 1)).status).toBe(201);
+    expect((await place(`sim-1:h${n}`, 'any-ace:yes', yesRisk + 1)).status).toBe(201);
+    const stakesN = noRisk + yesRisk;
+    const maxPayoutN = Math.max(payout(noRisk, oNo), payout(yesRisk, oYes));
+    expect(stakesN).toBeGreaterThan(maxPayoutN);
+    await dealt(n); // N is DEALT (not yet resolved), so N+1 opens
+    expect(await h.sim.openHand()).toBe(n + 1);
+
+    // Round N+1: the biggest bet the old reserve (max payout of N) admitted does not fit once N reserves its stakes.
+    const bal = await collateral();
+    const fits = (reserveN: number, x: number) => reserveN + payout(x, oNo) <= bal + x;
+    let over = 0, max = 0;
+    for (let x = 1; x <= 50_000; x++) {
+      if (fits(maxPayoutN, x)) over = x;
+      if (fits(stakesN, x)) max = x;
+    }
+    expect(fits(stakesN, over)).toBe(false);
+    const refused = await place(`sim-1:h${n + 1}`, 'any-ace:no', over + 1);
+    expect(refused.status, JSON.stringify(refused.body)).toBe(422);
+    expect(refused.body.type).toBe('house_limit');
+    expect((await place(`sim-1:h${n + 1}`, 'any-ace:no', max + 1)).status).toBe(201);
+
+    // N is voided (every stake refunded) and N+1 settles on the heavy side.
+    expect((await h.api('POST', `/v1/admin/rounds/sim-1:h${n}/void`, admin, { reason: 'reserve test' })).status).toBe(200);
+    expect((await h.db.query('select state from rounds where id = $1', [`sim-1:h${n}`])).rows[0].state).toBe('VOID');
+    await dealt(n + 1);
+    await h.work();
+    expect((await h.db.query('select state from rounds where id = $1', [`sim-1:h${n + 1}`])).rows[0].state).toBe('SETTLED');
+    expect(await collateral()).toBeGreaterThanOrEqual(0);
+    for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
+  });
+});
+
+describe('provider writes replay under concurrent retries', () => {
+  it('two concurrent identical provider writes with one Idempotency-Key get the same response', async () => {
+    const n = await open();
+    const key = `start-retry-${Date.now()}`;
+    const url = `/v1/provider/tables/sim-1/hands/${n}/start`;
+    const [a, b] = await Promise.all([h.sim.call('dealer', 'POST', url, {}, undefined, key), h.sim.call('dealer', 'POST', url, {}, undefined, key)]);
+    expect([a.status, b.status], JSON.stringify([a.body, b.body])).toEqual([200, 200]);
+    expect(a.body).toEqual(b.body);
+    expect(a.body.shuffle_command.nonce).toBeTruthy();
+    await h.sim.call('floor_manager', 'POST', `/v1/provider/tables/sim-1/hands/${n}/void`, { reason: 'test' });
+  });
 });
 
 describe('pool room in virtual chips', () => {
@@ -195,6 +271,15 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     expect((await h.api('POST', '/v1/partner/players', undefined, { player_ref: 'p-42' }, auth)).status).toBe(201);
     const session = (await h.api('POST', '/v1/partner/players/p-42/session', undefined, {}, auth)).body.token;
     expect((await h.api('GET', '/v1/me', session)).body.partner_id).toBe(orgId);
+    // the path parameter is bounded like player_ref in the bodies (100 characters): an over-long ref
+    // creates nothing. Fastify's router refuses it first (414, maxParamLength 100); the route's own
+    // schema is the same bound, so a larger router setting could never widen it.
+    const longRef = 'r'.repeat(101);
+    const usersBefore = (await h.db.query('select count(*)::int as n from users where partner_id = $1', [orgId])).rows[0].n;
+    expect([400, 414]).toContain((await h.api('POST', `/v1/partner/players/${longRef}/session`, undefined, {}, auth)).status);
+    expect([400, 414]).toContain((await h.api('POST', `/v1/partner/players/${longRef}/deposits`, undefined, { amount_minor: 10, mode: 'play' }, { ...auth, ...idemKey() })).status);
+    expect((await h.db.query('select count(*)::int as n from users where partner_id = $1', [orgId])).rows[0].n).toBe(usersBefore);
+    expect((await h.db.query('select 1 from users where partner_id = $1 and external_ref = $2', [orgId, longRef])).rowCount).toBe(0);
 
     const n = await open();
     const odds = (await h.api('GET', '/v1/book?channel=partner')).body.markets.flatMap((m: any) => m.selections).find((s: any) => s.id === 'colour:mixed').odds_centi;
@@ -229,7 +314,7 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     expect(b.status).toBe(201);
     await h.sim.playHand(n);
     expect((await h.db.query('select state from rounds where id = $1', [rid])).rows[0].state).toBe('DEALT');
-    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
+    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, openSlaMs: h.config.openSlaMs, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
     const deliveries = (q: { query: typeof h.db.query }) => q.query<{ event_id: string; payload: any }>('select event_id, payload from webhook_deliveries where webhook_id = $1', [hook.id]).then((r) => r.rows);
 
     // 1. a settlement that rolls back leaves no delivery behind
@@ -279,6 +364,39 @@ describe('partner API and webhooks (docs/02 §2)', () => {
     expect(await rows(a.hook.id)).toEqual(['bet.voided', 'round.voided']);
     expect(await rows(other.hook.id)).toEqual(['round.voided']);
     for (const x of [a, other]) await h.db.query(`update webhooks set active = false where id = $1`, [x.hook.id]);
+  });
+});
+
+describe('partner widget snippet', () => {
+  it('points at the configured WEB_URL', async () => {
+    const owner = await userWithEmail('widget-owner');
+    const orgId = await createOrg('partner', owner, 'WidgetCo');
+    const configured = await buildApp(h.db, { ...h.config, mail: { ...h.config.mail, webUrl: 'https://play.example.com' } });
+    try {
+      const r = await configured.inject({ method: 'GET', url: `/v1/org/${orgId}/widget`, headers: { authorization: `Bearer ${owner.token}` } });
+      expect(r.statusCode).toBe(200);
+      expect(r.json().snippet).toContain('src="https://play.example.com/embed/table/');
+      expect(r.json().snippet).not.toContain('localhost');
+    } finally {
+      await configured.close();
+    }
+    expect((await h.api('GET', `/v1/org/${orgId}/widget`, owner.token)).body.snippet).toContain(`src="${h.config.mail.webUrl}/embed/table/`);
+  });
+});
+
+describe('security headers', () => {
+  it('sends HSTS in production only', async () => {
+    const dev = await h.app.inject({ method: 'GET', url: '/v1/health' });
+    expect(dev.headers['strict-transport-security']).toBeUndefined();
+    const prod = await buildApp(h.db, { ...h.config, nodeEnv: 'production' });
+    try {
+      const r = await prod.inject({ method: 'GET', url: '/v1/health' });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['strict-transport-security']).toBe('max-age=63072000; includeSubDomains');
+      expect(r.headers['x-content-type-options']).toBe('nosniff');
+    } finally {
+      await prod.close();
+    }
   });
 });
 

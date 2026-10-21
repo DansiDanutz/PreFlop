@@ -39,6 +39,18 @@ jobs:
             problems="$problems- **$1** ($2): HTTP $code"$'\n'
           }
           probe "API readiness" "$API_URL/v1/health/ready" '"ok":true'
+          # The simulator is a separate Fly app with no public service: a dead one shows only as a lobby
+          # with no ready play table holding an open round (the same check as scripts/staging-smoke.mjs step 2).
+          probe_lobby() { # name url
+            for i in 1 2 3; do
+              body=$(curl -sS -m 20 -w '\n%{http_code}' "$2" 2>&1); code=$(echo "$body" | tail -n1)
+              if [ "$code" = "200" ] && echo "$body" | sed '$d' | jq -e '[.tables[] | select(.mode == "play" and .ready and .open_round_id)] | length > 0' >/dev/null 2>&1; then echo "ok   $1 ($2)"; return 0; fi
+              sleep 10
+            done
+            echo "DOWN $1 ($2): HTTP $code, no ready play table with an open round"
+            problems="$problems- **$1** ($2): HTTP $code, no ready play table with an open round (is preflop-staging-sim running?)"$'\n'
+          }
+          probe_lobby "Simulated tables" "$API_URL/v1/lobby"
           for s in $SITES; do probe "Site" "$s" 'id="root"'; done
           {
             echo "problems<<EOF"

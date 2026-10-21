@@ -2,9 +2,11 @@ import { PassThrough } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
+import { loadConfig } from '../src/config.ts';
 import { createPool, retryStats, tx } from '../src/lib/db.ts';
+import { readinessChecks } from '../src/routes/public.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { beat, nextDelayMs, startWorker, sweepOnce } from '../src/worker.ts';
+import { beat, newWorkerId, nextDelayMs, pruneExpired, startWorker, sweepOnce } from '../src/worker.ts';
 import { type Harness, harness } from './helpers.ts';
 
 let h: Harness;
@@ -76,6 +78,17 @@ describe('health', () => {
     expect(stale.body.checks.worker.last_beat_age_ms).toBeGreaterThan(59_000);
   });
 
+  it('a process that runs its own worker is ready only on that worker\'s heartbeat (blue-green: the old machine cannot vouch)', async () => {
+    const ctx = (runWorker: boolean) => ({ db: h.db, config: { ...loadConfig({}), runWorker } }) as unknown as Parameters<typeof readinessChecks>[0];
+    await h.db.query('delete from worker_heartbeats');
+    await beat(h.db, 'old-machine:4242:cafe0001');
+    expect((await readinessChecks(ctx(true))).worker.ok).toBe(false);
+    expect((await readinessChecks(ctx(false))).worker.ok).toBe(true);
+    await beat(h.db, newWorkerId());
+    expect((await readinessChecks(ctx(true))).worker.ok).toBe(true);
+    await h.db.query('delete from worker_heartbeats');
+  });
+
   it('readiness is 503 when the database is unreachable', async () => {
     const dead = createPool('postgres://postgres@127.0.0.1:1/none', 1);
     const app = await buildApp(dead, h.config);
@@ -97,7 +110,7 @@ describe('health', () => {
     // Nothing to do here (no bets, the simulated table is idle): with a 20 ms fast tick and a 200 ms
     // idle tick, 700 ms holds a handful of passes, not thirty-odd.
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
     try {
       await new Promise((r) => setTimeout(r, 700));
       const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
@@ -111,7 +124,7 @@ describe('health', () => {
     let failures = 0;
     const broken = { query: async () => { failures++; throw new Error('database away'); } } as unknown as typeof h.db;
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const stopBroken = startWorker(broken, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 5000);
+    const stopBroken = startWorker(broken, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 5000);
     try {
       await new Promise((r) => setTimeout(r, 300));
       expect(failures).toBeGreaterThanOrEqual(5); // ~1 failing query per 20 ms pass, never one per 5 s
@@ -121,9 +134,37 @@ describe('health', () => {
     }
   });
 
+  it('a worker pass purges sessions, tokens, idempotent responses and login failures expired for 7 days', async () => {
+    const p = await h.register();
+    await h.db.query(`insert into sessions (token_sha256, user_id, expires_at) values ('old-session', $1, now() - interval '8 days'), ('recent-session', $1, now() - interval '6 days')`, [p.id]);
+    await h.db.query(`insert into organizations (id, kind, name) values ('prune-partner', 'partner', 'Prune') on conflict do nothing`);
+    await h.db.query(`insert into api_clients (id, org_id, name, secret_sha256) values ('cli_prune', 'prune-partner', 'c', 'x') on conflict do nothing`);
+    await h.db.query(`insert into partner_tokens (token_sha256, client_id, org_id, expires_at) values ('old-ptoken', 'cli_prune', 'prune-partner', now() - interval '8 days'), ('live-ptoken', 'cli_prune', 'prune-partner', now() + interval '1 hour')`);
+    await h.db.query(`insert into email_tokens (token_hash, user_id, purpose, email, expires_at, used_at)
+      values ('used-old', $1, 'verify', 'x@prune.dev', now() + interval '1 day', now() - interval '8 days'),
+             ('expired-old', $1, 'reset', 'x@prune.dev', now() - interval '8 days', null),
+             ('expired-recent', $1, 'reset', 'x@prune.dev', now() - interval '1 day', null)`, [p.id]);
+    await h.db.query(`insert into idempotency_responses (principal, idempotency_key, method, path, request_sha256, status, body, created_at)
+      values ('prune', 'old', 'POST', '/x', 's', 200, '{}', now() - interval '8 days'), ('prune', 'recent', 'POST', '/x', 's', 200, '{}', now() - interval '1 day')`);
+    await h.db.query(`insert into login_failures (email, ip, at) values ('stale@prune.dev', null, now() - interval '8 days'), ('fresh@prune.dev', null, now() - interval '1 hour')`);
+
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
+    try { await new Promise((r) => setTimeout(r, 300)); } finally { await stop(); }
+
+    const keys = async (sql: string) => (await h.db.query<{ k: string }>(sql)).rows.map((r) => r.k).sort();
+    expect(await keys(`select token_sha256 as k from sessions where user_id = '${p.id}' and token_sha256 in ('old-session', 'recent-session')`)).toEqual(['recent-session']);
+    expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200); // the live session survives
+    expect(await keys(`select token_sha256 as k from partner_tokens where org_id = 'prune-partner'`)).toEqual(['live-ptoken']);
+    expect(await keys(`select token_hash as k from email_tokens where email = 'x@prune.dev'`)).toEqual(['expired-recent']);
+    // Stored idempotent responses are never purged: a late retry must still get its original response.
+    expect(await keys(`select idempotency_key as k from idempotency_responses where principal = 'prune'`)).toEqual(['old', 'recent']);
+    expect(await keys(`select email as k from login_failures where email like '%@prune.dev'`)).toEqual(['fresh@prune.dev']);
+    expect(await pruneExpired(h.db)).toBe(0); // nothing left to purge
+  });
+
   it('the worker loop beats every tick and removes its row when stopped', async () => {
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30, undefined, 30);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30, undefined, 30);
     await new Promise((r) => setTimeout(r, 300));
     const rows = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows;
     expect(rows).toHaveLength(1);
@@ -155,7 +196,7 @@ describe('GET /v1/admin/metrics', () => {
     await h.work();
     const n = await h.sim.openHand();
     await h.sim.call('dealer', 'POST', `/v1/provider/tables/sim-1/hands/${n}/start`, {});
-    await sweepOnce(h.db, { resultSlaMs: 1, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 });
+    await sweepOnce(h.db, { resultSlaMs: 1, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 });
     // a job nobody has taken for 90 s (inserted after the worker ran, so it stays pending)
     await h.db.query(`insert into outbox (kind, ref, created_at) values ('resolve_round', 'nowhere', now() - interval '90 seconds')`);
 

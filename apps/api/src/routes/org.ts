@@ -26,7 +26,7 @@ type Kind = 'club' | 'partner' | 'organizer';
 /** Membership check: org members by role, or the PreFlop team (read: any platform role; write: admin/ops). */
 export async function requireOrg(ctx: AppContext, req: FastifyRequest, orgId: string, opts: { kinds?: Kind[]; write?: boolean } = {}) {
   const u = await ctx.user(req);
-  const org = (await ctx.db.query<{ id: string; kind: Kind; name: string; status: string; settings: Record<string, unknown> }>('select * from organizations where id = $1', [orgId])).rows[0];
+  const org = (await ctx.db.query<{ id: string; kind: Kind; name: string; status: string; created_at: Date; settings: Record<string, unknown> }>('select * from organizations where id = $1', [orgId])).rows[0];
   if (!org) throw notFound('organization');
   if (opts.kinds && !opts.kinds.includes(org.kind)) throw forbidden('wrong_org_kind', `this is a ${org.kind} organization`);
   const m = (await ctx.db.query<{ role: string }>('select role from memberships where user_id = $1 and org_id = $2', [u.id, orgId])).rows[0];
@@ -87,7 +87,11 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
       const [mode, currency] = mc.split('\u0000') as [PlayMode, string];
       return { currency, mode, amount_minor: series.filter((x) => x.mode === mode && x.currency === currency).reduce((a, x) => a + Number(x[k]), 0) };
     });
-    return { org, kpis, series, turnover_by_currency: totals('turnover_minor'), ggr_by_currency: totals('ggr_minor') };
+    // A projection, not the row: settings also hold the owner's email, the application id and the
+    // widget config, which a portal viewer has no business reading.
+    const { city, country, contact } = org.settings;
+    const view = { id: org.id, kind: org.kind, name: org.name, status: org.status, created_at: org.created_at, settings: { city, country, contact } };
+    return { org: view, kpis, series, turnover_by_currency: totals('turnover_minor'), ggr_by_currency: totals('ggr_minor') };
   });
 
   app.put(`${P}`, async (req) => {

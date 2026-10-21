@@ -77,6 +77,38 @@ describe('org members: change role and remove', () => {
     expect((await h.api('PUT', `/v1/org/${o.id}/members/${v.id}`, o.owner.token, { role: 'superuser' })).status).toBe(400);
   });
 
+  it('the overview shows a projection of the organization, never the owner email or the application', async () => {
+    const owner = await user('proj-owner');
+    const id = await ownedOrg(h, admin, { kind: 'organizer', name: 'Projection Club', settings: { city: 'Cluj', country: 'RO', contact: { name: 'Ana', email: 'ana@proj.dev', phone: '+40 700 000 000' } } }, owner);
+    await h.db.query(`update organizations set settings = settings || '{"application_id": "app_secret", "widget": {"accent": "#000000"}}'::jsonb where id = $1`, [id]);
+    const v = await user('proj-viewer');
+    expect((await h.api('POST', `/v1/org/${id}/members`, owner.token, { email: v.email, role: 'viewer' })).status).toBe(200);
+    const r = await h.api('GET', `/v1/org/${id}/overview`, v.token);
+    expect(r.status).toBe(200);
+    expect(r.body.org).toMatchObject({ id, kind: 'organizer', name: 'Projection Club', status: 'active', settings: { city: 'Cluj', country: 'RO', contact: { name: 'Ana', email: 'ana@proj.dev', phone: '+40 700 000 000' } } });
+    expect(typeof r.body.org.created_at).toBe('string');
+    expect(Object.keys(r.body.org).sort()).toEqual(['created_at', 'id', 'kind', 'name', 'settings', 'status']);
+    expect(Object.keys(r.body.org.settings).sort()).toEqual(['city', 'contact', 'country']);
+    expect(JSON.stringify(r.body)).not.toContain(owner.email);
+    expect(JSON.stringify(r.body)).not.toContain('app_secret');
+    expect(JSON.stringify(r.body)).not.toContain('#000000');
+  });
+
+  it('the console settings form saves: overview settings spread back into PUT keep the reserved keys untouched', async () => {
+    // apps/console portals/org/Misc.tsx sends { ...overview.org.settings, city, country, contact }.
+    // With the whole row it echoed owner_email back and every save was refused as reserved_setting.
+    const owner = await user('form-owner');
+    const id = await ownedOrg(h, admin, { kind: 'club', name: 'Form Club', settings: { city: 'Iasi', country: 'RO' } }, owner);
+    await h.db.query(`update organizations set settings = settings || '{"application_id": "app_form", "widget": {"accent": "#123456"}}'::jsonb where id = $1`, [id]);
+    const before = (await h.db.query<{ settings: Record<string, unknown> }>('select settings from organizations where id = $1', [id])).rows[0]!.settings;
+    const ov = (await h.api('GET', `/v1/org/${id}/overview`, owner.token)).body;
+    const put = await h.api('PUT', `/v1/org/${id}`, owner.token, { name: 'Form Club', settings: { ...ov.org.settings, city: 'Cluj', contact: { name: 'Ion', email: 'ion@form.dev', phone: '+40 711 111 111' } } });
+    expect(put.status).toBe(200);
+    const after = (await h.db.query<{ settings: Record<string, unknown> }>('select settings from organizations where id = $1', [id])).rows[0]!.settings;
+    expect(after).toMatchObject({ city: 'Cluj', country: 'RO', contact: { name: 'Ion' }, application_id: 'app_form', widget: { accent: '#123456' } });
+    expect(after.owner_email).toBe(before.owner_email);
+  });
+
   it('the last owner can be neither demoted nor removed; with two owners one can go', async () => {
     const o = await org('Owners Club');
     expect((await h.api('PUT', `/v1/org/${o.id}/members/${o.owner.id}`, o.owner.token, { role: 'admin' })).body.type).toBe('last_owner');

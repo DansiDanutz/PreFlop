@@ -5,7 +5,7 @@ import { type SmtpSender, mailTransportFor, mailWarning, smtpTransport } from '.
 
 /** Email transport configuration and the docker-compose production guard (external source audit). */
 const STRONG_DB = `postgres://preflop:${'k'.repeat(20)}Q7-${'z'.repeat(12)}@db.internal:5432/preflop`;
-const PROD = { NODE_ENV: 'production', DATABASE_URL: STRONG_DB, CORS_ORIGINS: 'https://preflop.example.com' };
+const PROD = { NODE_ENV: 'production', DATABASE_URL: STRONG_DB, CORS_ORIGINS: 'https://preflop.example.com', TRUST_PROXY: '1' };
 const MAIL = { SMTP_URL: 'smtps://mailer:s3cret@smtp.mail.example.com:465', MAIL_FROM: 'PreFlop <no-reply@preflop.example.com>', WEB_URL: 'https://preflop.example.com' };
 
 function problemsOf(env: NodeJS.ProcessEnv): string[] {
@@ -70,12 +70,15 @@ describe('docker-compose (F19)', () => {
   });
 
   it('the API image (NODE_ENV=production) accepts the compose URL with a generated password and refuses the old demo one', () => {
+    const api = compose.slice(compose.indexOf('\n  api:'));
     const urlWith = (pw: string) => {
-      const api = compose.slice(compose.indexOf('\n  api:'));
       const tpl = /DATABASE_URL:\s*(.+)/.exec(api)![1]!.trim();
       return tpl.replace(/\$\{POSTGRES_PASSWORD:\?[^}]*\}/, encodeURIComponent(pw));
     };
-    const env = (pw: string) => ({ NODE_ENV: 'production', DATABASE_URL: urlWith(pw), CORS_ORIGINS: 'http://localhost:8080,http://localhost:8081,http://localhost:8082' });
+    // Production requires TRUST_PROXY to be explicit: read it from the compose file, as the image gets it.
+    const trustProxy = /TRUST_PROXY:\s*(\S+)/.exec(api)?.[1];
+    expect(trustProxy).toBe('none');
+    const env = (pw: string) => ({ NODE_ENV: 'production', DATABASE_URL: urlWith(pw), CORS_ORIGINS: 'http://localhost:8080,http://localhost:8081,http://localhost:8082', TRUST_PROXY: trustProxy });
     expect(problemsOf(env('preflop'))).toEqual([expect.stringMatching(/DATABASE_URL password is a known demo/)]);
     // what `openssl rand -hex 24` produces (.env.example)
     expect(problemsOf(env('3f9c2a7be41d08c65a1e9f0b7d2c4e8a1b6f3d5c7e9a0b2c'))).toEqual([]);

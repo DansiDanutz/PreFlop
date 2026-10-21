@@ -6,6 +6,7 @@ const PROD = {
   NODE_ENV: 'production',
   DATABASE_URL: STRONG_DB,
   CORS_ORIGINS: 'https://preflop.example.com,https://console.preflop.example.com',
+  TRUST_PROXY: '1',
 };
 
 function problemsOf(env: NodeJS.ProcessEnv): string[] {
@@ -26,6 +27,12 @@ describe('validated config', () => {
     expect(loadConfig({ RUN_WORKER: 'false', PORT: '8080', LOG: '1', CORS_ORIGINS: 'http://a.dev, http://b.dev' })).toMatchObject({ runWorker: false, port: 8080, log: true, corsOrigins: ['http://a.dev', 'http://b.dev'] });
   });
 
+  it('DB_POOL_MAX sizes the pool: 20 by default, an integer from 2 to 100 (the event relay keeps one)', () => {
+    expect(loadConfig({}).dbPoolMax).toBe(20);
+    expect(loadConfig({ DB_POOL_MAX: '12' }).dbPoolMax).toBe(12);
+    for (const v of ['0', '1', '101', '-1', '2.5', 'many']) expect(problemsOf({ DB_POOL_MAX: v })[0]).toMatch(/^DB_POOL_MAX:/);
+  });
+
   it('TRUST_PROXY is false, true, a hop count or the proxies\' CIDRs; production refuses a bare true', () => {
     expect(loadConfig({ TRUST_PROXY: '1' }).trustProxy).toBe(1);
     expect(loadConfig({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
@@ -38,6 +45,16 @@ describe('validated config', () => {
     expect(loadConfig({ TRUST_PROXY: '10.0.0.0/32, fdaa::/128' }).trustProxy).toEqual(['10.0.0.0/32', 'fdaa::/128']);
     expect(problemsOf({ ...PROD, TRUST_PROXY: 'true' }).join(' ')).toMatch(/TRUST_PROXY=true trusts every X-Forwarded-For hop/);
     expect(problemsOf({ ...PROD, TRUST_PROXY: '1' })).toEqual([]);
+  });
+
+  it('production requires TRUST_PROXY; `none` says there is no proxy (trust nothing)', () => {
+    const { TRUST_PROXY: _, ...unset } = PROD;
+    expect(problemsOf(unset)).toEqual([expect.stringMatching(/^TRUST_PROXY must be set in production/)]);
+    expect(problemsOf({ ...unset, TRUST_PROXY: '' })).toEqual([expect.stringMatching(/^TRUST_PROXY must be set in production/)]);
+    expect(() => loadConfig(unset)).toThrow(ConfigError);
+    expect(problemsOf({ ...PROD, TRUST_PROXY: 'none' })).toEqual([]);
+    expect(loadConfig({ ...PROD, TRUST_PROXY: 'none' }).trustProxy).toBe(false);
+    expect(loadConfig({ TRUST_PROXY: 'none' }).trustProxy).toBe(false);
   });
 
   it('malformed values are refused in every environment, naming the variable', () => {
@@ -128,12 +145,14 @@ describe('validated config', () => {
 
   it('production refuses RATE_LIMIT_ENABLED=false; limits are configurable', () => {
     expect(problemsOf({ ...PROD, RATE_LIMIT_ENABLED: 'false' })).toEqual([expect.stringMatching(/RATE_LIMIT_ENABLED=false is for tests/)]);
-    expect(loadConfig({ RATE_LIMIT_BETS_PER_MIN: '30' }).rateLimit).toEqual({ enabled: true, authPerMinute: 20, partnerTokenPerMinute: 30, betsPerMinute: 30 });
+    expect(loadConfig({ RATE_LIMIT_BETS_PER_MIN: '30' }).rateLimit).toEqual({ enabled: true, authPerMinute: 20, partnerTokenPerMinute: 30, betsPerMinute: 30, accountPerMinute: 30 });
+    expect(loadConfig({ RATE_LIMIT_ACCOUNT_PER_MIN: '5' }).rateLimit.accountPerMinute).toBe(5);
+    expect(problemsOf({ RATE_LIMIT_ACCOUNT_PER_MIN: '0' })[0]).toMatch(/^RATE_LIMIT_ACCOUNT_PER_MIN:/);
   });
 
   it('lists every production problem at once', () => {
     const p = problemsOf({ NODE_ENV: 'production', CORS_ORIGINS: '*', WEBHOOK_ALLOW_PRIVATE: 'true', ADMIN_PASSWORD: 'x' });
-    expect(p).toHaveLength(4); // CORS, DATABASE_URL unset, ADMIN_PASSWORD, WEBHOOK_ALLOW_PRIVATE
+    expect(p).toHaveLength(5); // CORS, TRUST_PROXY unset, DATABASE_URL unset, ADMIN_PASSWORD, WEBHOOK_ALLOW_PRIVATE
   });
 
   it('the same unsafe settings are allowed outside production', () => {

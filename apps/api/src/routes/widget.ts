@@ -17,8 +17,7 @@ export const WidgetSettings = z.object({
  * (#token=…): browsers never send a fragment to any server, so it stays out of access logs and
  * Referer headers. The widget moves it into sessionStorage and clears it from the address.
  */
-export function widgetSnippet(orgId: string, settings: Record<string, unknown>): string {
-  const web = process.env.WEB_URL ?? 'http://localhost:5173';
+export function widgetSnippet(orgId: string, settings: Record<string, unknown>, web: string): string {
   // `default_table` is what older versions saved.
   const table = String(settings.default_table_id ?? settings.default_table ?? 'green-room');
   const q = new URLSearchParams({ accent: typeof settings.accent === 'string' ? settings.accent : '#53e6a7' });

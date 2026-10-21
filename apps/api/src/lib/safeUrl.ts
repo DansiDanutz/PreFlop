@@ -12,7 +12,7 @@ import { unprocessable } from './errors.ts';
  * embedded in IPv6 in any notation. Delivery resolves the host itself and connects only to an
  * address it has checked (no DNS rebinding between check and connect), and never follows redirects.
  */
-export const allowPrivate = () => process.env.WEBHOOK_ALLOW_PRIVATE === 'true';
+export const allowPrivate = () => process.env.WEBHOOK_ALLOW_PRIVATE === 'true' || process.env.WEBHOOK_ALLOW_PRIVATE === '1';
 
 function privateV4Bytes(a: number, b: number): boolean {
   return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
