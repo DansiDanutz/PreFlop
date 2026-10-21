@@ -23,7 +23,7 @@ console.log(decider.enabled ? `decision hints: ${decider.model} (docs/20)` : 'de
 const db = createPool(config.databaseUrl, 5);
 await migrate(db);
 const stopRelay = await startEventRelay(db);
-const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providersFromConfig(config));
+const stop = startWorker(db, { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs }, 1000, { transport: mailTransportFor(config), from: config.mail.from }, 5000, decider, providersFromConfig(config));
 const stopGrowth = startGrowthWorker(db);
 console.log('PreFlop worker running');
 const shutdown = async () => {

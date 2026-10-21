@@ -59,7 +59,7 @@ export async function harness(name: string, overrides: Partial<Config> = {}, opt
     return seedSimTable(c, { clubId: 'club-sim', tableId: 'sim-1', name: 'The Green Room' });
   });
   const sim = new SimTable(send, keysToFile(keys));
-  const timing = { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs };
+  const timing = { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs };
   const api: Harness['api'] = async (method, url, token, body, headers = {}) => {
     const res = await app.inject({
       method: method as 'GET', url,

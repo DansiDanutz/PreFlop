@@ -86,8 +86,9 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/v1/admin/metrics', async (req) => {
     await requirePlatform(ctx, req);
     const one = async <T>(sql: string) => (await ctx.db.query(sql)).rows[0] as T;
-    const outbox = await one<{ pending: number; oldest_age_s: number | null }>(
-      `select count(*)::int as pending, extract(epoch from (now() - min(created_at)))::float8 as oldest_age_s from outbox where done_at is null`);
+    const outbox = await one<{ pending: number; parked: number; oldest_age_s: number | null }>(
+      `select count(*) filter (where failed_at is null)::int as pending, count(*) filter (where failed_at is not null)::int as parked,
+              extract(epoch from (now() - min(created_at) filter (where failed_at is null)))::float8 as oldest_age_s from outbox where done_at is null`);
     const webhooks = await one<{ pending: number; failed: number; oldest_pending_age_s: number | null }>(
       `select count(*) filter (where status in ('pending','sending'))::int as pending, count(*) filter (where status = 'failed')::int as failed,
               extract(epoch from (now() - min(created_at) filter (where status in ('pending','sending'))))::float8 as oldest_pending_age_s
@@ -105,7 +106,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
     const ready = await readinessChecks(ctx);
     return {
       at: new Date().toISOString(),
-      outbox: { pending: outbox.pending, oldest_pending_age_s: outbox.oldest_age_s === null ? null : Math.round(outbox.oldest_age_s * 10) / 10 },
+      outbox: { pending: outbox.pending, parked: outbox.parked, oldest_pending_age_s: outbox.oldest_age_s === null ? null : Math.round(outbox.oldest_age_s * 10) / 10 },
       webhook_deliveries: { pending: webhooks.pending, failed: webhooks.failed, oldest_pending_age_s: webhooks.oldest_pending_age_s === null ? null : Math.round(webhooks.oldest_pending_age_s * 10) / 10 },
       email_outbox: {
         pending: mail.pending, retrying: mail.retrying, failed: mail.failed,
