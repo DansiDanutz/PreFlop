@@ -143,7 +143,8 @@ describe('health', () => {
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200); // the live session survives
     expect(await keys(`select token_sha256 as k from partner_tokens where org_id = 'prune-partner'`)).toEqual(['live-ptoken']);
     expect(await keys(`select token_hash as k from email_tokens where email = 'x@prune.dev'`)).toEqual(['expired-recent']);
-    expect(await keys(`select idempotency_key as k from idempotency_responses where principal = 'prune'`)).toEqual(['recent']);
+    // Stored idempotent responses are never purged: a late retry must still get its original response.
+    expect(await keys(`select idempotency_key as k from idempotency_responses where principal = 'prune'`)).toEqual(['old', 'recent']);
     expect(await keys(`select email as k from login_failures where email like '%@prune.dev'`)).toEqual(['fresh@prune.dev']);
     expect(await pruneExpired(h.db)).toBe(0); // nothing left to purge
   });

@@ -19,7 +19,7 @@ import { type RoundRow, type Timing, alert, ensureOpenRound, lockRound, resolve,
  *   EVIDENCE_REJECTED, open SLA for OPEN rounds at tables that stopped being ready, re-enqueue of
  *   DEALT rounds, and reopening betting on healthy tables;
  * - webhook delivery (claimed rows, safe with several workers), nonce pruning and the purge of
- *   expired sessions, tokens, stored idempotent responses and stale login failures;
+ *   expired sessions, tokens and stale login failures (stored idempotent responses are kept);
  * - payment recovery: pending payments without a provider reference are asked again (docs/21).
  */
 
@@ -164,16 +164,17 @@ export const EXPIRED_RETENTION = '7 days';
 
 /**
  * Purges rows past their use, in batches (as pruneNonces): sessions and partner tokens expired for
- * EXPIRED_RETENTION, email tokens used or expired for that long, stored idempotent responses that
- * old, and login failures that old (a success deletes them at once; what is left is an account
- * nobody signed in to since). Returns the number of rows deleted.
+ * EXPIRED_RETENTION, email tokens used or expired for that long, and login failures that old (a
+ * success deletes them at once; what is left is an account nobody signed in to since). Returns the
+ * number of rows deleted. Stored idempotent responses are kept: a retry with the original key gets
+ * the original response however late it comes (docs/02, docs/13 §5), and purging them would turn a
+ * delayed retry of a money write into a second attempt.
  */
 export async function pruneExpired(db: Db, batch = 5000, maxBatches = 20): Promise<number> {
   const sweeps = [
     ['sessions', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
     ['partner_tokens', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
     ['email_tokens', `coalesce(used_at, expires_at) < now() - interval '${EXPIRED_RETENTION}'`],
-    ['idempotency_responses', `created_at < now() - interval '${EXPIRED_RETENTION}'`],
     ['login_failures', `at < now() - interval '${EXPIRED_RETENTION}'`],
   ] as const;
   let total = 0;
@@ -313,7 +314,7 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       // Payments whose provider call never finished are asked again (payments/recovery.ts).
       const recovered = providers ? await recoverPayments(db, providers) : { asked: 0, final: 0 };
       // Housekeeping once a minute: consumed request nonces past the replay window, and rows
-      // (sessions, tokens, idempotent responses, login failures) long expired.
+      // (sessions, tokens, login failures) long expired.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
