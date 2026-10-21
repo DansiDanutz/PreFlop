@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { migrate } from '@preflop/db';
+import { passwordWeakness } from '../config.ts';
 import { createPool, tx } from '../lib/db.ts';
 import { seedAdmin, seedSimTable, upsertClub } from '../seed.ts';
 import { SimTable, fetchSend, keysToFile, type SimKeysFile } from './tableSim.ts';
@@ -24,6 +25,12 @@ const TABLES = [
 
 async function seed(): Promise<SimKeysFile[]> {
   if (existsSync(KEYS)) return JSON.parse(readFileSync(KEYS, 'utf8'));
+  // The same rule the API applies to ADMIN_PASSWORD in production (config.ts): a weak one is refused here too.
+  const weak = process.env.ADMIN_PASSWORD ? passwordWeakness(process.env.ADMIN_PASSWORD) : null;
+  if (weak) {
+    console.error(`PreFlop simulator refused to start: ADMIN_PASSWORD ${weak}`);
+    process.exit(1);
+  }
   const pool = createPool(DB, 4);
   await migrate(pool);
   const keys = await tx(pool, async (c) => {

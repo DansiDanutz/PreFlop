@@ -63,10 +63,14 @@ export async function seedSimTable(c: Tx, o: { clubId: string; tableId: string; 
   return { tableId: o.tableId, deviceId, device, shuffler, staff };
 }
 
+/**
+ * Creates the platform admin. Re-running keeps the existing password hash (the admin may have
+ * changed it since; the simulator re-seeds on every fresh machine) and only follows the email.
+ */
 export async function seedAdmin(c: Tx, email: string, password: string): Promise<string> {
   const id = 'u_admin';
   await c.query(
     `insert into users (id, email, password_hash, display_name, platform_role, kyc_status) values ($1, $2, $3, 'PreFlop Admin', 'admin', 'verified')
-     on conflict (id) do update set email = excluded.email, password_hash = excluded.password_hash`, [id, email, await hashPassword(password)]);
+     on conflict (id) do update set email = excluded.email`, [id, email, await hashPassword(password)]);
   return id;
 }
