@@ -62,9 +62,13 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | Variable | Default | Production rule |
 |---|---|---|
 | `NODE_ENV` | `development` | Set to `production` to turn on the checks in this column |
-| `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 32 characters and not a demo value (`postgres`, `password`, `changeme`, …) |
+| `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 16 characters and not a demo value (`postgres`, `password`, `changeme`, …). A host outside a private network (anything but `localhost`, a bare service name, or a `.internal` / `.flycast` / `.local` name) must carry `?sslmode=verify-full` (or `require`) |
+| `DB_POOL_MAX` | `20` | Connections in this process's pool, 2 to 100 (the stream's event relay holds one for as long as it runs). Instances × this (plus the simulator's 4) must stay under the database role's connection limit |
 | `CORS_ORIGINS` | `*` | **Required.** A comma-separated list of the web, console and table origins. `*` or empty is refused |
-| `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts |
+| `ADMIN_EMAIL` | `admin@preflop.local` | Email of the admin the seed scripts create (`sim`, `demo`); re-seeding updates the email. The simulator keeps an existing admin's password (a fresh machine must not revert one changed in the console); `demo` sets `ADMIN_PASSWORD` again, because it prints the password it used |
+| `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not be or contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts; the simulator (`sim`) refuses a weak one in every environment |
+| `JEV_API_KEY` | unset | Turns on decision hints (`docs/20`). At least 16 characters and not a demo value; with it, `JEV_API_URL` must be `https` (the key travels in the Authorization header) |
+| `JEV_API_URL` · `JEV_MODEL` | `https://api.typesafe.ai/v1/systemone` · `jev-latest` | The System One endpoint and the model name (1 to 80 characters) |
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Must not be `true` (it lets webhooks reach private addresses; tests only) |
 | `RATE_LIMIT_ENABLED` | `true` | Must not be `false` |
 | `RATE_LIMIT_AUTH_PER_MIN` · `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` · `RATE_LIMIT_BETS_PER_MIN` | `20` · `30` · `120` | Per-IP login/register, per-IP partner token, per-user bets; per API instance |

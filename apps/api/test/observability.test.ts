@@ -2,9 +2,11 @@ import { PassThrough } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
+import { loadConfig } from '../src/config.ts';
 import { createPool, retryStats, tx } from '../src/lib/db.ts';
+import { readinessChecks } from '../src/routes/public.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { beat, nextDelayMs, startWorker, sweepOnce } from '../src/worker.ts';
+import { beat, newWorkerId, nextDelayMs, startWorker, sweepOnce } from '../src/worker.ts';
 import { type Harness, harness } from './helpers.ts';
 
 let h: Harness;
@@ -74,6 +76,17 @@ describe('health', () => {
     expect(stale.status).toBe(503);
     expect(stale.body.title).toMatch(/no fresh worker heartbeat/);
     expect(stale.body.checks.worker.last_beat_age_ms).toBeGreaterThan(59_000);
+  });
+
+  it('a process that runs its own worker is ready only on that worker\'s heartbeat (blue-green: the old machine cannot vouch)', async () => {
+    const ctx = (runWorker: boolean) => ({ db: h.db, config: { ...loadConfig({}), runWorker } }) as unknown as Parameters<typeof readinessChecks>[0];
+    await h.db.query('delete from worker_heartbeats');
+    await beat(h.db, 'old-machine:4242:cafe0001');
+    expect((await readinessChecks(ctx(true))).worker.ok).toBe(false);
+    expect((await readinessChecks(ctx(false))).worker.ok).toBe(true);
+    await beat(h.db, newWorkerId());
+    expect((await readinessChecks(ctx(true))).worker.ok).toBe(true);
+    await h.db.query('delete from worker_heartbeats');
   });
 
   it('readiness is 503 when the database is unreachable', async () => {
