@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { OUTBOX_MAX_ATTEMPTS, runOutboxOnce } from '../src/worker.ts';
+import { OUTBOX_MAX_ATTEMPTS, recordOutboxFailure, runOutboxOnce } from '../src/worker.ts';
 import { type Harness, harness } from './helpers.ts';
 
 let h: Harness;
@@ -49,5 +49,23 @@ describe('outbox jobs whose handler fails', () => {
     const m = await h.api('GET', '/v1/admin/metrics', admin);
     expect(m.status).toBe(200);
     expect(m.body.outbox).toMatchObject({ pending: 0, parked: 1 });
+  });
+
+  it('a stale failure record (several workers) never reopens a finished job, repeats an attempt, or raises a false alert', async () => {
+    const insert = async (ref: string) => (await h.db.query<{ id: number }>(`insert into outbox (kind, ref) values ('resolve_round', $1) returning id`, [ref])).rows[0]!.id;
+    const row = async (id: number) => (await h.db.query('select attempts, done_at, failed_at, last_error from outbox where id = $1', [id])).rows[0];
+    // Another worker ran the job to completion while this one was failing: its last attempt must not park it.
+    const finished = await insert('raced-done');
+    await h.db.query('update outbox set done_at = now() where id = $1', [finished]);
+    await recordOutboxFailure(h.db, { id: finished, kind: 'resolve_round', ref: 'raced-done', attempts: OUTBOX_MAX_ATTEMPTS - 1 }, new Error('late failure'));
+    expect(await row(finished)).toMatchObject({ attempts: 0, failed_at: null, last_error: null });
+    expect((await row(finished)).done_at).not.toBeNull();
+    // Another worker already recorded this attempt: the stale record does not count it again.
+    const retried = await insert('raced-retry');
+    await h.db.query(`update outbox set attempts = 1, last_error = 'first' where id = $1`, [retried]);
+    await recordOutboxFailure(h.db, { id: retried, kind: 'resolve_round', ref: 'raced-retry', attempts: 0 }, new Error('second report of attempt 1'));
+    expect(await row(retried)).toMatchObject({ attempts: 1, last_error: 'first', failed_at: null });
+    expect((await h.db.query(`select count(*)::int as n from alerts where kind = 'outbox_job_failed' and round_id in ('raced-done', 'raced-retry')`)).rows[0].n).toBe(0);
+    await h.db.query('delete from outbox where id = any($1)', [[finished, retried]]);
   });
 });

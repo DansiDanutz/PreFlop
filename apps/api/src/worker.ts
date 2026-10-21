@@ -10,7 +10,7 @@ import { EventBatch, publish } from './lib/events.ts';
 import { recoverPayments } from './payments/recovery.ts';
 import type { Providers } from './providers/types.ts';
 import { type TableRow, tableReadiness } from './rounds/readiness.ts';
-import { type RoundRow, type Timing, alert, ensureOpenRound, getTable, lockRound, resolve, voidRound } from './rounds/service.ts';
+import { type RoundRow, type Timing, alert, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
 
 /**
  * Durable post-commit work (docs/13 §4):
@@ -34,16 +34,24 @@ interface OutboxJob { id: number; kind: string; ref: string; attempts: number }
  * A handler that threw rolled its transaction back; the job is rescheduled with backoff so the jobs
  * behind it run on this pass, and after OUTBOX_MAX_ATTEMPTS it is parked for a person to look at.
  */
-async function recordOutboxFailure(db: Db, job: OutboxJob, e: unknown): Promise<void> {
+export async function recordOutboxFailure(db: Db, job: OutboxJob, e: unknown): Promise<void> {
   const attempts = job.attempts + 1;
   const error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
   const parked = attempts >= OUTBOX_MAX_ATTEMPTS;
-  await tx(db, async (c) => {
-    await c.query(
+  const recorded = await tx(db, async (c) => {
+    // Compare-and-set on the attempt this worker ran: the failed transaction released the row lock,
+    // so another worker may already have run the job to completion or recorded this same attempt.
+    // A stale update must never reopen a finished job, overwrite newer retry counts or raise a false alert.
+    const u = await c.query(
       `update outbox set attempts = $2, last_error = $3, next_attempt_at = now() + ($4 || ' milliseconds')::interval,
-              failed_at = case when $5 then now() end where id = $1`, [job.id, attempts, error, String(outboxBackoffMs(attempts)), parked]);
+              failed_at = case when $5 then now() end
+        where id = $1 and done_at is null and failed_at is null and attempts = $6`,
+      [job.id, attempts, error, String(outboxBackoffMs(attempts)), parked, job.attempts]);
+    if (!u.rowCount) return false;
     if (parked) await alert(c, { roundId: job.ref, kind: 'outbox_job_failed', severity: 'critical', details: { outboxId: job.id, kind: job.kind, ref: job.ref, attempts, error } });
+    return true;
   });
+  if (!recorded) return;
   console.error(`outbox job ${job.id} (${job.kind} ${job.ref}) ${parked ? 'parked' : 'will retry'} after attempt ${attempts}/${OUTBOX_MAX_ATTEMPTS}: ${error}`);
 }
 
@@ -103,8 +111,11 @@ export async function sweepStaleOpenRounds(db: Db, t: Timing): Promise<number> {
     const ev = new EventBatch();
     const ok = await tx(db, async (c) => {
       const r = await lockRound(c, s.id);
-      // Re-checked under the round lock: a heartbeat that just made the table ready keeps the round.
-      if ((await tableReadiness(c, await getTable(c, r.table_id))).ok) return false;
+      // Re-checked with the table row locked for share (round → table, the documented order). A
+      // heartbeat is an update of that row, so one in flight is waited for and then seen, and one
+      // after this check waits until the void has committed: a table that just became ready keeps its round.
+      const table = (await c.query<TableRow>('select * from poker_tables where id = $1 for share', [r.table_id])).rows[0];
+      if (!table || (await tableReadiness(c, table)).ok) return false;
       return voidRound(c, r, 'open deadline passed: table not ready', 'system:sweeper', ev, ['OPEN']);
     });
     publish(ev);
