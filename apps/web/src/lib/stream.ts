@@ -1,6 +1,6 @@
 import { type StreamEvent, connectStream } from '@preflop/client';
 import { useEffect, useRef, useState } from 'react';
-import { WS_URL } from './api.ts';
+import { WS_URL, notifyUnauthorized } from './api.ts';
 import type { StreamStatus } from './live.ts';
 
 /**
@@ -22,6 +22,15 @@ export function reconnectTracker(onReconnect: () => void) {
   };
 }
 
+/** The stream refused the token it was sent (`{type:'auth', ok:false}`): the session is gone, as after a REST 401. */
+export const authRejected = (e: StreamEvent) => e.type === 'auth' && (e as { ok?: unknown }).ok === false;
+
+/** Routes one stream frame: a refused auth frame signs the session out, everything else goes to the screen. */
+export function dispatchFrame(e: StreamEvent, onEvent: (e: StreamEvent) => void) {
+  if (authRejected(e)) notifyUnauthorized();
+  else onEvent(e);
+}
+
 /**
  * Subscribes to WS /v1/stream topics for the lifetime of the component. The handler can change
  * between renders without reconnecting. Pass a token to also receive your own bet events, and
@@ -41,7 +50,7 @@ export function useStream(topics: string[], onEvent: (e: StreamEvent) => void, t
       url: WS_URL,
       topics: key ? key.split('|') : [],
       token: token ?? null,
-      onEvent: (e) => handler.current(e),
+      onEvent: (e) => dispatchFrame(e, handler.current),
       onStatus: (st) => { setStatus(st); track(st); },
     });
     return () => s.close();

@@ -57,7 +57,13 @@ async function run<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRe
 }
 
 export const loadIdentity = () => run<Identity | undefined>('readonly', (s) => s.get(KEY));
-export const saveIdentity = (id: Identity) => run<IDBValidKey>('readwrite', (s) => s.put(id, KEY));
+/** Asks the browser not to evict this origin's storage (the private key lives there). Best effort: the answer does not matter. */
+const persistStorage = () => { try { void navigator.storage?.persist?.().catch(() => {}); } catch { /* unsupported */ } };
+export const saveIdentity = async (id: Identity) => {
+  const r = await run<IDBValidKey>('readwrite', (s) => s.put(id, KEY));
+  persistStorage();
+  return r;
+};
 /** "Reset this tablet": the private key is deleted and cannot be recovered. */
 export const deleteIdentity = () => run<undefined>('readwrite', (s) => s.delete(KEY));
 

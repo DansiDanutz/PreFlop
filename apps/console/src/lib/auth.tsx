@@ -13,6 +13,8 @@ interface AuthState {
   /** Rejects with ApiError 401 mfa_required when the account needs a one-time code. */
   login: (email: string, password: string, otp?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Retries GET /v1/me after it failed (RequireAuth's error state). */
+  refetchMe: () => Promise<unknown>;
 }
 
 const Ctx = createContext<AuthState | null>(null);
@@ -39,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session.set(null);
       qc.clear();
     },
+    refetchMe: () => me.refetch(),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

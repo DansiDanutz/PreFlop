@@ -167,7 +167,8 @@ export async function submitIntent(api: Api, i: BetIntent, o: { attempts?: numbe
  * the API commits a bet under the round row lock and only while the round is OPEN, so after the
  * round has left OPEN no request still in flight (say, one waiting on a lock) can commit any more.
  * Elapsed time proves nothing. The round is read BEFORE the bets, so a bet that committed just
- * before the round closed is already visible to the lookup. Anything else stays unknown.
+ * before the round closed is already visible to the lookup. A round the API does not know (404)
+ * can hold no bet, so the intent is not_placed. Anything else stays unknown.
  */
 export async function reconcileIntent(api: Api, i: BetIntent): Promise<Outcome> {
   try {
@@ -176,6 +177,7 @@ export async function reconcileIntent(api: Api, i: BetIntent): Promise<Outcome> 
     if (bet) return { kind: 'placed', bet };
     return round.state !== 'OPEN' ? { kind: 'not_placed' } : { kind: 'unknown', error: null };
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return { kind: 'not_placed' };
     return { kind: 'unknown', error: e };
   }
 }

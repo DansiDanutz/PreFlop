@@ -38,7 +38,7 @@ export function errorMessage(e: unknown): string {
   if (e instanceof ApiError) {
     const p = e.problem as Record<string, unknown>;
     const detail = typeof p.detail === 'string' ? p.detail : typeof p.message === 'string' ? p.message : null;
-    return `${e.problem.title || e.message}${detail && detail !== e.problem.title ? ` — ${detail}` : ''} (${e.status})`;
+    return `${e.problem.title || e.message}${detail && detail !== e.problem.title ? ` — ${detail}` : ''} (${e.status})${e.requestId ? ` (ref ${e.requestId})` : ''}`;
   }
   if (e instanceof TypeError) return 'Cannot reach the PreFlop API. Check your connection and that the API is running.';
   return e instanceof Error ? e.message : String(e);
