@@ -56,7 +56,11 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
       const key = req.headers['idempotency-key'];
       if (typeof key !== 'string' || !key) throw badRequest('Idempotency-Key header required');
       const ev = new EventBatch();
-      const res = await tx(ctx.db, (c) => idempotent(c, p.id, key, req.method, req.url, req.rawBody ?? '', () => fn(c, p, req, ev)));
+      const res = await tx(ctx.db, async (c) => {
+        // Serialised on the key (as idempotentMoneyWrite): a concurrent retry waits, then replays the stored response.
+        await c.query('select pg_advisory_xact_lock(hashtext($1))', [`money:${p.id}:${key}`]);
+        return idempotent(c, p.id, key, req.method, req.url, req.rawBody ?? '', () => fn(c, p, req, ev));
+      });
       publish(ev);
       return reply.code(res.status).send(res.body);
     };
@@ -219,6 +223,7 @@ export async function providerRoutes(app: FastifyInstance, ctx: AppContext) {
     if (typeof key !== 'string' || !key) throw badRequest('Idempotency-Key header required');
     const ev = new EventBatch();
     const res = await tx(ctx.db, async (c) => {
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`money:${p.id}:${key}`]);
       const r = await lockRound(c, id!);
       assertTableScope(p, r.table_id);
       return idempotent(c, p.id, key, req.method, req.url, req.rawBody ?? '', async () => {

@@ -168,7 +168,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   const ctx: AppContext = {
     db,
     config,
-    timing: { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs },
+    timing: { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs },
     async user(req) {
       const u = await userFromToken(db, bearer(req.headers.authorization));
       // require_staff_mfa: a PreFlop team account without 2FA may only enrol (docs/14).

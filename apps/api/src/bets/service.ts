@@ -279,11 +279,17 @@ export async function placeBet(db: Db, i: PlaceBetInput, ev: EventBatch, modesEn
   });
 }
 
-/** Play money: reset the wallet to the starting amount at any time (no fees, no cash value). */
+/**
+ * Play money: reset the wallet to the starting amount (no fees, no cash value), but not while a play
+ * bet is still held: its win or refund would then land on top of the fresh balance and mint play
+ * money for the standings (409 play_bets_open).
+ */
 export async function resetPlay(db: Db, userId: string, startMinor: number): Promise<{ balance_minor: number }> {
   return tx(db, async (c) => {
     const wallet = acct(userId, 'wallet', 'play', 'PLAY');
     await lockAccount(c, wallet);
+    const held = await c.query(`select 1 from bets where user_id = $1 and mode = 'play' and status = 'accepted' limit 1`, [userId]);
+    if (held.rowCount) throw conflict('play_bets_open', 'play money cannot be reset while a play bet is still open; wait for the round to settle');
     const b = await balance(c, wallet);
     const diff = startMinor - b;
     const ref = newId('reset');

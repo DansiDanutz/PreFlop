@@ -97,7 +97,7 @@ describe('health', () => {
     // Nothing to do here (no bets, the simulated table is idle): with a 20 ms fast tick and a 200 ms
     // idle tick, 700 ms holds a handful of passes, not thirty-odd.
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 200);
     try {
       await new Promise((r) => setTimeout(r, 700));
       const ticks = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows[0]?.ticks ?? 0;
@@ -111,7 +111,7 @@ describe('health', () => {
     let failures = 0;
     const broken = { query: async () => { failures++; throw new Error('database away'); } } as unknown as typeof h.db;
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const stopBroken = startWorker(broken, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 5000);
+    const stopBroken = startWorker(broken, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 5000);
     try {
       await new Promise((r) => setTimeout(r, 300));
       expect(failures).toBeGreaterThanOrEqual(5); // ~1 failing query per 20 ms pass, never one per 5 s
@@ -150,7 +150,7 @@ describe('health', () => {
 
   it('the worker loop beats every tick and removes its row when stopped', async () => {
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30, undefined, 30);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 30, undefined, 30);
     await new Promise((r) => setTimeout(r, 300));
     const rows = (await h.db.query<{ ticks: number }>('select ticks from worker_heartbeats')).rows;
     expect(rows).toHaveLength(1);
@@ -182,7 +182,7 @@ describe('GET /v1/admin/metrics', () => {
     await h.work();
     const n = await h.sim.openHand();
     await h.sim.call('dealer', 'POST', `/v1/provider/tables/sim-1/hands/${n}/start`, {});
-    await sweepOnce(h.db, { resultSlaMs: 1, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 });
+    await sweepOnce(h.db, { resultSlaMs: 1, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 });
     // a job nobody has taken for 90 s (inserted after the worker ran, so it stays pending)
     await h.db.query(`insert into outbox (kind, ref, created_at) values ('resolve_round', 'nowhere', now() - interval '90 seconds')`);
 

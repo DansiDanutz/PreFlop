@@ -318,7 +318,7 @@ describe('decision hints in the worker and the console API', () => {
     const slow = fakeDecider(() => ({ triage: { type: 'choice', choice: 'watch' }, money_at_risk: { type: 'noul', noul: 0.1 } }));
     const slowDecider: Decider = { ...slow, decide: async (st, q) => { await new Promise((r) => setTimeout(r, 150)); return slow.decide(st, q); } };
     await h.db.query('delete from worker_heartbeats');
-    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, slowDecider);
+    const stop = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, slowDecider);
     try {
       await new Promise((r) => setTimeout(r, 400));
       // three sequential 150 ms answers take ~450 ms; the tick (20/40 ms) must have beaten many times meanwhile
@@ -332,7 +332,7 @@ describe('decision hints in the worker and the console API', () => {
     const stored = (await h.db.query(`select count(*)::int as n from decision_hints where error is null and ref in (select id::text from alerts where kind like 'slow%')`)).rows[0].n;
     expect(stored).toBeGreaterThanOrEqual(1);
     // a disabled decider never schedules the loop
-    const stopOff = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, disabledDecider);
+    const stopOff = startWorker(h.db, { resultSlaMs: 300_000, reviewSlaMs: 1_800_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 180_000 }, 20, undefined, 40, disabledDecider);
     await new Promise((r) => setTimeout(r, 60));
     await stopOff();
   });
