@@ -290,6 +290,12 @@ export async function resetPlay(db: Db, userId: string, startMinor: number): Pro
     await lockAccount(c, wallet);
     const held = await c.query(`select 1 from bets where user_id = $1 and mode = 'play' and status = 'accepted' limit 1`, [userId]);
     if (held.rowCount) throw conflict('play_bets_open', 'play money cannot be reset while a play bet is still open; wait for the round to settle');
+    // A buy-in to a PLAY tournament still open (registering or running) comes back as a refund or a
+    // prize: reset now and it lands on top of the fresh balance as well.
+    const entered = await c.query(
+      `select 1 from tournament_entries e join tournaments t on t.id = e.tournament_id
+        where e.user_id = $1 and t.currency = 'PLAY' and t.status = 'open' and e.buy_in_minor > 0 limit 1`, [userId]);
+    if (entered.rowCount) throw conflict('play_bets_open', 'play money cannot be reset while you are entered in an open play tournament; wait until it ends or unregister');
     const b = await balance(c, wallet);
     const diff = startMinor - b;
     const ref = newId('reset');

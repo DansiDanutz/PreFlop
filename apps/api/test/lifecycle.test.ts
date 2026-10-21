@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { verifyAuditChain } from '../src/lib/audit.ts';
-import { sweepOnce } from '../src/worker.ts';
+import { sweepOnce, sweepStaleOpenRounds } from '../src/worker.ts';
 import { type Harness, bet, harness, ledgerSums, walletOf } from './helpers.ts';
 
 let h: Harness;
@@ -140,5 +140,28 @@ describe('round lifecycle on the simulated table (docs/13 §4, §8)', () => {
     expect(await walletOf(h, p.token)).toBe(10_000);
     expect((await h.db.query(`select count(*)::int as n from ledger_tx where kind = 'bet.refund' and ref = $1`, [b.body.bet_id])).rows[0].n).toBe(1);
     for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
+  });
+
+  it('a heartbeat in flight when the open SLA fires is waited for: the table that just became ready keeps its round', async () => {
+    const p = await h.register();
+    const r = await openRound();
+    expect((await bet(h, p.token, r.id, 'paired-board:yes', 100)).status).toBe(201);
+    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, openSlaMs: 1, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
+    await h.db.query(`update poker_tables set link_at = now() - interval '1 hour' where id = 'sim-1'`);
+    // A heartbeat is an update of the table row: hold one uncommitted while the sweeper runs.
+    const heartbeat = await h.db.connect();
+    try {
+      await heartbeat.query('begin');
+      await heartbeat.query(`update poker_tables set link_at = now() where id = 'sim-1'`);
+      let finished = false;
+      const sweep = sweepStaleOpenRounds(h.db, timing).then((n) => { finished = true; return n; });
+      await new Promise((res) => setTimeout(res, 300));
+      expect(finished).toBe(false); // waiting for the heartbeat, not voiding on the stale row it read before
+      await heartbeat.query('commit');
+      expect(await sweep).toBe(0);
+    } finally {
+      heartbeat.release();
+    }
+    expect((await h.db.query('select state from rounds where id = $1', [r.id])).rows[0].state).toBe('OPEN');
   });
 });
