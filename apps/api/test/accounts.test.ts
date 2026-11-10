@@ -523,6 +523,7 @@ describe('partner players', () => {
   it('the partner may send a date of birth; under-18s are refused, partner flows otherwise unchanged', async () => {
     const owner = await register('ptnr');
     const r = await h.api('POST', '/v1/admin/orgs', admin, { kind: 'partner', name: 'DOB Partner', owner_email: owner.email });
+    await h.db.query('update users set email_verified_at = now() where lower(email) = lower($1)', [owner.email]); // an email-bound link needs a verified address
     await h.api('POST', '/v1/me/org-claims', owner.token, { token: r.body.owner_claim.token });
     const client = (await h.api('POST', `/v1/org/${r.body.id}/api-clients`, owner.token, { name: 'c' })).body;
     const tok = (await h.api('POST', '/v1/partner/oauth/token', undefined, { grant_type: 'client_credentials', client_id: client.id, client_secret: client.secret })).body.access_token;
