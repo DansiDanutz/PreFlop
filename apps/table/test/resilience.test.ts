@@ -15,6 +15,9 @@ describe('the root error boundary', () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('Something went wrong on this tablet');
     expect(html).toContain('Reload');
+    // An action in flight when the render failed may still commit: the fallback must not claim otherwise.
+    expect(html).toContain('check the state of the current hand');
+    expect(html).not.toMatch(/nothing was sent|unchanged/i);
   });
 });
 
