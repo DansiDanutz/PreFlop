@@ -47,8 +47,20 @@ export interface ProviderResult {
   details?: Record<string, unknown>;
 }
 
+/**
+ * What the provider says actually moved. An adapter for real money MUST report it on every
+ * `completed` payment event: the service compares it with the payment row and credits nothing when
+ * they differ (an underpaid crypto deposit, a partial capture, another currency). Left out, the
+ * requested amount is trusted, which only the sandbox and test stand-ins may rely on.
+ */
+export interface SettledAmount {
+  /** Minor units of `currency`, as the provider settled them. */
+  amountMinor?: number;
+  currency?: string;
+}
+
 export type ProviderEvent =
-  | { type: 'payment'; ref: string; status: 'completed' | 'failed'; details?: Record<string, unknown> }
+  | ({ type: 'payment'; ref: string; status: 'completed' | 'failed'; details?: Record<string, unknown> } & SettledAmount)
   | { type: 'kyc'; ref: string; status: 'verified' | 'rejected' | 'pending'; details?: Record<string, unknown> };
 
 /**

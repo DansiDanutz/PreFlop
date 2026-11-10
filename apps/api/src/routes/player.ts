@@ -95,7 +95,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       await audit(c, { type: 'user.registered', userId: id });
       await bindReferral(c, id, b.ref);
       await sendVerification(c, ctx.config, id, b.email);
-      return createSession(c, id);
+      return createSession(c, id, { confirmed: true });
     });
     return reply.code(201).send({ token, user: { id, email: b.email, display_name: b.display_name } });
   });
@@ -129,7 +129,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       // A self-exclusion lifts itself only once its period has ended.
       await c.query(`update users set status = 'active', self_excluded_until = null where id = $1 and status = 'self_excluded' and self_excluded_until <= now()`, [u.id]);
       if (now.status === 'closed' || now.status === 'suspended') throw new ApiError(403, 'account_blocked', `account is ${now.status}`);
-      return { token: await createSession(c, u.id) };
+      return { token: await createSession(c, u.id, { confirmed: true }) };
     });
   });
 

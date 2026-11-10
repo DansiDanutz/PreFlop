@@ -416,6 +416,8 @@ export function createClient(o: ClientOptions) {
     resendVerification: () => post<{ ok: true }>('/v1/me/resend-verification'),
     /** Signs out every other session. 403 wrong_password when `current` is wrong. */
     changePassword: (current: string, next: string) => post<{ ok: true }>('/v1/me/password', { current, new: next }),
+    /** Step-up before a withdrawal: the authenticator code when 2FA is on, the password otherwise. */
+    confirmIdentity: (proof: { password: string } | { code: string }) => post<{ confirmed: true; confirmed_until: string }>('/v1/me/confirm', proof),
     mfaSetup: () => post<MfaSetup>('/v1/me/mfa/setup'),
     mfaEnable: (code: string, password: string) => post<{ mfa_enabled: true }>('/v1/me/mfa/enable', { code, password }),
     mfaDisable: (code: string) => post<{ mfa_enabled: false }>('/v1/me/mfa/disable', { code }),

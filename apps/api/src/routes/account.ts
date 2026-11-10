@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { roomOdds } from '../bets/rooms.ts';
 import { statsOf } from '../bets/service.ts';
+import { assertRecentlyConfirmed, bearer } from '../auth/players.ts';
 import { audit } from '../lib/audit.ts';
 import { type Tx, tx } from '../lib/db.ts';
 import { ApiError, conflict, notFound, unprocessable } from '../lib/errors.ts';
@@ -281,6 +282,9 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const r = rail(b.mode);
     const res = await runPayment(ctx.db, `user:${u.id}`, key, req, r, 'createPayout', async (c, id) => {
       await realGate(c, u.id, b.mode);
+      // Step-up: a session token alone cannot move money out (POST /v1/me/confirm renews the proof).
+      // Checked once, when the payment is prepared; a retry of the same request replays it.
+      await assertRecentlyConfirmed(c, bearer(req.headers.authorization));
       await preparePayment(c, { id, rail: r, kind: 'withdrawal', userId: u.id, mode: b.mode, currency: b.currency, amountMinor: b.amount_minor, method: b.method, destination: b.destination ?? null });
     });
     return reply.code(res.status).send(res.body);

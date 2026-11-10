@@ -3,7 +3,7 @@ import type { AppContext } from '../app.ts';
 import { audit } from '../lib/audit.ts';
 import { tx } from '../lib/db.ts';
 import { notFound } from '../lib/errors.ts';
-import { keepEarlyEvent, lockRef, settlePayment } from '../payments/service.ts';
+import { detailsWithAmount, keepEarlyEvent, lockRef, settlePayment } from '../payments/service.ts';
 import type { ProviderEvent, WebhookHandler } from '../providers/types.ts';
 
 /** Providers deliver small JSON documents; anything larger is not a webhook. */
@@ -50,7 +50,7 @@ export async function webhookRoutes(app: FastifyInstance, ctx: AppContext) {
           // and the event applies, or it is not yet and the event is kept for that phase to replay.
           await lockRef(c, name, ev.ref);
           if (ev.type === 'payment') {
-            const row = await settlePayment(c, name, ev.ref, ev.status, ev.details ?? {});
+            const row = await settlePayment(c, name, ev.ref, ev.status, detailsWithAmount(ev));
             if (row) n++;
             else await keepEarlyEvent(c, name, ev);
           } else {

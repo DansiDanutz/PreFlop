@@ -46,6 +46,8 @@ Rules the service enforces, so adapters never have to:
 ### Webhooks
 `POST /v1/webhooks/:provider` dispatches to the adapters named `:provider` that implement `webhook(headers, rawBody)`. The adapter authenticates the delivery **from the raw bytes and the headers**, never from parsed JSON, and returns the events to apply (`payment` with `ref` and `completed | failed`, or `kyc` with `ref` and the status). The route applies them in one transaction and answers `200 {received, applied}`, so the provider stops retrying; a bad signature is `401 bad_signature` and changes nothing; a provider without a webhook (the sandbox) is `404`. Bodies above 256 KB are refused.
 
+**Settled amount.** A `payment` event carries `amountMinor` and `currency`: what the provider says actually moved. A real-money adapter must report both on every `completed` event. When either differs from the payment row (an underpaid crypto deposit, a partial capture, another currency), nothing posts: the payment stays `pending`, `details.review` records `amount_mismatch` with the reported values, and `payment.amount_mismatch` is audited for the operator. A later event with the amount that was asked settles it normally. An event kept as early carries its reported amount with it. An event that reports no amount is settled for the requested amount, which only the sandbox and the test stand-ins may rely on.
+
 `providers/webhook.ts` is a reference implementation for the common scheme, an HMAC-SHA256 over `<timestamp>.<raw body>` in a header `t=<unix>,v1=<hex>` with a five-minute replay window and a constant-time compare. Providers with their own scheme implement `webhook` directly.
 
 ## What a real adapter must pass

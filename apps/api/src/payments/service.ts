@@ -6,7 +6,7 @@ import { ApiError, conflict, unprocessable } from '../lib/errors.ts';
 import { type StoredResponse, findStored, idempotent, keyedRef, requestHash } from '../lib/idempotency.ts';
 import { newId } from '../lib/ids.ts';
 import { acct, balance, lockAccount, post } from '../lib/ledger.ts';
-import { type MoneyRail, type PaymentIntent, type ProviderResult, isRefusal } from '../providers/types.ts';
+import { type MoneyRail, type PaymentIntent, type ProviderResult, type SettledAmount, isRefusal } from '../providers/types.ts';
 
 /**
  * Payments: the one place real money enters and leaves the ledger. A `MoneyRail` adapter (docs/21)
@@ -199,9 +199,42 @@ export async function lockRef(c: Tx, provider: string, ref: string): Promise<voi
   await c.query('select pg_advisory_xact_lock(hashtext($1))', [`provider_ref:${provider}:${ref}`]);
 }
 
+/** Keys under which the amount a provider reported travels inside an event's details (provider_events has no column for it). */
+const REPORTED_AMOUNT = 'reported_amount_minor';
+const REPORTED_CURRENCY = 'reported_currency';
+
+/** An event's details with the amount it reported folded in, so a kept event replays with it. */
+export const detailsWithAmount = (ev: { details?: Record<string, unknown> } & SettledAmount): Record<string, unknown> => ({
+  ...(ev.details ?? {}),
+  ...(ev.amountMinor !== undefined ? { [REPORTED_AMOUNT]: ev.amountMinor } : {}),
+  ...(ev.currency !== undefined ? { [REPORTED_CURRENCY]: ev.currency } : {}),
+});
+
+/** The amount and currency the provider reported when either differs from the payment; null when they agree or none was reported. */
+function amountMismatch(p: FullRow, details: Record<string, unknown>): { amountMinor: unknown; currency: unknown } | null {
+  const amountMinor = details[REPORTED_AMOUNT];
+  const currency = details[REPORTED_CURRENCY];
+  const amountDiffers = amountMinor !== undefined && Number(amountMinor) !== p.amount_minor;
+  const currencyDiffers = currency !== undefined && currency !== p.currency;
+  return amountDiffers || currencyDiffers ? { amountMinor: amountMinor ?? null, currency: currency ?? null } : null;
+}
+
+/**
+ * The provider says `completed` but not for what was asked: nothing posts. The payment stays
+ * pending with a review mark for the operator, and settles normally if the provider later reports
+ * the amount that was asked.
+ */
+async function holdForReview(c: Tx, p: FullRow, reported: { amountMinor: unknown; currency: unknown }): Promise<PaymentRow> {
+  const review = { reason: 'amount_mismatch', [REPORTED_AMOUNT]: reported.amountMinor, [REPORTED_CURRENCY]: reported.currency };
+  const row = (await c.query<FullRow>(`update payments set details = details || $2::jsonb where id = $1 returning ${FULL}`, [p.id, JSON.stringify({ review })])).rows[0]!;
+  await audit(c, { type: 'payment.amount_mismatch', paymentId: p.id, userId: p.user_id, orgId: p.org_id, provider: p.provider, kind: p.kind,
+    expectedAmountMinor: p.amount_minor, expectedCurrency: p.currency, reportedAmountMinor: reported.amountMinor, reportedCurrency: reported.currency });
+  return shape(row);
+}
+
 /** Keeps an authenticated webhook event that names no payment or KYC session yet (routes/webhooks.ts). */
-export async function keepEarlyEvent(c: Tx, provider: string, ev: { type: 'payment' | 'kyc'; ref: string; status: string; details?: Record<string, unknown> }): Promise<void> {
-  await c.query('insert into provider_events (provider, type, ref, status, details) values ($1, $2, $3, $4, $5)', [provider, ev.type, ev.ref, ev.status, JSON.stringify(ev.details ?? {})]);
+export async function keepEarlyEvent(c: Tx, provider: string, ev: { type: 'payment' | 'kyc'; ref: string; status: string; details?: Record<string, unknown> } & SettledAmount): Promise<void> {
+  await c.query('insert into provider_events (provider, type, ref, status, details) values ($1, $2, $3, $4, $5)', [provider, ev.type, ev.ref, ev.status, JSON.stringify(detailsWithAmount(ev))]);
   await audit(c, { type: `webhook.early_${ev.type}`, provider, ref: ev.ref, status: ev.status });
 }
 
@@ -230,16 +263,21 @@ export async function failPayment(c: Tx, id: string, reason: string): Promise<Pa
 /**
  * Applies a provider's verdict on a pending payment (from its webhook). Idempotent: a payment
  * already settled is returned unchanged, and an unknown reference is `null` (the route answers 200
- * so the provider stops retrying; the delivery is still audited).
+ * so the provider stops retrying; the delivery is still audited). A `completed` verdict whose
+ * reported amount or currency (`detailsWithAmount`) differs from the payment posts nothing.
  */
 export async function settlePayment(c: Tx, provider: string, providerRef: string, status: 'completed' | 'failed', details: Record<string, unknown> = {}): Promise<PaymentRow | null> {
   const p = (await c.query<FullRow>(`select ${FULL} from payments where provider = $1 and provider_ref = $2 for update`, [provider, providerRef])).rows[0];
   if (!p) return null;
   p.amount_minor = Number(p.amount_minor);
   if (p.status !== 'pending') return shape(p);
-  if (status === 'completed') await completeRow(c, p);
-  else await refundRow(c, p);
-  return setStatus(c, p, status, details);
+  if (status === 'completed') {
+    const reported = amountMismatch(p, details);
+    if (reported) return holdForReview(c, p, reported);
+    await completeRow(c, p);
+  } else await refundRow(c, p);
+  // A verdict that settles the payment clears an earlier review mark.
+  return setStatus(c, p, status, { ...details, ...(p.details.review ? { review: null } : {}) });
 }
 
 /** The error the player sees when the provider refused; the payment row says the same. */

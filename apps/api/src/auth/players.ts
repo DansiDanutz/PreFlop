@@ -34,10 +34,34 @@ export async function verifyAgainstNobody(pw: string): Promise<false> {
 export const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex');
 export const SESSION_DAYS = 30;
 
-export async function createSession(c: Db | Tx, userId: string): Promise<string> {
+/** How long a proof of the password or authenticator code lets a session move money out. */
+export const CONFIRMATION_WINDOW_MINUTES = 10;
+
+/**
+ * Opens a session. `confirmed` is for a session opened by the holder's own credentials (sign-in,
+ * registration): it may withdraw for the confirmation window without proving them again. A session
+ * someone else opens for the player (a partner's token exchange) starts unconfirmed.
+ */
+export async function createSession(c: Db | Tx, userId: string, opts: { confirmed?: boolean } = {}): Promise<string> {
   const token = randomBytes(32).toString('base64url');
-  await c.query(`insert into sessions (token_sha256, user_id, expires_at) values ($1, $2, now() + interval '${SESSION_DAYS} days')`, [tokenHash(token), userId]);
+  await c.query(`insert into sessions (token_sha256, user_id, expires_at, confirmed_at) values ($1, $2, now() + interval '${SESSION_DAYS} days', case when $3 then now() end)`,
+    [tokenHash(token), userId, opts.confirmed === true]);
   return token;
+}
+
+/** Marks the session as confirmed now; returns when the confirmation lapses, or null for an unknown session. */
+export async function confirmSession(c: Db | Tx, token: string): Promise<Date | null> {
+  const r = await c.query<{ until: Date }>(
+    `update sessions set confirmed_at = now() where token_sha256 = $1 and expires_at > now()
+     returning confirmed_at + interval '${CONFIRMATION_WINDOW_MINUTES} minutes' as until`, [tokenHash(token)]);
+  return r.rows[0]?.until ?? null;
+}
+
+/** Refuses unless this session proved its holder's credentials within the confirmation window. */
+export async function assertRecentlyConfirmed(c: Db | Tx, token: string | undefined): Promise<void> {
+  const fresh = token && (await c.query(
+    `select 1 from sessions where token_sha256 = $1 and confirmed_at > now() - interval '${CONFIRMATION_WINDOW_MINUTES} minutes'`, [tokenHash(token)])).rowCount;
+  if (!fresh) throw forbidden('confirmation_required', 'confirm it is you with your password or authenticator code, then try again');
 }
 
 export async function endSession(c: Db, token: string): Promise<void> {
