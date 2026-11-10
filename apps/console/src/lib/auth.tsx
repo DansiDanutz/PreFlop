@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type Me, watchIdle } from '@preflop/client';
-import { api, session } from './api.ts';
+import { type Me, forgetPreviousSession, signOutThenRevoke, watchIdle } from '@preflop/client';
+import { api, revokeSession, session } from './api.ts';
 import { resolvePortals, type Portal } from './portals.ts';
 
 interface AuthState {
@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // for the previous account may be shown.
   const previousToken = useRef(token);
   useEffect(() => {
-    if (previousToken.current && previousToken.current !== token) qc.clear();
+    forgetPreviousSession(qc, previousToken.current, token);
     previousToken.current = token;
   }, [token, qc]);
 
@@ -45,9 +45,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       timeoutMs: STAFF_IDLE_MS,
       target: window,
       shared: { read: () => session.lastActive, write: (at) => session.markActive(at) },
-      onIdle: () => {
-        void api.logout().catch(() => { /* the session may already be gone */ }).finally(() => { session.set(null); qc.clear(); });
-      },
+      // Local first: an API that does not answer must not keep an unattended console signed in.
+      onIdle: () => signOutThenRevoke(session.token, () => { session.set(null); qc.clear(); }, revokeSession),
     });
   }, [isStaff, qc]);
 

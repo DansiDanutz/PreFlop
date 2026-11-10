@@ -8,7 +8,7 @@
 import type { z } from 'zod';
 import * as S from './schemas.ts';
 export { COUNTRY_CODES, isCountryCode } from './countries.ts';
-export { ACTIVITY_EVENTS, type IdleWatchOptions, watchIdle, watchStorageKey } from './session.ts';
+export { ACTIVITY_EVENTS, type IdleWatchOptions, type SessionCache, forgetPreviousSession, signOutThenRevoke, watchIdle, watchStorageKey } from './session.ts';
 
 // ======================================================================================= types
 

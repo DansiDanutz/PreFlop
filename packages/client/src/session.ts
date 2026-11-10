@@ -59,3 +59,30 @@ export function watchIdle(o: IdleWatchOptions): () => void {
     for (const name of events) o.target.removeEventListener(name, active);
   };
 }
+
+/** The part of a query cache (TanStack's QueryClient) that forgetting a session needs. */
+export interface SessionCache {
+  clear: () => void;
+  resetQueries: () => unknown;
+}
+
+/**
+ * Drops what was cached for the previous session when the token changes under a tab. Signed out:
+ * everything goes. Replaced by another sign-in: queries are reset and the mounted ones fetched
+ * again with the new token. Clearing in that case would also remove, without notice, the queries
+ * the new session has already started, and leave their screens waiting forever.
+ */
+export function forgetPreviousSession(cache: SessionCache, previous: string | null, current: string | null): void {
+  if (!previous || previous === current) return;
+  if (current === null) cache.clear();
+  else void cache.resetQueries();
+}
+
+/**
+ * Signs out locally at once, then tells the server. The local step never waits for the network: an
+ * API that does not answer must not keep an unattended session usable.
+ */
+export function signOutThenRevoke(token: string | null, clearLocal: () => void, revoke: (token: string) => Promise<unknown>): void {
+  clearLocal();
+  if (token) void revoke(token).catch(() => { /* the session may already be gone, or the API unreachable; the server's idle limit still ends it */ });
+}

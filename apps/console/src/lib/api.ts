@@ -49,4 +49,8 @@ export const api = createClient({
   onUnauthorized: () => { if (token) session.set(null); },
 });
 
+/** Revokes a session on the server by its token, independent of the token this tab currently holds. */
+export const revokeSession = (t: string): Promise<unknown> =>
+  fetch(`${API_URL}/v1/auth/logout`, { method: 'POST', headers: { authorization: `Bearer ${t}` }, keepalive: true });
+
 export type Api = typeof api;

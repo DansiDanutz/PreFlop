@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { watchIdle, watchStorageKey } from './session.ts';
+import { forgetPreviousSession, signOutThenRevoke, watchIdle, watchStorageKey } from './session.ts';
 
 /** A storage event as a browser delivers it to the other tabs of the same origin. */
 const storageEvent = (key: string | null, newValue: string | null) => Object.assign(new Event('storage'), { key, newValue });
@@ -81,5 +81,48 @@ describe('watchIdle', () => {
     stop();
     vi.advanceTimersByTime(60 * MINUTE);
     expect(onIdle).not.toHaveBeenCalled();
+  });
+});
+
+describe('forgetPreviousSession', () => {
+  const cache = () => ({ clear: vi.fn(), resetQueries: vi.fn() });
+
+  it('clears everything when the session ended', () => {
+    const c = cache();
+    forgetPreviousSession(c, 'old', null);
+    expect(c.clear).toHaveBeenCalledTimes(1);
+    expect(c.resetQueries).not.toHaveBeenCalled();
+  });
+
+  it('resets, and does not clear, when another sign-in replaced the session', () => {
+    const c = cache();
+    forgetPreviousSession(c, 'old', 'new');
+    expect(c.resetQueries).toHaveBeenCalledTimes(1);
+    expect(c.clear).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on a first sign-in or an unchanged token', () => {
+    const c = cache();
+    forgetPreviousSession(c, null, 'new');
+    forgetPreviousSession(c, 'same', 'same');
+    expect(c.clear).not.toHaveBeenCalled();
+    expect(c.resetQueries).not.toHaveBeenCalled();
+  });
+});
+
+describe('signOutThenRevoke', () => {
+  it('signs out locally before, and whether or not, the server answers', () => {
+    const order: string[] = [];
+    const never = new Promise<never>(() => {});
+    signOutThenRevoke('tok', () => order.push('local'), (t) => { order.push(`revoke ${t}`); return never; });
+    expect(order).toEqual(['local', 'revoke tok']);
+  });
+
+  it('a failed revocation is not an error, and no token means no request', async () => {
+    const revoke = vi.fn(() => Promise.reject(new Error('offline')));
+    signOutThenRevoke('tok', () => {}, revoke);
+    signOutThenRevoke(null, () => {}, revoke);
+    await Promise.resolve();
+    expect(revoke).toHaveBeenCalledTimes(1);
   });
 });

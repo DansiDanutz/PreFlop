@@ -1,3 +1,4 @@
+import { forgetPreviousSession } from '@preflop/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useSyncExternalStore } from 'react';
 import { Navigate, useLocation } from 'react-router';
@@ -27,7 +28,7 @@ export function useSessionGuard() {
     let previous = getToken();
     return onTokenChange(() => {
       const current = getToken();
-      if (previous && current !== previous) qc.clear();
+      forgetPreviousSession(qc, previous, current);
       previous = current;
     });
   }, [qc]);
