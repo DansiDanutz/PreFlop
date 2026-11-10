@@ -40,6 +40,11 @@ describe('responses that are not JSON', () => {
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
+  it('a 500 carries the API request id for support, other errors have none', () => {
+    expect(new ApiError(500, { type: 'internal', title: 'internal error', status: 500, request_id: 'r1' }).requestId).toBe('r1');
+    expect(new ApiError(404, { type: 'not_found', title: 'no such table', status: 404 }).requestId).toBeNull();
+  });
+
   it('a JSON error body without a problem type falls back to http_error', () => {
     expect(() => parseResponse(500, 'Internal Server Error', '"oops"')).toThrow(ApiError);
     try { parseResponse(500, '', '[1,2]'); } catch (e) { expect((e as ApiError).problem).toMatchObject({ type: 'http_error', title: 'HTTP 500', status: 500 }); }
