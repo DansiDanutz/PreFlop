@@ -362,7 +362,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   };
   app.post('/v1/admin/orgs', async (req, reply) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
-    const b = z.object({ kind: z.enum(['club', 'partner', 'organizer']), name: z.string().min(2).max(120), owner_email: z.string().email(), settings: z.record(z.unknown()).optional() }).parse(req.body);
+    const b = z.object({ kind: z.enum(['club', 'partner', 'organizer']), name: z.string().min(2).max(120), owner_email: z.string().email(), settings: z.record(z.string(), z.unknown()).optional() }).parse(req.body);
     return reply.code(201).send(await tx(ctx.db, (c) => createOrg(c, b.kind, b.name, b.owner_email, b.settings ?? {}, u.id)));
   });
   /** A new single-use owner link for an organization (earlier unclaimed links stop working). */

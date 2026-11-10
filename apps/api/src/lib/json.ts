@@ -18,7 +18,7 @@ export function jsonDepth(v: unknown, max: number, d = 1): number {
 export interface JsonBounds { maxChars: number; maxDepth: number; maxKeys?: number; maxString?: number }
 
 /** A JSON object field bounded in serialized size, nesting, top-level key count and string length. */
-export const BoundedRecord = (o: JsonBounds) => z.record(z.unknown())
+export const BoundedRecord = (o: JsonBounds) => z.record(z.string(), z.unknown())
   .refine((v) => JSON.stringify(v).length <= o.maxChars, { message: `at most ${o.maxChars} characters as JSON` })
   .refine((v) => jsonDepth(v, o.maxDepth) <= o.maxDepth, { message: `nested at most ${o.maxDepth} levels deep` })
   .refine((v) => o.maxKeys === undefined || Object.keys(v).length <= o.maxKeys, { message: `at most ${o.maxKeys} fields` })

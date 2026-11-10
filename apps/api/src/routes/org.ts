@@ -253,7 +253,7 @@ export async function orgRoutes(app: FastifyInstance, ctx: AppContext) {
   app.put(`${P}/tables/:tableId/certification`, async (req) => {
     const { org, user } = await requireOrg(ctx, req, oid(req), { kinds: ['club'], write: true });
     const { tableId } = req.params as { tableId: string };
-    const items = z.object({ items: z.record(z.boolean()) }).parse(req.body).items;
+    const items = z.object({ items: z.record(z.string(), z.boolean()) }).parse(req.body).items;
     return tx(ctx.db, async (c) => {
       const t = (await c.query<{ certification: Record<string, CertItem>; real_money_approved_at: Date | null }>(
         'select certification, real_money_approved_at from poker_tables where id = $1 and club_id = $2 for update', [tableId, org.id])).rows[0];
