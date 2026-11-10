@@ -72,6 +72,26 @@ describe('email-bound owner claims', () => {
   });
 });
 
+describe('sign-in and account-security routes', () => {
+  it('refuse a body larger than a few short fields need', async () => {
+    const padding = 'x'.repeat(20 * 1024);
+    for (const path of ['/v1/auth/login', '/v1/auth/register', '/v1/auth/forgot-password', '/v1/auth/reset-password', '/v1/auth/verify-email']) {
+      const r = await h.app.inject({ method: 'POST', url: path, headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ email: 'a@test.dev', password: 'correct horse', padding }) });
+      expect(`${path} ${r.statusCode}`).toBe(`${path} 413`);
+    }
+    const p = await h.register('Big');
+    for (const path of ['/v1/me/password', '/v1/me/confirm', '/v1/me/mfa/enable', '/v1/me/mfa/disable']) {
+      const r = await h.app.inject({ method: 'POST', url: path, headers: { 'content-type': 'application/json', authorization: `Bearer ${p.token}` }, payload: JSON.stringify({ padding }) });
+      expect(`${path} ${r.statusCode}`).toBe(`${path} 413`);
+    }
+  });
+
+  it('still accept an ordinary sign-in', async () => {
+    const r = await h.api('POST', '/v1/auth/login', undefined, { email: 'rd-admin@test.dev', password: 'admin-pass-1' });
+    expect(r.status).toBe(200);
+  });
+});
+
 describe('connection pool', () => {
   it('an error on an idle connection is handled, not thrown as an uncaught exception', async () => {
     const pool = createPool(BASE_URL, 2);

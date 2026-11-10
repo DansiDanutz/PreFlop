@@ -1,7 +1,7 @@
 import { type Channel } from '@preflop/odds-engine';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { PositiveMinor } from '../lib/json.ts';
+import { AUTH_BODY_LIMIT, PositiveMinor } from '../lib/json.ts';
 import type { AppContext } from '../app.ts';
 import { bearer, createSession, endSession, hashPassword, tokenHash, verifyPassword, verifyAgainstNobody } from '../auth/players.ts';
 import { placeRoomBet } from '../bets/rooms.ts';
@@ -78,7 +78,7 @@ async function assertRgAllows(ctx: AppContext, userId: string, roundId: string, 
 }
 
 export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
-  app.post('/v1/auth/register', { preHandler: perIp(ctx.limits.register) }, async (req, reply) => {
+  app.post('/v1/auth/register', { bodyLimit: AUTH_BODY_LIMIT, preHandler: perIp(ctx.limits.register) }, async (req, reply) => {
     const b = Register.parse(req.body);
     if (!isAdult(b.date_of_birth)) throw new ApiError(403, 'underage', `PreFlop is for players aged ${MIN_AGE} or over`);
     // The country is self-declared until a KYC or geolocation provider confirms it (lib/accounts.ts).
@@ -100,7 +100,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     return reply.code(201).send({ token, user: { id, email: b.email, display_name: b.display_name } });
   });
 
-  app.post('/v1/auth/login', { preHandler: perIp(ctx.limits.login) }, async (req) => {
+  app.post('/v1/auth/login', { bodyLimit: AUTH_BODY_LIMIT, preHandler: perIp(ctx.limits.login) }, async (req) => {
     const b = Login.parse(req.body);
     // Per-email lockout in Postgres (all instances): 5 failures in 15 min → 429 login_locked.
     const u = await guardedLogin(ctx.db, b.email, req.ip, LOGIN_LOCKOUT, async (c) => {
@@ -133,7 +133,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  app.post('/v1/auth/logout', async (req) => {
+  app.post('/v1/auth/logout', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const t = bearer(req.headers.authorization);
     if (t) await endSession(ctx.db, t);
     return { ok: true };

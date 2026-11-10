@@ -28,3 +28,10 @@ export const BoundedRecord = (o: JsonBounds) => z.record(z.string(), z.unknown()
 export const PositiveMinor = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 /** An ISO 4217 code or a platform currency (PLAY, CHIP, DIAMOND, USDT, USDC). */
 export const CurrencyCode = z.string().min(3).max(8);
+
+/**
+ * Body limit for sign-in, registration and account-security routes: a few short fields. The API's
+ * default is sized for card-reader frames; these routes are reachable without a session and run a
+ * password hash, so they take nothing larger than they need.
+ */
+export const AUTH_BODY_LIMIT = 16 * 1024;
