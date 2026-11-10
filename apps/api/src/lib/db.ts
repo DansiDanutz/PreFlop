@@ -13,9 +13,21 @@ pg.types.setTypeParser(20, (v) => {
 export type Db = pg.Pool;
 export type Tx = pg.PoolClient;
 
-export function createPool(connectionString: string, max = 20): Db {
+/** How long a request waits for a connection (a free one, or a new one) before it fails. */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
+export interface PoolOptions { connectTimeoutMs?: number }
+
+export function createPool(connectionString: string, max = 20, opts: PoolOptions = {}): Db {
   // Every session runs in UTC, so date casts (month windows, day totals) never depend on the server's zone.
-  return new pg.Pool({ connectionString, max, options: '-c TimeZone=UTC' });
+  // The wait for a connection is bounded: an exhausted pool or an unreachable database fails the
+  // request instead of hanging it.
+  const pool = new pg.Pool({ connectionString, max, options: '-c TimeZone=UTC', connectionTimeoutMillis: opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS });
+  // An idle connection the server or a proxy drops makes the pool emit 'error'; with no listener
+  // Node treats that as an uncaught exception and the process dies. The pool has already discarded
+  // the connection, so logging it is all there is to do.
+  pool.on('error', (e) => console.error(`database pool: idle connection lost: ${e.message}`));
+  return pool;
 }
 
 const RETRYABLE = new Set(['40P01', '40001']); // deadlock_detected, serialization_failure
