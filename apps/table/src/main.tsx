@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 // Fonts are self-hosted (bundled from @fontsource): no third-party request, and the CSP stays 'self'.
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -12,7 +13,9 @@ import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
 
