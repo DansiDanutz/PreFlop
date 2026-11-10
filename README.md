@@ -68,6 +68,7 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | `ADMIN_EMAIL` | `admin@preflop.local` | Email of the admin the seed scripts create (`sim`, `demo`); re-seeding updates the email. The simulator keeps an existing admin's password (a fresh machine must not revert one changed in the console); `demo` sets `ADMIN_PASSWORD` again, because it prints the password it used |
 | `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not be or contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts; the simulator (`sim`) refuses a weak one in every environment |
 | `JEV_API_KEY` | unset | Turns on decision hints (`docs/20`). At least 16 characters and not a demo value; with it, `JEV_API_URL` must be `https` (the key travels in the Authorization header) |
+| `MFA_ENCRYPTION_KEY` | unset | Encrypts authenticator (TOTP) secrets at rest: 32 random bytes in base64 (`openssl rand -base64 32`). Unset, they are stored as they are and the API warns at start. Secrets stored earlier are encrypted the next time they are used. Keep a copy outside the database: without the key, accounts with 2FA cannot sign in |
 | `JEV_API_URL` · `JEV_MODEL` | `https://api.typesafe.ai/v1/systemone` · `jev-latest` | The System One endpoint and the model name (1 to 80 characters) |
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Must not be `true` (it lets webhooks reach private addresses; tests only) |
 | `RATE_LIMIT_ENABLED` | `true` | Must not be `false` |

@@ -1,3 +1,4 @@
+import { type SecretBox, secretBox } from './lib/secretBox.ts';
 import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -36,6 +37,8 @@ declare module 'fastify' {
 export interface AppContext {
   db: Db;
   config: Config;
+  /** Encrypts authenticator secrets at rest when MFA_ENCRYPTION_KEY is set (lib/secretBox.ts). */
+  secrets: SecretBox;
   timing: Timing;
   /** Signed-in player or console user (throws 401). */
   user(req: FastifyRequest): Promise<SessionUser>;
@@ -174,6 +177,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   const ctx: AppContext = {
     db,
     config,
+    secrets: secretBox(config.mfaEncryptionKey),
     timing: { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs },
     async user(req) {
       const u = await userFromToken(db, bearer(req.headers.authorization));
