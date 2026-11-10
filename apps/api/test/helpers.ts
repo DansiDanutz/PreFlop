@@ -120,6 +120,8 @@ export async function ownedOrg(h: Harness, adminToken: string, body: { kind: 'cl
   owner: { token: string; email: string }): Promise<string> {
   const r = await h.api('POST', '/v1/admin/orgs', adminToken, { ...body, owner_email: owner.email });
   if (r.status !== 201) throw new Error(`org create failed: ${r.status} ${JSON.stringify(r.body)}`);
+  // An email-bound claim link works only for a verified address.
+  await h.db.query('update users set email_verified_at = now() where lower(email) = lower($1)', [owner.email]);
   const c = await h.api('POST', '/v1/me/org-claims', owner.token, { token: r.body.owner_claim.token });
   if (c.status !== 200) throw new Error(`claim failed: ${c.status} ${JSON.stringify(c.body)}`);
   return r.body.id as string;

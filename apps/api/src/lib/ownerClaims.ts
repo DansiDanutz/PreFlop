@@ -44,8 +44,10 @@ export async function redeemOwnerClaim(c: Tx, token: string, userId: string): Pr
   if (row.claimed_at || row.revoked_at) throw conflict('claim_used', 'this link has already been used or replaced; ask PreFlop for a new one');
   if (row.expires_at.getTime() <= Date.now()) throw conflict('claim_expired', 'this link has expired; ask PreFlop for a new one');
   if (row.email) {
-    const me = (await c.query<{ email: string }>('select lower(email) as email from users where id = $1', [userId])).rows[0];
+    const me = (await c.query<{ email: string; verified: boolean }>('select lower(email) as email, email_verified_at is not null as verified from users where id = $1', [userId])).rows[0];
     if (me?.email !== row.email.toLowerCase()) throw forbidden('claim_email_mismatch', 'this link was issued for a different email address; sign in with that account or ask PreFlop for a new link');
+    // Anyone can register an address they do not control: the match counts only once it is verified.
+    if (!me.verified) throw forbidden('email_unverified', 'verify your email address before claiming this organization');
   }
   await c.query(`insert into memberships (user_id, org_id, role) values ($1, $2, 'owner') on conflict (user_id, org_id) do update set role = 'owner'`, [userId, row.org_id]);
   await c.query('update org_owner_claims set claimed_by = $2, claimed_at = now() where token_hash = $1', [hash(token), userId]);

@@ -172,6 +172,9 @@ describe('security review pass', () => {
     expect(bound.status).toBe(201);
     const stranger = await user('claim-stranger');
     expect((await h.api('POST', '/v1/me/org-claims', stranger.token, { token: bound.body.owner_claim.token })).body.type).toBe('claim_email_mismatch');
+    // The matching account must also have verified that address.
+    expect((await h.api('POST', '/v1/me/org-claims', other.token, { token: bound.body.owner_claim.token })).body.type).toBe('email_unverified');
+    await h.db.query('update users set email_verified_at = now() where lower(email) = lower($1)', [other.email]);
     expect((await h.api('POST', '/v1/me/org-claims', other.token, { token: bound.body.owner_claim.token })).body).toMatchObject({ org_id: org, kind: 'partner' });
     // An org that has no owner yet is ops business, as before.
     const fresh = (await h.api('POST', '/v1/admin/orgs', admin, { kind: 'organizer', name: 'Fresh Org', owner_email: 'fresh@sr.dev' })).body;

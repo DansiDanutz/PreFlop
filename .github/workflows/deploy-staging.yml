@@ -76,6 +76,9 @@ jobs:
         if: steps.token.outputs.ok == 'true'
         with:
           node-version: 22
+          # The smoke test has no dependencies and this job never installs pnpm: without this,
+          # setup-node v5 sees packageManager in package.json and fails looking for pnpm to cache.
+          package-manager-cache: false
       # The sites must serve the build of the deployed commit, or of a later commit on main: Vercel
       # builds them from every push to main, deploys queue here (cancel-in-progress is off), so a
       # newer push may already be live while this run finishes, and that push's own run checks it.

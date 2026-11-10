@@ -431,6 +431,7 @@ describe('applications, real-money sandbox and responsible gaming', () => {
     const owner = await h.api('POST', '/v1/auth/register', undefined, { email: ownerEmail, password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'Owner' });
     expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: d.body.owner_claim.token })).body.type).toBe('claim_email_mismatch');
     const bound = (await h.api('POST', `/v1/admin/orgs/${d.body.org_id}/owner-claim`, admin, { email: ownerEmail.toUpperCase() })).body.owner_claim.token;
+    await h.db.query('update users set email_verified_at = now() where lower(email) = lower($1)', [ownerEmail]); // an email-bound link needs a verified address
     expect((await h.api('POST', '/v1/me/org-claims', owner.body.token, { token: bound })).body).toMatchObject({ org_id: d.body.org_id, kind: 'organizer' });
     expect((await h.api('GET', '/v1/me', owner.body.token)).body.memberships[0]).toMatchObject({ org_id: d.body.org_id, role: 'owner' });
     // The first link was replaced by the second; the squatter holds the matching email and still gets nothing.
