@@ -21,6 +21,16 @@ export function useSessionGuard() {
       setUnauthorizedHandler(null);
     };
   }, [qc]);
+  // The session changed under this tab (a sign-out or another sign-in in another tab): nothing
+  // cached for the previous account may be shown.
+  useEffect(() => {
+    let previous = getToken();
+    return onTokenChange(() => {
+      const current = getToken();
+      if (previous && current !== previous) qc.clear();
+      previous = current;
+    });
+  }, [qc]);
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {
