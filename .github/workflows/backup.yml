@@ -1,9 +1,9 @@
 name: Database backup
 
-# Weekly logical backup of the staging database plus a restore drill: the dump is restored into a
+# Daily logical backup of the staging database plus a restore drill: the dump is restored into a
 # scratch PostgreSQL on the runner and verified (migrations, row counts, ledger sums, audit chain) by
 # scripts/db-backup.sh, then kept as a workflow artifact for 30 days. Supabase's own daily backups
-# remain the first line; this proves a backup we hold ourselves restores, every week, without anyone
+# remain the first line; this proves a backup we hold ourselves restores, every day, without anyone
 # remembering to. See docs/18-staging.md §Backups and restore drill.
 #
 # Needs two repository secrets (Settings → Secrets and variables → Actions): DATABASE_URL (the same
@@ -14,7 +14,7 @@ name: Database backup
 
 on:
   schedule:
-    - cron: '23 3 * * 0'
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
 permissions:

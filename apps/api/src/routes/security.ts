@@ -9,6 +9,7 @@ import { type Db, type Tx, tx } from '../lib/db.ts';
 import { consumeEmailToken, sendPasswordReset, sendVerification } from '../lib/emailTokens.ts';
 import { ApiError, conflict, unprocessable } from '../lib/errors.ts';
 import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
+import { AUTH_BODY_LIMIT } from '../lib/json.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import type { SecretBox } from '../lib/secretBox.ts';
 import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.ts';
@@ -64,7 +65,7 @@ const Confirmation = z.object({ password: z.string().min(1).max(200).optional(),
 
 export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- email verification
-  app.post('/v1/auth/verify-email', { preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
+  app.post('/v1/auth/verify-email', { bodyLimit: AUTH_BODY_LIMIT, preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
     const { token } = z.object({ token: z.string().min(20).max(200) }).parse(req.body);
     return tx(ctx.db, async (c) => {
       const t = await consumeEmailToken(c, token, 'verify');
@@ -85,7 +86,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ---------------------------------------------------------------- password reset (signed out)
   /** Always 200 with the same body: the response never tells whether an account exists. */
-  app.post('/v1/auth/forgot-password', { preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
+  app.post('/v1/auth/forgot-password', { bodyLimit: AUTH_BODY_LIMIT, preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
     const { email } = z.object({ email: z.string().email().max(200).transform((s) => s.toLowerCase()) }).parse(req.body);
     ctx.limits.accountEmail.consume(`reset:${email}`);
     await tx(ctx.db, async (c) => {
@@ -96,7 +97,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   /** Sets a new password from a reset link and signs the account out everywhere. */
-  app.post('/v1/auth/reset-password', { preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
+  app.post('/v1/auth/reset-password', { bodyLimit: AUTH_BODY_LIMIT, preHandler: perIp(ctx.limits.emailLinks) }, async (req) => {
     const b = z.object({ token: z.string().min(20).max(200), password: PlayerPassword }).parse(req.body);
     const hash = await hashPassword(b.password);
     return tx(ctx.db, async (c) => {
@@ -114,7 +115,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ---------------------------------------------------------------- password change (signed in)
   /** Needs the current password (wrong ones count toward the login lockout); signs out every other session. */
-  app.post('/v1/me/password', async (req) => {
+  app.post('/v1/me/password', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const u = await ctx.user(req);
     const b = z.object({ current: z.string().min(1).max(200), new: PlayerPassword }).parse(req.body);
     assertPasswordAllowed(b.new, u.platform_role !== null);
@@ -139,7 +140,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ---------------------------------------------------------------- two-factor authentication (TOTP)
   /** Starts (or restarts) enrolment: a new secret, not active until confirmed with a code. */
-  app.post('/v1/me/mfa/setup', async (req) => {
+  app.post('/v1/me/mfa/setup', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const u = await ctx.user(req);
     ctx.limits.account.consume(`user:${u.id}`);
     if (u.mfa_enabled) throw conflict('mfa_already_enabled', 'two-factor authentication is already on; disable it first to start over');
@@ -157,7 +158,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     return { secret, otpauth_uri: otpauthUri(secret, u.email) };
   });
 
-  app.post('/v1/me/mfa/enable', async (req) => {
+  app.post('/v1/me/mfa/enable', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const u = await ctx.user(req);
     ctx.limits.otp.consume(`user:${u.id}`);
     const { code, password } = EnableCode.parse(req.body);
@@ -188,7 +189,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  app.post('/v1/me/mfa/disable', async (req) => {
+  app.post('/v1/me/mfa/disable', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const u = await ctx.user(req);
     ctx.limits.otp.consume(`user:${u.id}`);
     const { code } = Code.parse(req.body);
@@ -213,7 +214,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
    * authenticator code counts; otherwise the password, and wrong ones count toward the sign-in
    * lockout. Only this session is confirmed.
    */
-  app.post('/v1/me/confirm', async (req) => {
+  app.post('/v1/me/confirm', { bodyLimit: AUTH_BODY_LIMIT }, async (req) => {
     const u = await ctx.user(req);
     const b = Confirmation.parse(req.body);
     const token = bearer(req.headers.authorization) ?? '';

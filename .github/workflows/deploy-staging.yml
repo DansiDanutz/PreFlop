@@ -50,6 +50,14 @@ jobs:
           mkdir -p "$HOME/.fly/bin" && tar -xzf /tmp/flyctl.tgz -C "$HOME/.fly/bin" flyctl
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
           "$HOME/.fly/bin/flyctl" version
+      # A blue-green deploy that Fly's API interrupted leaves machines of two images, and every later
+      # deploy is then refused ("found multiple image versions"). This removes the stale side when it
+      # is clear which one serves, and fails without touching anything when it is not.
+      - name: Clear leftovers of an interrupted deploy
+        if: steps.token.outputs.ok == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node deploy/fly-recover.mjs preflop-staging-api
       - name: Deploy the API
         if: steps.token.outputs.ok == 'true'
         env:
