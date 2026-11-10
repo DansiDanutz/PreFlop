@@ -11,7 +11,7 @@ let h: Harness;
 let other: FastifyInstance; // a second API instance on the same database, rate limits off
 beforeAll(async () => {
   const base = (await import('../src/config.ts')).loadConfig({});
-  h = await harness('ratelimit', { rateLimit: { enabled: true, authPerMinute: 3, partnerTokenPerMinute: 2, betsPerMinute: 3 } });
+  h = await harness('ratelimit', { rateLimit: { enabled: true, authPerMinute: 3, partnerTokenPerMinute: 2, betsPerMinute: 3, accountPerMinute: 30 } });
   other = await buildApp(h.db, { ...h.config, rateLimit: { ...base.rateLimit, enabled: false } });
 });
 afterAll(async () => {
@@ -56,6 +56,28 @@ describe('rate limits (problem+json, 429, Retry-After)', () => {
     expect(r.json()).toMatchObject({ type: 'rate_limited', status: 429 });
     // another client address is not affected
     expect((await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'R' }, '203.0.113.11')).statusCode).toBe(201);
+  });
+
+  it('login refuses an over-long email before the lockout bookkeeping (400, nothing recorded)', async () => {
+    const long = `${'a'.repeat(288)}@test.dev`; // 300 characters
+    const r = await call(other, '/v1/auth/login', { email: long, password: 'whatever' });
+    expect(r.statusCode).toBe(400);
+    expect((await h.db.query('select count(*)::int as n from login_failures where email = $1', [long])).rows[0].n).toBe(0);
+  });
+
+  it('cheap audited account writes are limited per user (30 per minute)', async () => {
+    const reg = await call(h.app, '/v1/auth/register', { email: email(), password: 'correct horse', date_of_birth: '1990-01-01', country: 'MT', display_name: 'A' }, '203.0.113.60');
+    const token = reg.json().token as string;
+    const codes = [];
+    for (let i = 0; i < 31; i++) codes.push((await call(h.app, '/v1/me/play/reset', {}, '203.0.113.61', { authorization: `Bearer ${token}` })).statusCode);
+    expect(codes.slice(0, 30).every((c) => c === 200)).toBe(true);
+    expect(codes[30]).toBe(429);
+    const limited = await call(h.app, '/v1/me/play/reset', {}, '203.0.113.62', { authorization: `Bearer ${token}` });
+    expect(limited.statusCode).toBe(429);
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    expect(limited.json()).toMatchObject({ type: 'rate_limited', status: 429 });
+    // the same per-user budget covers the other account writes
+    expect((await call(h.app, '/v1/me/self-exclusion', { days: 1 }, '203.0.113.63', { authorization: `Bearer ${token}` })).statusCode).toBe(429);
   });
 
   it('login is limited per IP, before any password check', async () => {

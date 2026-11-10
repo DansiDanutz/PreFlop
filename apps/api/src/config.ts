@@ -5,11 +5,15 @@ export interface Config {
   /** development | test | production. Production turns on the safety checks below. */
   nodeEnv: 'development' | 'test' | 'production';
   databaseUrl: string;
+  /** Size of the API's connection pool (DB_POOL_MAX); the database role's connection limit bounds instances × this. */
+  dbPoolMax: number;
   port: number;
   /** Rounds still LOCKED or DEALT this long after the lock are voided and refunded. */
   resultSlaMs: number;
   /** A REVIEW decision must be made within this time, otherwise the round voids. */
   reviewSlaMs: number;
+  /** An OPEN round this old at a table that is no longer ready is voided and refunded. */
+  openSlaMs: number;
   /** Largest gap between deal-start and the capture. */
   maxCaptureDelayMs: number;
   /** Run the outbox worker and sweeper inside the API process. */
@@ -73,6 +77,8 @@ export interface RateLimitConfig {
   partnerTokenPerMinute: number;
   /** POST /v1/bets, per signed-in user. */
   betsPerMinute: number;
+  /** Cheap audited account writes (play reset, profile, 2FA setup, limits, self-exclusion), per signed-in user. */
+  accountPerMinute: number;
 }
 
 /** Thrown when the environment is invalid; `problems` lists every reason, one per line. */
@@ -119,13 +125,15 @@ const bool = (def: boolean) => z.enum(['true', 'false', '1', '0']).default(def ?
  * TRUST_PROXY: `false` (default), `true` (every X-Forwarded-For hop; refused in production, since
  * a client then forges its own address and every per-IP limit), a hop count (`1` behind Fly or one
  * load balancer: the last address a trusted proxy appended) or a comma-separated list of the
- * proxies' IPs/CIDRs (or proxy-addr's names loopback, linklocal, uniquelocal).
+ * proxies' IPs/CIDRs (or proxy-addr's names loopback, linklocal, uniquelocal). Production requires
+ * an explicit value: `none` says "no proxy, trust nothing" (the same as false), so an unset variable
+ * behind a load balancer can never key every per-IP limit on the proxy's address.
  */
 const PROXY_ENTRY = /^([0-9a-fA-F:.]+)(\/\d{1,3})?$/;
 export function parseTrustProxy(v: string): boolean | number | string[] {
   const s = v.trim();
   if (s === 'true') return true;
-  if (s === 'false' || s === '0' || s === '') return false;
+  if (s === 'false' || s === 'none' || s === '0' || s === '') return false;
   if (/^\d{1,2}$/.test(s)) return Number(s);
   const list = s.split(',').map((x) => x.trim()).filter(Boolean);
   const KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
@@ -139,7 +147,7 @@ export function parseTrustProxy(v: string): boolean | number | string[] {
     return m[2] === undefined || Number(m[2].slice(1)) <= (family === 4 ? 32 : 128);
   };
   if (list.length && list.every((x) => KEYWORDS.has(x) || validEntry(x))) return list;
-  throw new Error('TRUST_PROXY must be true, false, a hop count or a comma-separated list of proxy IPs/CIDRs');
+  throw new Error('TRUST_PROXY must be true, false, none, a hop count or a comma-separated list of proxy IPs/CIDRs');
 }
 const trustProxy = z.string().default('false').transform((v, ctx) => {
   try { return parseTrustProxy(v); } catch (e) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: (e as Error).message }); return z.NEVER; }
@@ -150,9 +158,12 @@ const ms = (def: number) => z.coerce.number().int().positive().default(def);
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().url().default('postgres://postgres@localhost:5432/preflop'),
+  // At least 2: the stream's event relay holds one pool connection for as long as it runs (lib/events.ts).
+  DB_POOL_MAX: z.coerce.number().int().min(2, 'DB_POOL_MAX must be at least 2: the event relay keeps one connection').max(100).default(20),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   RESULT_SLA_MS: ms(5 * 60_000),
   REVIEW_SLA_MS: ms(30 * 60_000),
+  OPEN_SLA_MS: ms(30 * 60_000),
   MAX_CAPTURE_DELAY_MS: ms(180_000),
   RUN_WORKER: bool(true),
   PLAY_START: z.coerce.number().int().nonnegative().default(10_000),
@@ -166,6 +177,7 @@ const Env = z.object({
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_PARTNER_TOKEN_PER_MIN: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_BETS_PER_MIN: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_ACCOUNT_PER_MIN: z.coerce.number().int().positive().default(30),
   WEB_URL: z.string().url().default('http://localhost:5173'),
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
   SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
@@ -223,7 +235,9 @@ export function productionProblems(raw: NodeJS.ProcessEnv, e: Env): string[] {
       problems.push(`CORS_ORIGINS entry ${o} is too broad; a wildcard must be one "-*-" inside an https host label`);
     }
   }
-  if (raw.TRUST_PROXY?.trim() === 'true') {
+  if (!raw.TRUST_PROXY?.trim()) {
+    problems.push('TRUST_PROXY must be set in production: the number of proxy hops (1 behind Fly or one load balancer), the proxies\' CIDRs, or none when nothing is in front of the API (unset, every per-IP limit would key on the proxy address)');
+  } else if (raw.TRUST_PROXY.trim() === 'true') {
     problems.push('TRUST_PROXY=true trusts every X-Forwarded-For hop, so a client can forge its address and bypass per-IP limits; set the number of proxy hops (1 behind Fly or one load balancer) or the proxies\' CIDRs');
   }
   if (!raw.DATABASE_URL) problems.push('DATABASE_URL must be set in production (the localhost default is for development)');
@@ -288,9 +302,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     nodeEnv: e.NODE_ENV,
     databaseUrl: e.DATABASE_URL,
+    dbPoolMax: e.DB_POOL_MAX,
     port: e.PORT,
     resultSlaMs: e.RESULT_SLA_MS,
     reviewSlaMs: e.REVIEW_SLA_MS,
+    openSlaMs: e.OPEN_SLA_MS,
     maxCaptureDelayMs: e.MAX_CAPTURE_DELAY_MS,
     runWorker: e.RUN_WORKER,
     playStartMinor: e.PLAY_START,
@@ -302,6 +318,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       authPerMinute: e.RATE_LIMIT_AUTH_PER_MIN,
       partnerTokenPerMinute: e.RATE_LIMIT_PARTNER_TOKEN_PER_MIN,
       betsPerMinute: e.RATE_LIMIT_BETS_PER_MIN,
+      accountPerMinute: e.RATE_LIMIT_ACCOUNT_PER_MIN,
     },
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },

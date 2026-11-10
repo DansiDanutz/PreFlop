@@ -265,7 +265,7 @@ describe('passwords', () => {
   });
 
   it('forgot-password is rate-limited per address', async () => {
-    const limited = await harness('accounts_rl', { rateLimit: { enabled: true, authPerMinute: 100, partnerTokenPerMinute: 10, betsPerMinute: 10 } });
+    const limited = await harness('accounts_rl', { rateLimit: { enabled: true, authPerMinute: 100, partnerTokenPerMinute: 10, betsPerMinute: 10, accountPerMinute: 30 } });
     try {
       const statuses: number[] = [];
       for (let i = 0; i < 4; i++) statuses.push((await limited.api('POST', '/v1/auth/forgot-password', undefined, { email: 'same@acc.dev' })).status);
@@ -392,6 +392,22 @@ describe('two-factor authentication (TOTP)', () => {
     expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { password: 'correct horse', code: totpAt(setup.secret, Date.now()) })).status).toBe(200);
     expect((await h.api('GET', '/v1/me', p.token)).status).toBe(200);
     expect((await h.api('GET', '/v1/me', other.body.token)).status).toBe(401);
+  });
+
+  it('wrong passwords on mfa/enable count toward the login lockout, like a password change', async () => {
+    const p = await register('mfa-lockout');
+    const setup = (await h.api('POST', '/v1/me/mfa/setup', p.token)).body;
+    for (let i = 0; i < 5; i++) {
+      const r = await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()), password: `guess-${i}` });
+      expect(r.status).toBe(403);
+      expect(r.body.type).toBe('wrong_password');
+    }
+    expect((await h.db.query('select count(*)::int as n from login_failures where email = $1', [p.email])).rows[0].n).toBe(5);
+    const locked = await h.api('POST', '/v1/auth/login', undefined, { email: p.email, password: 'correct horse' });
+    expect(locked.status).toBe(429);
+    expect(locked.body.type).toBe('login_locked');
+    // the enable route is locked the same way, even with the right password
+    expect((await h.api('POST', '/v1/me/mfa/enable', p.token, { code: totpAt(setup.secret, Date.now()), password: 'correct horse' })).body.type).toBe('login_locked');
   });
 
   it('enabling MFA requires the password; a wrong one neither consumes the code nor breaks enrolment', async () => {

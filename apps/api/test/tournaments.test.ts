@@ -81,6 +81,21 @@ const running = (over: Record<string, unknown> = {}) => ({
 const later = () => new Date(Date.now() + 60 * 60_000);
 
 describe('tournament lifecycle', () => {
+  it('play money cannot be reset while a PLAY tournament buy-in is outstanding (it would come back on top of the fresh balance)', async () => {
+    const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Reset guard', starts_at: later().toISOString() }))).body;
+    const a = await user('Resetter');
+    const start = await walletOf(h, a.token);
+    expect((await h.api('POST', `/v1/tournaments/${t.id}/register`, a.token)).status).toBe(200);
+    const refused = await h.api('POST', '/v1/me/play/reset', a.token);
+    expect(refused.status).toBe(409);
+    expect(refused.body.type).toBe('play_bets_open');
+    expect(await walletOf(h, a.token)).toBe(start - 1_000);
+    // Leaving refunds the buy-in exactly once, and then the reset is allowed again.
+    expect((await h.api('DELETE', `/v1/tournaments/${t.id}/register`, a.token)).body).toEqual({ ok: true, refunded_minor: 1_000 });
+    expect((await h.api('POST', '/v1/me/play/reset', a.token)).status).toBe(200);
+    expect(await walletOf(h, a.token)).toBe(start);
+  });
+
   it('registration takes the buy-in; leaving before the start refunds it; the cap holds', async () => {
     const t = (await h.api('POST', '/v1/admin/tournaments', admin, running({ name: 'Tomorrow', starts_at: new Date(Date.now() + 86_400_000).toISOString(), max_entries: 2 }))).body;
     expect(t).toMatchObject({ status: 'scheduled', entries: 0, registration_open: true, prize_pool_minor: 0 });

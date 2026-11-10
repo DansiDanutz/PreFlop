@@ -5,9 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its running checks; pushes to main each run to the end.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -20,9 +29,9 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -37,3 +46,13 @@ jobs:
           # Production builds require the API origin (no localhost fallback in a shipped bundle).
           VITE_API_URL: http://localhost:4000
       - run: pnpm --filter @preflop/odds-engine smoke
+
+  # The images Fly builds on deploy (deploy/fly/*.toml): a broken Dockerfile fails the pull request,
+  # not the staging deploy. The sim target extends the shared build stage, so the second build reuses it.
+  docker:
+    runs-on: ubuntu-24.04 # SEM-161: retain the validated OS during the Ubuntu 26.04 migration.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: docker build --target api -t preflop-api:ci .
+      - run: docker build --target sim -t preflop-sim:ci .

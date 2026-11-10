@@ -331,6 +331,20 @@ describe('F13: audit verification reads one consistent snapshot', () => {
   });
 });
 
+describe('Audit log: truncate is refused like update and delete', () => {
+  it('truncate audit_log and audit_head reject with the append-only message; the chain is intact', async () => {
+    await tx(h.db, (c) => audit(c, { type: 'test.truncate_guard' }));
+    await expect(h.db.query('truncate audit_log')).rejects.toThrow(/audit_log is append-only/);
+    await expect(h.db.query('truncate audit_head')).rejects.toThrow(/audit_head is append-only/);
+    await expect(h.db.query('truncate audit_log, audit_head')).rejects.toThrow(/is append-only/);
+    expect((await h.db.query(`select 1 from audit_log where event::jsonb->>'type' = 'test.truncate_guard'`)).rowCount).toBe(1);
+    expect((await verifyAuditChain(h.db)).ok).toBe(true);
+    // the head still moves on every append
+    await tx(h.db, (c) => audit(c, { type: 'test.truncate_guard', again: true }));
+    expect((await verifyAuditChain(h.db)).ok).toBe(true);
+  });
+});
+
 describe('F14: a disabled webhook delivers nothing more', () => {
   it('disable cancels pending and retrying deliveries; a stale claim is not taken over; re-enable sends new events only', async () => {
     const got: string[] = [];

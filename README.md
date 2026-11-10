@@ -62,17 +62,22 @@ The API and the worker validate their environment at start (`apps/api/src/config
 | Variable | Default | Production rule |
 |---|---|---|
 | `NODE_ENV` | `development` | Set to `production` to turn on the checks in this column |
-| `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 32 characters and not a demo value (`postgres`, `password`, `changeme`, …) |
+| `DATABASE_URL` | `postgres://postgres@localhost:5432/preflop` | **Required.** If it has a password, it must be at least 16 characters and not a demo value (`postgres`, `password`, `changeme`, …). A host outside a private network (anything but `localhost`, a bare service name, or a `.internal` / `.flycast` / `.local` name) must carry `?sslmode=verify-full` (or `require`) |
+| `DB_POOL_MAX` | `20` | Connections in this process's pool, 2 to 100 (the stream's event relay holds one for as long as it runs). Instances × this (plus the simulator's 4) must stay under the database role's connection limit |
 | `CORS_ORIGINS` | `*` | **Required.** A comma-separated list of the web, console and table origins. `*` or empty is refused |
-| `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts |
+| `ADMIN_EMAIL` | `admin@preflop.local` | Email of the admin the seed scripts create (`sim`, `demo`); re-seeding updates the email. The simulator keeps an existing admin's password (a fresh machine must not revert one changed in the console); `demo` sets `ADMIN_PASSWORD` again, because it prints the password it used |
+| `ADMIN_PASSWORD` | unset | If set, it must be at least 12 characters, use 3 of lowercase / uppercase / digits / symbols, and not be or contain a common word (`password`, `preflop`, `admin`, …). Read by the seed scripts; the simulator (`sim`) refuses a weak one in every environment |
+| `JEV_API_KEY` | unset | Turns on decision hints (`docs/20`). At least 16 characters and not a demo value; with it, `JEV_API_URL` must be `https` (the key travels in the Authorization header) |
+| `JEV_API_URL` · `JEV_MODEL` | `https://api.typesafe.ai/v1/systemone` · `jev-latest` | The System One endpoint and the model name (1 to 80 characters) |
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Must not be `true` (it lets webhooks reach private addresses; tests only) |
 | `RATE_LIMIT_ENABLED` | `true` | Must not be `false` |
-| `RATE_LIMIT_AUTH_PER_MIN` · `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` · `RATE_LIMIT_BETS_PER_MIN` | `20` · `30` · `120` | Per-IP login/register, per-IP partner token, per-user bets; per API instance |
-| `TRUST_PROXY` | `false` | Behind a load balancer: the number of proxy hops (`1` on Fly) or the proxies' CIDRs, so per-IP limits see the client address. Production refuses a bare `true` (a client could forge its address) |
+| `RATE_LIMIT_AUTH_PER_MIN` · `RATE_LIMIT_PARTNER_TOKEN_PER_MIN` · `RATE_LIMIT_BETS_PER_MIN` · `RATE_LIMIT_ACCOUNT_PER_MIN` | `20` · `30` · `120` · `30` | Per-IP login/register, per-IP partner token, per-user bets, per-user account writes (play reset, profile, 2FA setup, limits, self-exclusion); per API instance |
+| `TRUST_PROXY` | `false` | **Required.** Behind a load balancer: the number of proxy hops (`1` on Fly) or the proxies' CIDRs, so per-IP limits see the client address; `none` when nothing is in front of the API. Production refuses a bare `true` (a client could forge its address) and an unset value (every per-IP limit would key on the proxy address) |
 | `PORT` | `4000` | |
 | `RUN_WORKER` | `true` | `false` when the worker runs separately (`pnpm --filter @preflop/api worker`); several workers may run |
 | `WORKER_HEARTBEAT_MAX_AGE_MS` | `15000` | `GET /v1/health/ready` fails when no worker has beaten for this long |
 | `RESULT_SLA_MS` · `REVIEW_SLA_MS` · `MAX_CAPTURE_DELAY_MS` | 5 min · 30 min · 3 min | Round deadlines (`docs/13` §4) |
+| `OPEN_SLA_MS` | 30 min | An OPEN round this old at a table that is no longer ready is voided and refunded by the sweeper (`docs/13` §4) |
 | `PLAY_START` | `10000` | Starting play-money balance |
 | `LOG` | `false` | `1` turns on JSON request logs; every line carries `request_id` |
 | `WEB_URL` | `http://localhost:5173` | Origin of the player app: the partner widget snippet and the links in verification and password-reset emails |
