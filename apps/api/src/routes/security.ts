@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
-import { bearer, hashPassword, revokeSessions, tokenHash, verifyPassword } from '../auth/players.ts';
+import { CONFIRMATION_WINDOW_MINUTES, bearer, confirmSession, hashPassword, revokeSessions, tokenHash, verifyPassword } from '../auth/players.ts';
 import { passwordWeakness } from '../config.ts';
 import { playSession } from '../lib/accounts.ts';
 import { audit } from '../lib/audit.ts';
@@ -55,6 +55,9 @@ export async function checkOtp(c: Tx, userId: string, code: string): Promise<boo
 const Code = z.object({ code: z.string().trim().regex(/^\d{6}$/, 'a 6-digit code') });
 /** The enable request also proves the password: a stolen session alone cannot turn 2FA on. */
 const EnableCode = Code.extend({ password: z.string().min(1).max(200) });
+/** A step-up proof: the authenticator code when 2FA is on, the password otherwise. */
+const Confirmation = z.object({ password: z.string().min(1).max(200).optional(), code: Code.shape.code.optional() })
+  .refine((b) => b.password !== undefined || b.code !== undefined, { message: 'a password or a code is required' });
 
 export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   // ---------------------------------------------------------------- email verification
@@ -197,6 +200,46 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       const revoked = await revokeSessions(c, u.id, keep);
       await audit(c, { type: 'mfa.disabled', userId: u.id, sessionsRevoked: revoked });
       return { mfa_enabled: false };
+    });
+  });
+
+  // ---------------------------------------------------------------- step-up confirmation
+  /**
+   * Proves the session is still in its holder's hands before money leaves (POST /v1/me/withdrawals
+   * needs a confirmation no older than CONFIRMATION_WINDOW_MINUTES). With 2FA on only the
+   * authenticator code counts; otherwise the password, and wrong ones count toward the sign-in
+   * lockout. Only this session is confirmed.
+   */
+  app.post('/v1/me/confirm', async (req) => {
+    const u = await ctx.user(req);
+    const b = Confirmation.parse(req.body);
+    const token = bearer(req.headers.authorization) ?? '';
+    const confirmed = async (c: Tx, method: 'otp' | 'password') => {
+      const until = await confirmSession(c, token);
+      if (!until) throw new ApiError(401, 'unauthorized', 'session expired or invalid');
+      await audit(c, { type: 'user.session_confirmed', userId: u.id, method, windowMinutes: CONFIRMATION_WINDOW_MINUTES });
+      return { confirmed: true, confirmed_until: until.toISOString() };
+    };
+    if (u.mfa_enabled) {
+      // 403, not 401: the session is still valid, and clients treat 401 as "signed out".
+      const code = b.code;
+      if (code === undefined) throw new ApiError(403, 'mfa_required', 'enter the 6-digit code from your authenticator app');
+      ctx.limits.otp.consume(`user:${u.id}`);
+      return tx(ctx.db, async (c) => {
+        if (!(await checkOtp(c, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
+        return confirmed(c, 'otp');
+      });
+    }
+    if (u.partner_id) throw conflict('confirmation_not_applicable', 'partner accounts are confirmed by their operator');
+    const password = b.password;
+    if (password === undefined) throw unprocessable('password_required', 'enter your password');
+    return guardedLogin(ctx.db, u.email, req.ip, LOGIN_LOCKOUT, async (c) => {
+      const row = (await c.query<{ password_hash: string }>('select password_hash from users where id = $1', [u.id])).rows[0];
+      if (!row || !(await verifyPassword(password, row.password_hash))) return null;
+      return confirmed(c, 'password');
+    }).catch((e: unknown) => {
+      if (e instanceof ApiError && e.type === 'invalid_credentials') throw new ApiError(403, 'wrong_password', 'the password is wrong');
+      throw e;
     });
   });
 
