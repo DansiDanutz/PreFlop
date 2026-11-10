@@ -33,6 +33,10 @@ export async function verifyAgainstNobody(pw: string): Promise<false> {
 
 export const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex');
 export const SESSION_DAYS = 30;
+/** A session unused for this long is refused, whatever its expiry date (players, club and partner accounts). */
+export const SESSION_IDLE_DAYS = 14;
+/** The same for PreFlop team accounts, whose sessions reach the admin console. */
+export const STAFF_IDLE_MINUTES = 30;
 
 /** How long a proof of the password or authenticator code lets a session move money out. */
 export const CONFIRMATION_WINDOW_MINUTES = 10;
@@ -97,15 +101,20 @@ export function bearer(header: string | undefined): string | undefined {
 
 export async function userFromToken(db: Db, token: string | undefined): Promise<SessionUser> {
   if (!token) throw unauthorized('unauthorized', 'sign in required');
-  const row = (await db.query<SessionUser & { partner_status: string | null }>(
+  const row = (await db.query<SessionUser & { partner_status: string | null; seen_stale: boolean }>(
     `select u.id, u.email, u.display_name, u.status, u.kyc_status, u.platform_role, u.country, u.partner_id, o.status as partner_status,
             to_char(u.date_of_birth, 'YYYY-MM-DD') as date_of_birth, u.email_verified_at is not null as email_verified,
-            exists (select 1 from user_mfa m where m.user_id = u.id and m.enabled_at is not null) as mfa_enabled
+            exists (select 1 from user_mfa m where m.user_id = u.id and m.enabled_at is not null) as mfa_enabled,
+            coalesce(s.last_seen_at, s.created_at) < now() - interval '1 minute' as seen_stale
        from sessions s join users u on u.id = s.user_id left join organizations o on o.id = u.partner_id
-      where s.token_sha256 = $1 and s.expires_at > now()`, [tokenHash(token)])).rows[0];
+      where s.token_sha256 = $1 and s.expires_at > now()
+        and coalesce(s.last_seen_at, s.created_at) > now() - case when u.platform_role is not null
+              then interval '${STAFF_IDLE_MINUTES} minutes' else interval '${SESSION_IDLE_DAYS} days' end`, [tokenHash(token)])).rows[0];
   if (!row) throw unauthorized('unauthorized', 'session expired or invalid');
+  // Recorded at most once a minute, so an active session costs one small write a minute, not one a request.
+  if (row.seen_stale) await db.query(`update sessions set last_seen_at = now() where token_sha256 = $1`, [tokenHash(token)]);
   // A partner's player exists only through that partner: while it is suspended, the account is too.
-  const { partner_status, ...u } = row;
+  const { partner_status, seen_stale: _seenStale, ...u } = row;
   if (u.partner_id && partner_status !== 'active') throw forbidden('partner_suspended', 'the operator of this account is suspended');
   // Suspension and closure sign the account out; a session that survived (issued in between) is refused too.
   if (u.status === 'suspended' || u.status === 'closed') throw forbidden('account_blocked', `account is ${u.status}`);

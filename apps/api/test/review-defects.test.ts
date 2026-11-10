@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { migrate } from '@preflop/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool, tx } from '../src/lib/db.ts';
 import { seedAdmin } from '../src/seed.ts';
-import { BASE_URL, type Harness, harness, idemKey, walletOf } from './helpers.ts';
+import { BASE_URL, type Harness, freshDb, harness, idemKey, testDbName, walletOf } from './helpers.ts';
 
 /**
  * Production-readiness review, 2026-11-10: a paid chip purchase must respect self-exclusion, age
@@ -91,6 +95,47 @@ describe('connection pool', () => {
       expect(Date.now() - started).toBeLessThan(5_000);
     } finally {
       await pool.end();
+    }
+  });
+
+  it('cancels a statement that runs past the statement timeout', async () => {
+    const pool = createPool(BASE_URL, 1, { statementTimeoutMs: 200 });
+    try {
+      await expect(pool.query('select pg_sleep(2)')).rejects.toMatchObject({ code: '57014' });
+      expect((await pool.query('select 1 as ok')).rows[0].ok).toBe(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('ends a transaction left idle past the idle-in-transaction timeout, releasing its locks', async () => {
+    const pool = createPool(BASE_URL, 1, { idleInTransactionTimeoutMs: 200 });
+    try {
+      const c = await pool.connect();
+      c.on('error', () => {}); // the server closes this connection; the pool's own listener logs it
+      await c.query('begin');
+      await new Promise((r) => setTimeout(r, 600));
+      await expect(c.query('select 1')).rejects.toThrow();
+      c.release(true);
+      expect((await pool.query('select 1 as ok')).rows[0].ok).toBe(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('migrations are exempt from the statement timeout, and the connection gets it back afterwards', async () => {
+    await (await freshDb('pool_timeouts')).end();
+    const url = new URL(BASE_URL);
+    url.pathname = `/${testDbName('pool_timeouts')}`;
+    const dir = mkdtempSync(join(tmpdir(), 'preflop-migrations-'));
+    writeFileSync(join(dir, '900_slow.sql'), 'select pg_sleep(0.6);');
+    const pool = createPool(url.toString(), 1, { statementTimeoutMs: 200 });
+    try {
+      expect(await migrate(pool, dir)).toEqual(['900_slow.sql']);
+      await expect(pool.query('select pg_sleep(0.6)')).rejects.toMatchObject({ code: '57014' });
+    } finally {
+      await pool.end();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

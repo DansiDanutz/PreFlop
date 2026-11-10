@@ -1,4 +1,4 @@
-import { createClient } from '@preflop/client';
+import { createClient, watchStorageKey } from '@preflop/client';
 import { KEYS, readString, writeString } from './storage.ts';
 
 // The localhost fallback only ever applies in development: production builds fail without
@@ -23,6 +23,12 @@ const listeners = new Set<() => void>();
 export function onTokenChange(l: () => void) {
   listeners.add(l);
   return () => void listeners.delete(l);
+}
+
+// A sign-out (or sign-in) in another tab reaches this one: every tab reads the same stored token.
+// Partner iframes keep theirs in sessionStorage, which is per tab, so there is nothing to follow.
+if (typeof window !== 'undefined' && !isEmbed()) {
+  watchStorageKey(window, KEYS.token, () => listeners.forEach((l) => l()));
 }
 
 let unauthorizedHandler: (() => void) | null = null;

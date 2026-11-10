@@ -1,3 +1,4 @@
+import { decodeKey } from './lib/secretBox.ts';
 import { isIP } from 'node:net';
 import { z } from 'zod';
 
@@ -34,6 +35,8 @@ export interface Config {
   mail: MailConfig;
   /** Decision model hints (docs/20): TypeSafe AI's Jev through JEV_API_KEY. Off without a key. */
   decisions: DecisionsConfig;
+  /** MFA_ENCRYPTION_KEY (32 random bytes, base64), or null: authenticator secrets are then stored unencrypted (lib/secretBox.ts). */
+  mfaEncryptionKey: string | null;
   /** Real-money provider adapters (docs/21): `sandbox` outside production, `none` (fail closed) by default in production. */
   providers: ProvidersConfig;
 }
@@ -182,6 +185,7 @@ const Env = z.object({
   MAIL_FROM: z.string().min(3).max(200).default('PreFlop <no-reply@preflop.local>'),
   SMTP_URL: z.string().url().refine((v) => /^smtps?:\/\//i.test(v), 'must start with smtp:// or smtps://').optional(),
   JEV_API_KEY: z.string().min(16).optional(),
+  MFA_ENCRYPTION_KEY: z.string().refine((v) => decodeKey(v) !== null, 'must be 32 random bytes in base64 (openssl rand -base64 32)').optional(),
   JEV_API_URL: z.string().url().default('https://api.typesafe.ai/v1/systemone'),
   JEV_MODEL: z.string().min(1).max(80).default('jev-latest'),
   KYC_PROVIDER: z.enum(['sandbox', 'none']).optional(),
@@ -200,6 +204,7 @@ const SECRETS: { name: string; get: (e: Env) => string | undefined; min?: number
   { name: 'DATABASE_URL password', min: 16, get: (e) => { try { return decodeURIComponent(new URL(e.DATABASE_URL).password) || undefined; } catch { return undefined; } } },
   // TypeSafe AI issues the key; its length is theirs to choose, so only the demo check and a floor apply.
   { name: 'JEV_API_KEY', min: 16, get: (e) => e.JEV_API_KEY },
+  { name: 'MFA_ENCRYPTION_KEY', get: (e) => e.MFA_ENCRYPTION_KEY },
 ];
 
 /**
@@ -323,6 +328,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workerHeartbeatMaxAgeMs: e.WORKER_HEARTBEAT_MAX_AGE_MS,
     mail: { from: e.MAIL_FROM, webUrl: e.WEB_URL.replace(/\/+$/, ''), smtpUrl: e.SMTP_URL ?? null },
     decisions: { apiKey: e.JEV_API_KEY ?? null, url: e.JEV_API_URL, model: e.JEV_MODEL },
+    mfaEncryptionKey: e.MFA_ENCRYPTION_KEY ?? null,
     providers: {
       kyc: e.KYC_PROVIDER ?? defaultProvider,
       psp: e.PSP_PROVIDER ?? defaultProvider,

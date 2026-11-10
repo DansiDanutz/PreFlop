@@ -114,7 +114,7 @@ export async function playerRoutes(app: FastifyInstance, ctx: AppContext) {
       // Two-factor: no session without a valid code. A missing code is not a failure (nothing is
       // recorded or cleared); a wrong or replayed one counts toward the lockout like a wrong password.
       if (!b.otp) return new LoginRefusal(new ApiError(401, 'mfa_required', 'enter the 6-digit code from your authenticator app'), false);
-      if (!(await checkOtp(c, row.id, b.otp))) return new LoginRefusal(new ApiError(401, 'invalid_otp', 'that code is not valid'), true);
+      if (!(await checkOtp(c, ctx.secrets, row.id, b.otp))) return new LoginRefusal(new ApiError(401, 'invalid_otp', 'that code is not valid'), true);
       return row;
     });
     return tx(ctx.db, async (c) => {

@@ -10,6 +10,7 @@ import { consumeEmailToken, sendPasswordReset, sendVerification } from '../lib/e
 import { ApiError, conflict, unprocessable } from '../lib/errors.ts';
 import { LOGIN_LOCKOUT, guardedLogin } from '../lib/loginLockout.ts';
 import { perIp } from '../lib/rateLimit.ts';
+import type { SecretBox } from '../lib/secretBox.ts';
 import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.ts';
 
 /**
@@ -42,13 +43,15 @@ export const mfaEnrolmentAllowed = (req: FastifyRequest) => MFA_ENROLMENT_ROUTES
  * user_mfa row is locked, so one code is accepted once even under concurrency). Returns false for
  * a wrong, stale or replayed code; true when it was accepted (last_step moves forward).
  */
-export async function checkOtp(c: Tx, userId: string, code: string): Promise<boolean> {
+export async function checkOtp(c: Tx, secrets: SecretBox, userId: string, code: string): Promise<boolean> {
   const m = (await c.query<{ secret: string; last_step: number | null }>(
     'select secret, last_step from user_mfa where user_id = $1 and enabled_at is not null for update', [userId])).rows[0];
   if (!m) return false;
-  const step = verifyTotp(m.secret, code, m.last_step === null ? null : Number(m.last_step));
+  const step = verifyTotp(secrets.open(m.secret, userId), code, m.last_step === null ? null : Number(m.last_step));
   if (step === null) return false;
-  await c.query('update user_mfa set last_step = $2 where user_id = $1', [userId, step]);
+  // A secret stored before encryption was turned on is encrypted now that it has just been read.
+  const secret = secrets.encrypts && !secrets.isSealed(m.secret) ? secrets.seal(m.secret, userId) : m.secret;
+  await c.query('update user_mfa set last_step = $2, secret = $3 where user_id = $1', [userId, step, secret]);
   return true;
 }
 
@@ -148,7 +151,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       const on = (await c.query('select 1 from user_mfa where user_id = $1 and enabled_at is not null', [u.id])).rowCount;
       if (on) throw conflict('mfa_already_enabled', 'two-factor authentication is already on; disable it first to start over');
       await c.query(`insert into user_mfa (user_id, secret) values ($1, $2)
-                     on conflict (user_id) do update set secret = excluded.secret, created_at = now(), enabled_at = null, last_step = null`, [u.id, secret]);
+                     on conflict (user_id) do update set secret = excluded.secret, created_at = now(), enabled_at = null, last_step = null`, [u.id, ctx.secrets.seal(secret, u.id)]);
       await audit(c, { type: 'mfa.setup_started', userId: u.id });
     });
     return { secret, otpauth_uri: otpauthUri(secret, u.email) };
@@ -170,7 +173,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       const m = (await c.query<{ secret: string; enabled_at: Date | null }>('select secret, enabled_at from user_mfa where user_id = $1 for update', [u.id])).rows[0];
       if (!m) throw conflict('mfa_not_set_up', 'start with POST /v1/me/mfa/setup');
       if (m.enabled_at) throw conflict('mfa_already_enabled', 'two-factor authentication is already on');
-      const step = verifyTotp(m.secret, code, null);
+      const step = verifyTotp(ctx.secrets.open(m.secret, u.id), code, null);
       if (step === null) throw unprocessable('invalid_otp', 'that code is not valid; check the time on your device');
       await c.query('update user_mfa set enabled_at = now(), last_step = $2 where user_id = $1', [u.id, step]);
       // Previously issued sessions did not prove possession of the new second factor.
@@ -192,7 +195,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!u.mfa_enabled) throw conflict('mfa_not_enabled', 'two-factor authentication is off');
     return tx(ctx.db, async (c) => {
       await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and enable
-      if (!(await checkOtp(c, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
+      if (!(await checkOtp(c, ctx.secrets, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
       await c.query('delete from user_mfa where user_id = $1', [u.id]);
       // Sessions authenticated while MFA was enabled must not survive a downgrade of the
       // account's sign-in protection. Keep only the session that proved the current code.
@@ -226,7 +229,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       if (code === undefined) throw new ApiError(403, 'mfa_required', 'enter the 6-digit code from your authenticator app');
       ctx.limits.otp.consume(`user:${u.id}`);
       return tx(ctx.db, async (c) => {
-        if (!(await checkOtp(c, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
+        if (!(await checkOtp(c, ctx.secrets, u.id, code))) throw unprocessable('invalid_otp', 'that code is not valid');
         return confirmed(c, 'otp');
       });
     }

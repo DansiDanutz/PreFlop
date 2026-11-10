@@ -15,12 +15,16 @@ export function listMigrations(dir = MIGRATIONS_DIR): { name: string; sql: strin
 
 /**
  * Applies pending migrations, each in its own transaction, under an advisory lock so
- * concurrent starters never apply one twice. Returns the names applied.
+ * concurrent starters never apply one twice. Returns the names applied. Runs without a statement
+ * timeout whatever the pool's default is.
  */
 export async function migrate(pool: pg.Pool, dir = MIGRATIONS_DIR): Promise<string[]> {
   const c = await pool.connect();
   const applied: string[] = [];
   try {
+    // A pool may bound every statement (the API's does): a migration, and the wait for another
+    // starter's migrations under the lock, may rightly take longer. Lifted for this connection only.
+    await c.query('set statement_timeout = 0');
     await c.query('select pg_advisory_lock(7461)');
     await c.query('create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now())');
     const done = new Set((await c.query<{ name: string }>('select name from schema_migrations')).rows.map((r) => r.name));
@@ -39,7 +43,9 @@ export async function migrate(pool: pg.Pool, dir = MIGRATIONS_DIR): Promise<stri
     }
   } finally {
     await c.query('select pg_advisory_unlock(7461)').catch(() => {});
-    c.release();
+    // Back to the session default the pool connected with, before the connection is reused.
+    const restored = await c.query('reset statement_timeout').then(() => true, () => false);
+    c.release(!restored);
   }
   return applied;
 }

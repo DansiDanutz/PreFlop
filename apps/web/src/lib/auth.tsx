@@ -1,3 +1,4 @@
+import { forgetPreviousSession } from '@preflop/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useSyncExternalStore } from 'react';
 import { Navigate, useLocation } from 'react-router';
@@ -20,6 +21,16 @@ export function useSessionGuard() {
     return () => {
       setUnauthorizedHandler(null);
     };
+  }, [qc]);
+  // The session changed under this tab (a sign-out or another sign-in in another tab): nothing
+  // cached for the previous account may be shown.
+  useEffect(() => {
+    let previous = getToken();
+    return onTokenChange(() => {
+      const current = getToken();
+      forgetPreviousSession(qc, previous, current);
+      previous = current;
+    });
   }, [qc]);
 }
 

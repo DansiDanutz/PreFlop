@@ -15,14 +15,30 @@ export type Tx = pg.PoolClient;
 
 /** How long a request waits for a connection (a free one, or a new one) before it fails. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+/** The longest one statement may run, lock waits included, before the server cancels it (SQLSTATE 57014). */
+export const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000;
+/** How long a transaction may sit idle between statements before the server ends it and frees its locks. */
+export const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
 
-export interface PoolOptions { connectTimeoutMs?: number }
+export interface PoolOptions {
+  connectTimeoutMs?: number;
+  statementTimeoutMs?: number;
+  idleInTransactionTimeoutMs?: number;
+}
 
 export function createPool(connectionString: string, max = 20, opts: PoolOptions = {}): Db {
   // Every session runs in UTC, so date casts (month windows, day totals) never depend on the server's zone.
+  // Every session is also bounded: a statement stuck behind a lock is cancelled and a transaction
+  // abandoned mid-way is ended, so neither can hold row locks or a pool slot indefinitely.
+  // Migrations lift the statement timeout for their own connection (packages/db).
+  const session = [
+    '-c TimeZone=UTC',
+    `-c statement_timeout=${opts.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS}`,
+    `-c idle_in_transaction_session_timeout=${opts.idleInTransactionTimeoutMs ?? DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS}`,
+  ].join(' ');
   // The wait for a connection is bounded: an exhausted pool or an unreachable database fails the
   // request instead of hanging it.
-  const pool = new pg.Pool({ connectionString, max, options: '-c TimeZone=UTC', connectionTimeoutMillis: opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS });
+  const pool = new pg.Pool({ connectionString, max, options: session, connectionTimeoutMillis: opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS });
   // An idle connection the server or a proxy drops makes the pool emit 'error'; with no listener
   // Node treats that as an uncaught exception and the process dies. The pool has already discarded
   // the connection, so logging it is all there is to do.

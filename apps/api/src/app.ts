@@ -1,3 +1,4 @@
+import { type SecretBox, secretBox } from './lib/secretBox.ts';
 import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -36,6 +37,8 @@ declare module 'fastify' {
 export interface AppContext {
   db: Db;
   config: Config;
+  /** Encrypts authenticator secrets at rest when MFA_ENCRYPTION_KEY is set (lib/secretBox.ts). */
+  secrets: SecretBox;
   timing: Timing;
   /** Signed-in player or console user (throws 401). */
   user(req: FastifyRequest): Promise<SessionUser>;
@@ -156,7 +159,13 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     if (err instanceof ZodError) {
       return reply.code(400).type('application/problem+json').send({ type: 'bad_request', title: 'invalid request', status: 400, issues: err.issues });
     }
-    const e = err as { statusCode?: number; message?: string };
+    const e = err as { statusCode?: number; message?: string; code?: string };
+    // query_canceled: the statement timeout (lib/db.ts) cancelled a query, usually one waiting on a
+    // lock. The transaction rolled back; the client may retry.
+    if (e.code === '57014') {
+      req.log.warn(err);
+      return reply.code(503).header('retry-after', '1').type('application/problem+json').send({ type: 'retry_later', title: 'the database took too long, retry later', status: 503, request_id: req.id });
+    }
     if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ type: 'bad_request', title: e.message, status: e.statusCode });
     req.log.error(err);
     console.error(`[${req.id}]`, err);
@@ -168,6 +177,7 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
   const ctx: AppContext = {
     db,
     config,
+    secrets: secretBox(config.mfaEncryptionKey),
     timing: { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs },
     async user(req) {
       const u = await userFromToken(db, bearer(req.headers.authorization));

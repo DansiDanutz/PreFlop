@@ -12,6 +12,7 @@ import { startWorker } from './worker.ts';
 const config = loadConfigOrExit();
 const mailProblem = mailWarning(config);
 if (mailProblem) console.warn(`warning: ${mailProblem}`);
+if (!config.mfaEncryptionKey) console.warn('warning: MFA_ENCRYPTION_KEY is not set; authenticator secrets are stored unencrypted');
 const decider = deciderFromConfig(config);
 console.log(decider.enabled ? `decision hints: ${decider.model} (docs/20)` : 'decision hints: off (set JEV_API_KEY to turn them on)');
 const db = createPool(config.databaseUrl, config.dbPoolMax);
