@@ -1,4 +1,4 @@
-import { ApiError } from '@preflop/client';
+import { ApiError, streamEmbedUrl } from '@preflop/client';
 import { Badge, Button, type RoundPhase, cx, formatMoneyShort, formatOdds } from '@preflop/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Info, LayoutGrid, Minus, Plus, RotateCcw, X } from 'lucide-react';
@@ -20,6 +20,7 @@ import { useTableLive } from '../../lib/useTableLive.ts';
 import { HowToPlay, PracticePill } from '../AppShell.tsx';
 import { MiniFlop } from '../MiniFlop.tsx';
 import { StreamView, feltLabel, feltTheme } from '../StreamView.tsx';
+import { LiveStream } from './LiveStream.tsx';
 import { ErrorState, Notice, Sheet, Skeleton } from '../ui.tsx';
 import { CatalogueSheet } from './Catalogue.tsx';
 import { LiveBanner } from './LiveBanner.tsx';
@@ -90,6 +91,11 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
   const rm = useRoom(roomId);
   const reset = useResetPlay();
   const t = live.detail.data;
+  /**
+   * A manual table with a live webcam stream shows the stream instead of the drawn felt. Not a Twitch
+   * stream in the partner widget: Twitch checks every framing site against `parent` and would refuse.
+   */
+  const webcam = t?.kind === 'manual' && !(embed && t.stream?.provider === 'twitch') ? streamEmbedUrl(t.stream, window.location.hostname) : null;
   const room = rm.room;
   const pool = isPool(room);
   const roomQs = roomId ? `?room=${encodeURIComponent(roomId)}` : '';
@@ -281,11 +287,13 @@ export function TableScreen({ tableId, embed = false, catalogue = false, embedOp
         {/* left: the table */}
         <div className="@min-[880px]:col-start-1 @min-[880px]:row-start-1">
           <section aria-label="The table" className="overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface">
-            <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} unavailable={unavailable} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)} badgeText={t?.kind === 'manual' ? 'TEST TABLE' : 'SIMULATED TABLE'}
-              onExpand={() => setExpanded(true)} className="h-[250px] @min-[640px]:h-[340px]" />
+            {webcam
+              ? <LiveStream src={webcam} tableName={t?.name ?? 'the table'} className="aspect-video w-full" />
+              : <StreamView cards={prev?.cards} size="lg" revealKey={live.reveal} unavailable={unavailable} theme={feltTheme(t?.club_id)} label={feltLabel(t?.name)} badgeText={t?.kind === 'manual' ? 'TEST TABLE' : 'SIMULATED TABLE'}
+                onExpand={() => setExpanded(true)} className="h-[250px] @min-[640px]:h-[340px]" />}
             <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 text-[12px] text-ink/85">
               <span>Previous flop · {prev ? roundLabel(prev.hand_no) : '—'}{prev && <span className="text-muted"> · {resultLine(prev.cards).replace('.', '')}</span>}</span>
-              <span className="text-right">{t?.kind === 'simulated' ? 'Simulated · Not a live stream' : t?.kind === 'manual' ? 'Test table · Flop entered by the PreFlop team' : 'Live table'}</span>
+              <span className="text-right">{t?.kind === 'simulated' ? 'Simulated · Not a live stream' : webcam ? 'Live webcam · Flop confirmed by the PreFlop team' : t?.kind === 'manual' ? 'Test table · Flop entered by the PreFlop team' : 'Live table'}</span>
             </div>
             <div className="border-b border-line px-4 py-5"><Steps phase={phase} /></div>
             <div className="px-6 py-8 @min-[640px]:px-8">

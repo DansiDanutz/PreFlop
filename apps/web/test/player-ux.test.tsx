@@ -270,3 +270,14 @@ describe('guest demo', () => {
     expect(html).toContain('href="/login?next=%2Fapp%2Ftable%2Fsim-1"');
   });
 });
+
+describe('manual table live stream (migration 032)', () => {
+  it('frames the player muted, sandboxed and titled for screen readers', async () => {
+    const { LiveStream } = await import('../src/components/table/LiveStream.tsx');
+    const html = renderToStaticMarkup(<LiveStream src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&amp;mute=1" tableName="Webcam table" />);
+    expect(html).toContain('title="Live stream of Webcam table"');
+    expect(html).toContain('sandbox="allow-scripts allow-same-origin allow-presentation"');
+    expect(html).toContain('src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ');
+    expect(html).not.toContain('allow-top-navigation');
+  });
+});

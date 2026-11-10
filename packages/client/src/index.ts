@@ -8,6 +8,7 @@
 import type { z } from 'zod';
 import * as S from './schemas.ts';
 export { COUNTRY_CODES, isCountryCode } from './countries.ts';
+export { streamEmbedUrl } from './streamEmbed.ts';
 export { ACTIVITY_EVENTS, type IdleWatchOptions, type SessionCache, forgetPreviousSession, signOutThenRevoke, watchIdle, watchStorageKey } from './session.ts';
 
 // ======================================================================================= types
@@ -79,6 +80,8 @@ export interface Book { channel: string; flop_count: number; families: Record<st
 export interface TableSummary {
   id: string; name: string; club_id: string; club_name: string; city: string | null; kind: 'physical' | 'simulated' | 'manual';
   mode: PlayMode; currency: string; status: 'active' | 'paused' | 'retired'; ready: boolean; problems: string[]; stream_live: boolean;
+  /** A manual table's live webcam stream (migration 032), embedded on the table page; null when it has none. */
+  stream?: StreamLink | null;
   /** review_deadline: see Round. */
   current_round: { id: string; hand_no: number; state: RoundState; step: Step; review_deadline?: string | null } | null;
   open_round_id: string | null;
@@ -86,10 +89,16 @@ export interface TableSummary {
 }
 /** GET /v1/admin/tables/manual: tables whose flop the PreFlop team types in the console (free play only). */
 export interface ManualTable {
-  id: string; name: string; mode: 'play'; currency: string; status: string; pause_reason: string | null;
+  id: string; name: string; mode: 'play'; currency: string; status: string; pause_reason: string | null; stream: StreamLink | null;
   round: { id: string; hand_no: number; state: RoundState; opened_at: string; locked_at: string | null; settled_at: string | null; flop: string[] | null; void_reason: string | null; bets: number; staked_minor: number } | null;
   last_settled: { hand_no: number; flop: string[]; settled_at: string } | null;
 }
+/** A YouTube video/live id or a Twitch channel name; the page builds the embed from it (streamEmbedUrl). */
+export type StreamLink = { provider: 'youtube' | 'twitch'; id: string };
+/** The webcam frame the flop was read from: a JPEG and its SHA-256 (hex), kept as evidence on the round. */
+export interface FlopSnapshot { image_base64: string; sha256: string }
+/** A snapshot sent with a settlement, with the cards the camera read (the settled ones may be corrected). */
+export interface FlopSnapshotEvidence extends FlopSnapshot { read_cards: string[] }
 export interface ManualTables { enabled: boolean; result_sla_ms: number; tables: ManualTable[] }
 export interface RoundHistoryItem { id: string; hand_no: number; state: RoundState; flop: string[] | null; settled_at: string | null; voided_at: string | null; void_reason: string | null }
 export interface TableDetail extends TableSummary { history: RoundHistoryItem[] }
@@ -518,10 +527,11 @@ export function createClient(o: ClientOptions) {
     /** bets_24h.staked_by_currency: 24 h stakes per (mode, currency). `staked` (a sum across currencies) is no longer sent. */
     adminOverview: () => get<{ users: { n: number }; bets_24h: { n: number; staked_by_currency: CurrencyAmount[]; /** @deprecated not sent any more: use staked_by_currency */ staked?: number }; rounds_24h: { settled: number; voided: number }; open_alerts: { n: number }; tables: TableSummary[] }>('/v1/admin/overview'),
     adminManualTables: () => get<ManualTables>('/v1/admin/tables/manual'),
-    adminCreateManualTable: (b: { name: string }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string }>('/v1/admin/tables/manual', b),
+    adminCreateManualTable: (b: { name: string; stream_url?: string }) => post<{ id: string; name: string; kind: 'manual'; mode: string; currency: string; stream: StreamLink | null }>('/v1/admin/tables/manual', b),
+    adminSetManualStream: (tableId: string, streamUrl: string | null) => put<{ id: string; stream: StreamLink | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/stream`, { stream_url: streamUrl }),
     adminManualLock: (tableId: string, handNo: number) => post<{ state: 'LOCKED' }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/lock`, { hand_no: handNo }),
     adminReadingCheck: (cards: { card: string; confidence: number; margin?: number }[]) => post<ReadingCheck>('/v1/admin/manual/reading-check', { cards }),
-    adminManualFlop: (tableId: string, handNo: number, cards: string[]) => post<{ state: 'SETTLED'; cards: string[]; next_round_id: string | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/flop`, { hand_no: handNo, cards }),
+    adminManualFlop: (tableId: string, handNo: number, cards: string[], snapshot?: FlopSnapshotEvidence) => post<{ state: 'SETTLED'; cards: string[]; next_round_id: string | null }>(`/v1/admin/tables/${encodeURIComponent(tableId)}/manual/flop`, { hand_no: handNo, cards, ...(snapshot ? { snapshot } : {}) }),
     adminSettings: () => get<{ settings: { key: string; value: unknown; updated_at: string; updated_by: string | null }[] }>('/v1/admin/settings'),
     adminSetSetting: (key: string, value: unknown, note?: string) => put<{ key: string; value: unknown }>(`/v1/admin/settings/${encodeURIComponent(key)}`, { value, ...(note ? { note } : {}) }),
     adminAlerts: () => get<{ alerts: Alert[] }>('/v1/admin/alerts'),

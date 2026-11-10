@@ -16,6 +16,8 @@ import { Territories } from '../lib/accounts.ts';
 import { limitParam } from '../lib/query.ts';
 import { platformStatements } from '../lib/statements.ts';
 import { manualFlop, manualLock } from '../rounds/manual.ts';
+import { snapshotInput, verifySnapshot } from '../rounds/snapshot.ts';
+import { parseStreamLink, storedStream } from '../lib/streamLink.ts';
 import { MONITOR } from '../rounds/monitor.ts';
 import { manualTablesEnabled } from '../rounds/readiness.ts';
 import { ensureOpenRound, lockRound, resolveReviewByPlatform, voidRound, withReviewDeadline } from '../rounds/service.ts';
@@ -485,29 +487,52 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ---------------------------------------------------------------- manual tables (migration 020)
+  const STREAM_URL = z.string().trim().max(300);
+  const streamOrRefuse = (url: string) => {
+    const s = parseStreamLink(url);
+    if (!s) throw unprocessable('invalid_stream_link', 'the stream link must be an https YouTube video or Twitch channel');
+    return s;
+  };
   // The PreFlop team closes betting and types the flop; free play only (rounds/manual.ts).
   app.post('/v1/admin/tables/manual', async (req) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     // Play money only (migration 021): every player has a play wallet; nothing funds a direct chip wallet.
-    const b = z.object({ name: z.string().trim().min(2).max(60) }).parse(req.body);
+    const b = z.object({ name: z.string().trim().min(2).max(60), stream_url: STREAM_URL.optional() }).parse(req.body);
+    const stream = b.stream_url ? streamOrRefuse(b.stream_url) : null;
     const mode = 'play', currency = 'PLAY';
     const id = newId('manual');
     const ev = new EventBatch();
     await tx(ctx.db, async (c) => {
       await upsertClub(c, MANUAL_CLUB, 'PreFlop test tables');
       await c.query(
-        `insert into poker_tables (id, club_id, name, mode, currency, kind, max_round_loss_minor) values ($1, $2, $3, $4, $5, 'manual', $6)`,
-        [id, MANUAL_CLUB, b.name, mode, currency, defaultRoundLossMinor(currency)]);
-      await audit(c, { type: 'table.created', tableId: id, kind: 'manual', mode, by: u.id });
+        `insert into poker_tables (id, club_id, name, mode, currency, kind, max_round_loss_minor, stream_provider, stream_id) values ($1, $2, $3, $4, $5, 'manual', $6, $7, $8)`,
+        [id, MANUAL_CLUB, b.name, mode, currency, defaultRoundLossMinor(currency), stream?.provider ?? null, stream?.id ?? null]);
+      await audit(c, { type: 'table.created', tableId: id, kind: 'manual', mode, stream, by: u.id });
       await ensureOpenRound(c, id, ev);
     });
     publish(ev);
-    return { id, name: b.name, kind: 'manual', mode, currency };
+    return { id, name: b.name, kind: 'manual', mode, currency, stream };
+  });
+  /** The table's live stream for players (migration 032): a YouTube video or Twitch channel link, or null to remove it. */
+  app.put('/v1/admin/tables/:id/manual/stream', async (req) => {
+    const u = await requirePlatform(ctx, req, 'admin', 'ops');
+    const { id } = req.params as { id: string };
+    const b = z.object({ stream_url: STREAM_URL.nullable() }).parse(req.body);
+    const stream = b.stream_url ? streamOrRefuse(b.stream_url) : null;
+    await tx(ctx.db, async (c) => {
+      const t = (await c.query<{ kind: string }>('select kind from poker_tables where id = $1 for update', [id])).rows[0];
+      if (!t) throw notFound('table');
+      if (t.kind !== 'manual') throw conflict('not_manual_table', 'only a manual table takes a stream link');
+      await c.query('update poker_tables set stream_provider = $2, stream_id = $3 where id = $1', [id, stream?.provider ?? null, stream?.id ?? null]);
+      await audit(c, { type: 'table.stream_set', tableId: id, stream, by: u.id });
+    });
+    return { id, stream };
   });
   app.get('/v1/admin/tables/manual', async (req) => {
     await requirePlatform(ctx, req, 'admin', 'ops');
-    const tables = (await ctx.db.query<{ id: string; name: string; mode: string; currency: string; status: string; pause_reason: string | null }>(
-      `select id, name, mode, currency, status, pause_reason from poker_tables where kind = 'manual' order by name`)).rows;
+    const tables = (await ctx.db.query<{ id: string; name: string; mode: string; currency: string; status: string; pause_reason: string | null; stream_provider: string | null; stream_id: string | null }>(
+      `select id, name, mode, currency, status, pause_reason, stream_provider, stream_id from poker_tables where kind = 'manual' order by name`)).rows
+      .map(({ stream_provider, stream_id, ...t }) => ({ ...t, stream: storedStream({ stream_provider, stream_id }) }));
     const rounds = (await ctx.db.query<{ id: string; table_id: string; hand_no: number; state: string; opened_at: Date; locked_at: Date | null; settled_at: Date | null; flop: string[] | null; void_reason: string | null; bets: number; staked_minor: number }>(
       `select distinct on (r.table_id) r.id, r.table_id, r.hand_no, r.state, r.opened_at, r.locked_at, r.settled_at, r.flop, r.void_reason,
               (select count(*)::int from bets b where b.round_id = r.id) as bets,
@@ -562,9 +587,11 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/v1/admin/tables/:id/manual/flop', async (req, reply) => {
     const u = await requirePlatform(ctx, req, 'admin', 'ops');
     const { id } = req.params as { id: string };
-    const b = z.object({ hand_no: z.number().int().positive(), cards: z.array(z.string()).length(3) }).parse(req.body);
+    const b = z.object({ hand_no: z.number().int().positive(), cards: z.array(z.string()).length(3), snapshot: snapshotInput.optional() }).parse(req.body);
+    // Checked before the transaction: a bad frame is refused and the hand stays locked for a retry.
+    const snapshot = b.snapshot ? verifySnapshot(b.snapshot) : null;
     const ev = new EventBatch();
-    const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ctx.timing, ev));
+    const out = await tx(ctx.db, async (c) => manualFlop(c, await manualRound(c, id, b.hand_no), b.cards, u.id, ctx.timing, ev, snapshot));
     publish(ev);
     // The void above is committed; the answer still says the flop was not accepted.
     if (out.state === 'VOID') return reply.code(409).type('application/problem+json').send({ type: 'round_expired', title: out.reason, status: 409, next_round_id: out.next_round_id });

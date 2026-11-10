@@ -33,6 +33,9 @@ const BASE = {
   'frame-ancestors': ["'none'"],
 };
 
+/** The live-stream players a web table page may frame (packages/client streamEmbedUrl builds the src). */
+const STREAM_PLAYERS = ['https://www.youtube-nocookie.com', 'https://player.twitch.tv'];
+
 /** Local Docker (deploy/nginx-spa.conf) serves over http with the API on http://localhost:4000. */
 const LOCAL = ['http://localhost:*', 'ws://localhost:*', 'http://127.0.0.1:*', 'ws://127.0.0.1:*'];
 
@@ -45,6 +48,8 @@ export function cspFor(app, o = {}) {
   const local = o.target === 'nginx' ? LOCAL : [];
   if (app === 'web') {
     d['connect-src'] = ["'self'", 'https:', 'wss:', ...local];
+    // A manual table's live webcam stream (migration 032): only these two players, nothing else.
+    d['frame-src'] = STREAM_PLAYERS;
     // The partner widget (/embed/…) is framed by partner sites; only over TLS.
     if (o.embed) d['frame-ancestors'] = ['https:', ...(o.target === 'nginx' ? ['http://localhost:*'] : [])];
   } else if (app === 'console') {
