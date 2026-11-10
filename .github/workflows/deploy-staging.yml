@@ -109,4 +109,6 @@ jobs:
         env:
           EXPECTED_COMMIT: ${{ steps.expected.outputs.commit }}
           ACCEPT_NEWER_ON: ${{ steps.expected.outputs.commit && 'origin/main' || '' }}
+          # Lets the smoke test read Vercel's "Skipped - Not affected" status for a site it did not rebuild.
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/staging-smoke.mjs
