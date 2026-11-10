@@ -19,6 +19,7 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}@postgres:5432/preflop
       CORS_ORIGINS: http://localhost:8080,http://localhost:8081,http://localhost:8082
       WEB_URL: http://localhost:8080
+      TRUST_PROXY: none  # the API port is published directly; nothing rewrites client addresses
     ports: ["4000:4000"]
     depends_on: { postgres: { condition: service_healthy } }
   sim:

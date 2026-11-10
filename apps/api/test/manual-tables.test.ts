@@ -198,7 +198,7 @@ describe('migration 021 on a database that already has a free-chip manual table 
       // tournament bets refunded, audit, events), from the outbox job the migration enqueued
       expect((await db.query(`select state from rounds where id = 'tbl_chips:h1'`)).rows[0]).toMatchObject({ state: 'OPEN' });
       expect((await db.query(`select kind from outbox where ref = 'tbl_chips:h1' and done_at is null`)).rows).toEqual([{ kind: 'void_round_migrated' }]);
-      expect(await runOutboxOnce(db, { resultSlaMs: 300_000, reviewSlaMs: 300_000, maxCaptureDelayMs: 60_000 })).toBe(1);
+      expect(await runOutboxOnce(db, { resultSlaMs: 300_000, reviewSlaMs: 300_000, openSlaMs: 1_800_000, maxCaptureDelayMs: 60_000 })).toBe(1);
       expect((await db.query(`select state, void_reason, voided_by from rounds where id = 'tbl_chips:h1'`)).rows[0])
         .toMatchObject({ state: 'VOID', void_reason: expect.stringMatching(/play money only/), voided_by: 'system:migration' });
       expect((await db.query(`select count(*)::int as n from audit_log where event::jsonb->>'type' = 'round.voided' and event::jsonb->>'roundId' = 'tbl_chips:h1'`)).rows[0].n).toBe(1);

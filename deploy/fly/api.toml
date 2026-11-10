@@ -2,6 +2,9 @@
 # Deploy from the repo root: flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only
 app = "preflop-staging-api"
 primary_region = "fra"
+# Shutdown budget: on SIGTERM main.ts finishes the worker tick in flight, closes the stream and the
+# pool before exiting; Fly's default of 5 s would kill it mid-tick.
+kill_timeout = "30s"
 
 [build]
   build-target = "api"
@@ -12,6 +15,9 @@ primary_region = "fra"
   # One proxy hop (Fly's edge): the client address is the last one it appended, never one the client sent.
   TRUST_PROXY = "1"
   RUN_WORKER = "true"
+  # Connection budget (docs/18 §Operating, Scale): the role allows 40; a blue-green deploy runs two
+  # API machines at once (2 × 12) beside the simulator's 4.
+  DB_POOL_MAX = "12"
   LOG = "1"
   # The three staging sites, each Vercel preview deployment's unique URL (<project>-<hash>-<team>.vercel.app),
   # and the native apps (apps/mobile): capacitor://localhost on iOS, https://localhost on Android.
@@ -20,6 +26,11 @@ primary_region = "fra"
   NODE_EXTRA_CA_CERTS = "/srv/supabase-ca.crt"
   # Secrets (set by the "Fly secrets" workflow, never committed): DATABASE_URL — the Supabase *direct*
   # connection (db.<ref>.supabase.co:5432, IPv6) with ?sslmode=verify-full.
+
+[deploy]
+  # New machines must pass the readiness check below before the old ones are stopped: a release
+  # whose migration or start fails never takes the API down.
+  strategy = "bluegreen"
 
 [http_service]
   internal_port = 4000

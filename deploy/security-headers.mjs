@@ -5,7 +5,7 @@
  *   - the build-time <meta> CSP the Vite configs inject (cspMetaPlugin below).
  *
  * Regenerate after changing anything here:   node deploy/gen-security-headers.mjs
- * apps/web/src/lib/securityHeaders.test.ts fails when the generated files are out of date.
+ * apps/web/test/frontend.test.tsx fails when the generated files are out of date.
  *
  * Why connect-src is `https: wss:` in the header: the API origin is only known when the app is
  * BUILT (VITE_API_URL), while vercel.json and the nginx config are static and shared by every

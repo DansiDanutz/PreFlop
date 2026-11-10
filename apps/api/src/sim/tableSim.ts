@@ -86,10 +86,11 @@ export class SimTable {
     return `sim-${this.tableId}-${Date.now()}-${++this.n}-${randomInt(1e9)}`;
   }
 
-  async call(as: 'device' | 'dealer' | 'floor' | 'floor_manager', method: string, url: string, body?: unknown, raw?: Buffer): Promise<{ status: number; body: any }> {
+  /** `idempotencyKey` replays an earlier write (a retry); by default every write gets a fresh key. */
+  async call(as: 'device' | 'dealer' | 'floor' | 'floor_manager', method: string, url: string, body?: unknown, raw?: Buffer, idempotencyKey?: string): Promise<{ status: number; body: any }> {
     const cred = as === 'device' ? { id: this.deviceId, key: this.device } : this.staff[as];
     const payload = raw ?? (body === undefined ? '' : JSON.stringify(body));
-    const idem = method === 'GET' ? undefined : this.key();
+    const idem = method === 'GET' ? undefined : idempotencyKey ?? this.key();
     const headers: Record<string, string> = {
       'x-preflop-auth': signRequest(cred.id, cred.key, { method, url, ...(idem ? { idempotencyKey: idem } : {}), body: payload }),
       ...(idem ? { 'idempotency-key': idem } : {}),

@@ -124,6 +124,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
    */
   app.put('/v1/me/limits', async (req) => {
     const u = await ctx.user(req);
+    ctx.limits.account.consume(`user:${u.id}`);
     const want = Limits.parse(req.body);
     return tx(ctx.db, async (c) => {
       await c.query('insert into rg_limits (user_id) values ($1) on conflict do nothing', [u.id]);
@@ -167,6 +168,7 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
    */
   app.post('/v1/me/self-exclusion', async (req) => {
     const u = await ctx.user(req);
+    ctx.limits.account.consume(`user:${u.id}`);
     const { days } = z.object({ days: z.number().int().min(1).max(3650) }).parse(req.body);
     return tx(ctx.db, async (c) => {
       const prev = (await c.query<{ until: Date | null }>('select self_excluded_until as until from users where id = $1 for update', [u.id])).rows[0]!.until;

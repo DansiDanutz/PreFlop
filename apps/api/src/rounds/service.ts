@@ -50,6 +50,8 @@ export interface RoundRow {
 export interface Timing {
   resultSlaMs: number;
   reviewSlaMs: number;
+  /** OPEN rounds older than this at a table that is not ready are voided by the sweeper. */
+  openSlaMs: number;
   maxCaptureDelayMs: number;
 }
 

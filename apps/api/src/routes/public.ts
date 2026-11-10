@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
+import { localWorkerPrefix } from '../lib/workerId.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { reviewDeadline, withReviewDeadline } from '../rounds/service.ts';
 
@@ -56,12 +57,19 @@ export async function tableSummaries(ctx: AppContext, where = 'true', params: un
 const withTimeout = <T>(p: Promise<T>, ms: number) =>
   Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms).unref())]);
 
-/** Database round trip and freshest worker heartbeat, each bounded so a hung database fails fast. */
+/**
+ * Database round trip and freshest worker heartbeat, each bounded so a hung database fails fast. A
+ * process that runs its own worker (RUN_WORKER) is ready only on that worker's heartbeat: during a
+ * blue-green deploy the old machine's worker must not vouch for a new machine whose worker is down.
+ * A process without one (the worker runs apart) accepts any worker's heartbeat.
+ */
 export async function readinessChecks(ctx: AppContext) {
   const maxAgeMs = ctx.config.workerHeartbeatMaxAgeMs;
   try {
+    const own = ctx.config.runWorker ? localWorkerPrefix() : '';
     const r = (await withTimeout(ctx.db.query<{ age_ms: number | null }>(
-      `select (extract(epoch from (clock_timestamp() - max(beat_at))) * 1000)::bigint as age_ms from worker_heartbeats`), 2000)).rows[0];
+      `select (extract(epoch from (clock_timestamp() - max(beat_at))) * 1000)::bigint as age_ms from worker_heartbeats
+        where left(worker_id, length($1)) = $1`, [own]), 2000)).rows[0];
     const age = r?.age_ms ?? null;
     return {
       database: { ok: true },

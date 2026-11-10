@@ -41,8 +41,9 @@ Staging runs the real product against **simulated tables**:
       ```
    4. Set the simulator secrets:
       ```sh
-      fly secrets set -a preflop-staging-sim DATABASE_URL='…same…' ADMIN_EMAIL='you@example.com' ADMIN_PASSWORD='<16+ random chars>'
+      fly secrets set -a preflop-staging-sim DATABASE_URL='…same…' ADMIN_EMAIL='you@example.com' ADMIN_PASSWORD='<12+ chars, 3 of lowercase/uppercase/digits/symbols, no common word>'
       ```
+      The password rule is the one `apps/api/src/config.ts` applies to `ADMIN_PASSWORD` (README, *Running in production*); the simulator refuses to start on a weaker one. Re-seeding on a later machine keeps the password already in the database and only follows `ADMIN_EMAIL`.
    5. Create a deploy token with `fly tokens create org`. Add it to GitHub as the repository secret **`FLY_API_TOKEN`** (Settings → Secrets and variables → Actions → New repository secret).
    6. Optional: `JEV_API_KEY` (docs/20, decision hints) on the API app, the same way. Without it the hints are simply off. The **Jev check** workflow (Actions → Jev check → Run workflow) asks the model one reading-check question with the repository secret, the same request the API sends, and prints only the HTTP status and a one-line verdict (key works, key refused, request rejected, rate limited); the response body is never logged. A new or rotated key can be checked that way before it is pushed to Fly; the Fly secret takes effect at the next deploy.
    7. Without a local flyctl, the **Fly secrets** workflow (Actions → Fly secrets → Run workflow) sets one secret on the API, the simulator or both, using `FLY_API_TOKEN`. Preferred: store the value first as a GitHub repository secret of the same name and leave the workflow's value empty; the run copies the encrypted secret to Fly and nothing is ever shown. Typing the value into the workflow works too, but GitHub keeps a run's inputs readable in the Actions UI, so rotate a value set that way if the repository is ever shared. The **Fly logs** workflow prints an app's status, machines and recent logs.
@@ -59,6 +60,7 @@ Staging runs the real product against **simulated tables**:
   flyctl deploy --config deploy/fly/api.toml --dockerfile Dockerfile --remote-only
   ```
 - **Order.** Migrations are forward-only and run when the API starts, so the API always deploys before the simulator.
+- **Zero downtime.** `api.toml` deploys blue-green: Fly starts the new machines, waits for `/v1/health/ready` on each (migrations have run, the worker beats), and only then stops the old ones; a release that fails to start leaves the running one in place. Both generations hold database connections for those seconds (see *Scale*). `kill_timeout = "30s"` gives the old process time to finish the worker tick in flight on SIGTERM instead of Fly's default 5 s.
 
 ## Operating
 | Task | Command |
@@ -66,7 +68,7 @@ Staging runs the real product against **simulated tables**:
 | Health | `curl https://preflop-staging-api.fly.dev/v1/health/ready` |
 | Logs | `fly logs -a preflop-staging-api` (structured, with request ids) · `fly logs -a preflop-staging-sim` |
 | Releases and rollback | `fly releases -a preflop-staging-api`, then `fly deploy -a preflop-staging-api --image <previous image>` |
-| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks, the worker and the WebSocket stream (events cross machines through PostgreSQL NOTIFY) are safe on several machines |
+| Scale | `fly scale count 2 -a preflop-staging-api`. Exposure locks, the worker and the WebSocket stream (events cross machines through PostgreSQL NOTIFY) are safe on several machines. Mind the connection budget: the role allows 40 connections, the simulator holds 4 and each API machine up to `DB_POOL_MAX` (20 by default, 12 in `api.toml`), and a blue-green deploy briefly runs twice the machines. One machine: 2 × 12 + 4 = 28. Two machines: 4 × 12 + 4 = 52 is over the limit, so set `DB_POOL_MAX = "8"` (4 × 8 + 4 = 36) or raise the role's limit (`alter role preflop_staging connection limit 60`) first |
 | Database backup and restore | Supabase's daily project backups, plus our own weekly dump and restore drill; see *Backups and restore drill* below. Before a risky migration: `scripts/db-backup.sh dump "$DATABASE_URL" before.dump` |
 | Metrics | `GET /v1/admin/metrics` (admin token) |
 | Rotate the simulator's table keys | `fly machine restart -a preflop-staging-sim` (it re-seeds and rotates its keys on a fresh machine) |
@@ -84,7 +86,7 @@ Staging runs the real product against **simulated tables**:
 
 Run it by hand against staging with `node scripts/staging-smoke.mjs`, or against another environment with `API_URL=… SITE_URLS=a,b,c node scripts/staging-smoke.mjs` (`SITE_URLS=` empty skips the sites). Each run leaves one smoke player account behind.
 
-**Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready` and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
+**Uptime** (`.github/workflows/uptime.yml`). Every 15 minutes a probe fetches `/v1/health/ready`, the lobby (`/v1/lobby` must list a ready play table with an open round, the smoke test's step 2: the only outside sign that the simulator is alive, since it has no public service) and the three sites, retrying three times ten seconds apart. When something is down the run fails (GitHub emails the repository owner about failed scheduled runs) and the workflow opens one issue titled "Staging is down" with the label `uptime`, or adds the new probe to the open one; it recognises its own issue by a marker in the body, so other issues with that label are untouched. The next healthy probe closes the issue. Run it on demand from the Actions tab.
 
 ## Backups and restore drill
 

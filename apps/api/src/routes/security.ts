@@ -135,6 +135,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   /** Starts (or restarts) enrolment: a new secret, not active until confirmed with a code. */
   app.post('/v1/me/mfa/setup', async (req) => {
     const u = await ctx.user(req);
+    ctx.limits.account.consume(`user:${u.id}`);
     if (u.mfa_enabled) throw conflict('mfa_already_enabled', 'two-factor authentication is already on; disable it first to start over');
     const secret = generateSecret();
     await tx(ctx.db, async (c) => {
@@ -154,15 +155,15 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     const u = await ctx.user(req);
     ctx.limits.otp.consume(`user:${u.id}`);
     const { code, password } = EnableCode.parse(req.body);
-    return tx(ctx.db, async (c) => {
+    // The password check runs under the login lockout, as /v1/me/password: wrong guesses from a
+    // stolen session count toward the Postgres lockout and lock sign-in too.
+    return guardedLogin(ctx.db, u.email, req.ip, LOGIN_LOCKOUT, async (c) => {
       await c.query('select 1 from users where id = $1 for update', [u.id]); // same lock as setup and disable
       // The password is re-checked under the account lock (the same proof sign-in asks for): a
       // stolen session token alone cannot enrol its own second factor. A wrong password returns
       // before the TOTP check, so the code is not consumed and enrolment stays pending.
       const row = (await c.query<{ password_hash: string }>('select password_hash from users where id = $1', [u.id])).rows[0];
-      if (!row || !(await verifyPassword(password, row.password_hash))) {
-        throw new ApiError(403, 'wrong_password', 'confirm your password to turn on two-factor authentication');
-      }
+      if (!row || !(await verifyPassword(password, row.password_hash))) return null;
       const m = (await c.query<{ secret: string; enabled_at: Date | null }>('select secret, enabled_at from user_mfa where user_id = $1 for update', [u.id])).rows[0];
       if (!m) throw conflict('mfa_not_set_up', 'start with POST /v1/me/mfa/setup');
       if (m.enabled_at) throw conflict('mfa_already_enabled', 'two-factor authentication is already on');
@@ -174,6 +175,10 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       const revoked = await revokeSessions(c, u.id, keep);
       await audit(c, { type: 'mfa.enabled', userId: u.id, sessionsRevoked: revoked });
       return { mfa_enabled: true };
+    }).catch((e: unknown) => {
+      // 403, not 401: the session is still valid, and clients treat 401 as "signed out".
+      if (e instanceof ApiError && e.type === 'invalid_credentials') throw new ApiError(403, 'wrong_password', 'confirm your password to turn on two-factor authentication');
+      throw e;
     });
   });
 

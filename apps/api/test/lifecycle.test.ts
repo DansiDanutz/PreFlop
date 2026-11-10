@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { verifyAuditChain } from '../src/lib/audit.ts';
+import { sweepOnce, sweepStaleOpenRounds } from '../src/worker.ts';
 import { type Harness, bet, harness, ledgerSums, walletOf } from './helpers.ts';
 
 let h: Harness;
@@ -98,13 +99,69 @@ describe('round lifecycle on the simulated table (docs/13 §4, §8)', () => {
     expect(await walletOf(h, p.token)).toBe(9_950);
   });
 
-  it('insufficient funds is refused, and play money resets at any time', async () => {
+  it('insufficient funds is refused, and play money resets once no play bet is open', async () => {
     const p = await h.register();
     const r = await openRound();
     const big = await bet(h, p.token, r.id, 'rank-pattern:no-pair', 20_000);
     expect(big.body.type).toBe('insufficient_funds');
     await bet(h, p.token, r.id, 'rank-pattern:no-pair', 3_000);
+    // A reset while a bet is still held would mint play money for the standings on its win or refund.
+    const held = await h.api('POST', '/v1/me/play/reset', p.token, {});
+    expect(held.status).toBe(409);
+    expect(held.body.type).toBe('play_bets_open');
+    expect(await walletOf(h, p.token)).toBe(7_000);
+    await h.sim.playHand(r.handNo);
+    await h.work();
     expect((await h.api('POST', '/v1/me/play/reset', p.token, {})).body.balance_minor).toBe(10_000);
     expect(await walletOf(h, p.token)).toBe(10_000);
+  });
+
+  it('an OPEN round at a table that went unready is voided after the open SLA; a ready table keeps it', async () => {
+    const p = await h.register();
+    const r = await openRound();
+    const b = await bet(h, p.token, r.id, 'paired-board:yes', 100);
+    expect(b.status).toBe(201);
+    expect(await walletOf(h, p.token)).toBe(9_900);
+    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, openSlaMs: h.config.openSlaMs, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
+    const state = async () => (await h.db.query('select state from rounds where id = $1', [r.id])).rows[0].state;
+    // A ready table rotating rounds normally is never touched, however old its open round.
+    await h.sim.heartbeat();
+    await sweepOnce(h.db, { ...timing, openSlaMs: 1 });
+    expect(await state()).toBe('OPEN');
+    // The heartbeat goes stale: under the SLA the round waits, past it the stakes are refunded.
+    await h.db.query(`update poker_tables set link_at = now() - interval '1 hour' where id = 'sim-1'`);
+    await sweepOnce(h.db, { ...timing, openSlaMs: 30 * 60_000 });
+    expect(await state()).toBe('OPEN');
+    await sweepOnce(h.db, { ...timing, openSlaMs: 1 });
+    expect(await state()).toBe('VOID');
+    expect((await h.db.query('select voided_by, void_reason from rounds where id = $1', [r.id])).rows[0]).toMatchObject({ voided_by: 'system:sweeper', void_reason: 'open deadline passed: table not ready' });
+    expect(await walletOf(h, p.token)).toBe(10_000);
+    await sweepOnce(h.db, { ...timing, openSlaMs: 1 });
+    expect(await walletOf(h, p.token)).toBe(10_000);
+    expect((await h.db.query(`select count(*)::int as n from ledger_tx where kind = 'bet.refund' and ref = $1`, [b.body.bet_id])).rows[0].n).toBe(1);
+    for (const s of await ledgerSums(h.db)) expect(s.total).toBe(0);
+  });
+
+  it('a heartbeat in flight when the open SLA fires is waited for: the table that just became ready keeps its round', async () => {
+    const p = await h.register();
+    const r = await openRound();
+    expect((await bet(h, p.token, r.id, 'paired-board:yes', 100)).status).toBe(201);
+    const timing = { resultSlaMs: h.config.resultSlaMs, reviewSlaMs: h.config.reviewSlaMs, openSlaMs: 1, maxCaptureDelayMs: h.config.maxCaptureDelayMs };
+    await h.db.query(`update poker_tables set link_at = now() - interval '1 hour' where id = 'sim-1'`);
+    // A heartbeat is an update of the table row: hold one uncommitted while the sweeper runs.
+    const heartbeat = await h.db.connect();
+    try {
+      await heartbeat.query('begin');
+      await heartbeat.query(`update poker_tables set link_at = now() where id = 'sim-1'`);
+      let finished = false;
+      const sweep = sweepStaleOpenRounds(h.db, timing).then((n) => { finished = true; return n; });
+      await new Promise((res) => setTimeout(res, 300));
+      expect(finished).toBe(false); // waiting for the heartbeat, not voiding on the stale row it read before
+      await heartbeat.query('commit');
+      expect(await sweep).toBe(0);
+    } finally {
+      heartbeat.release();
+    }
+    expect((await h.db.query('select state from rounds where id = $1', [r.id])).rows[0].state).toBe('OPEN');
   });
 });
