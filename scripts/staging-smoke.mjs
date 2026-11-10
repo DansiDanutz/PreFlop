@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { vercelProjectOf, vercelSkippedEvery } from '../deploy/vercel-skips.mjs';
 /**
  * End-to-end smoke test against a deployed environment (docs/18 §Smoke test). Runs after every
  * staging deploy and can be run by hand: node scripts/staging-smoke.mjs
@@ -18,7 +19,9 @@ import { execFileSync } from 'node:child_process';
  * must serve the build of that commit, read from its <meta name="build-commit">, see
  * deploy/build-commit.mjs) and ACCEPT_NEWER_ON (a git ref such as origin/main: a site serving a
  * descendant of EXPECTED_COMMIT reachable from that ref passes too, since a newer push may already be
- * live; git is asked on every poll, and a git failure never passes a site).
+ * live; git is asked on every poll, and a git failure never passes a site). GITHUB_REPOSITORY
+ * (owner/name) and optionally GITHUB_TOKEN: when set, a site still serving an older build also passes
+ * if Vercel reported it "Skipped - Not affected" on every mainline commit since that build.
  * Exit code 0 on success; 1 with a one-line reason per failed step otherwise.
  */
 const API = (process.env.API_URL ?? 'https://preflop-staging-api.fly.dev').replace(/\/$/, '');
@@ -81,6 +84,24 @@ function acceptableBuild(commit, siteRoot) {
     return false;
   } catch (e) {
     log(`git could not confirm ${commit.slice(0, 7)} relative to ${EXPECTED_COMMIT.slice(0, 7)} on ${ACCEPT_NEWER_ON}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
+    return false;
+  }
+}
+/** Whether Vercel skipped this site on every mainline commit from the served build up to
+ * EXPECTED_COMMIT: its own word that the older build is still the newest one for the site. Any
+ * git or GitHub failure is "no". */
+async function skippedSince(commit, site) {
+  const repo = process.env.GITHUB_REPOSITORY?.trim();
+  const project = vercelProjectOf(site);
+  if (!commit || !repo || !project) return false;
+  try {
+    git('merge-base', '--is-ancestor', commit, EXPECTED_COMMIT);
+    const commits = git('rev-list', '--first-parent', `${commit}..${EXPECTED_COMMIT}`).split('\n').filter(Boolean);
+    const skipped = await vercelSkippedEvery(commits, project, { repo, token: process.env.GITHUB_TOKEN?.trim() || undefined });
+    if (skipped) log(`served build ${commit.slice(0, 7)} predates ${EXPECTED_COMMIT.slice(0, 7)} but Vercel skipped ${project} as unaffected on all ${commits.length} commit(s) since`);
+    return skipped;
+  } catch (e) {
+    log(`could not confirm that Vercel skipped ${project}: ${String(e.stderr ?? e.message).trim().split('\n')[0]}`);
     return false;
   }
 }
@@ -224,7 +245,7 @@ for (const site of SITES) {
   const page = await until(`${site} serving ${wanted ? `a build of ${wanted}` : 'the app'}`, async () => {
     const p = await fetchSite(site);
     if (p.status !== 200 || !p.root) { log(`${site}: HTTP ${p.status}, app root ${p.root ? 'present' : 'missing'}`); return null; }
-    if (EXPECTED_COMMIT && !acceptableBuild(p.commit, root)) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${wanted}`); return null; }
+    if (EXPECTED_COMMIT && !acceptableBuild(p.commit, root) && !(await skippedSince(p.commit, site))) { log(`${site}: serving build ${p.commit ?? 'unknown'}, waiting for ${wanted}`); return null; }
     return p;
   }, 10_000);
   log(`${site} serves the app${page.commit ? ` (build ${page.commit.slice(0, 7)})` : ''}`);
