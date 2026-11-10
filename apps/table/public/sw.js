@@ -30,7 +30,9 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.ok) {
+          // Only a real page becomes the offline shell: an error body from a proxy would otherwise
+          // be stored as /index.html and served on the next offline start.
+          if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put('/index.html', copy));
           }
