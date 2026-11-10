@@ -90,3 +90,81 @@ describe('a disposed stream never reconnects', () => {
     expect(events).toEqual([]);
   });
 });
+
+describe('a half-open connection is noticed and replaced', () => {
+  const start = (status: string[] = []) => connectStream({ url: 'wss://api.test/v1/stream', topics: ['lobby'], onEvent: () => {}, onStatus: (x) => status.push(x) });
+
+  it('probes a quiet socket and reconnects when nothing comes back', () => {
+    const status: string[] = [];
+    const s = start(status);
+    const first = FakeWs.all[0]!;
+    first.accept();
+    const sentAfterOpen = first.sent.length;
+    vi.advanceTimersByTime(25_000);
+    expect(first.sent.length).toBe(sentAfterOpen + 1); // the probe: a re-subscribe the server always answers
+    vi.advanceTimersByTime(5_000); // no answer: the socket never fired onclose, yet it is dead
+    expect(first.closeCalls).toBe(1);
+    expect(status).toEqual(['open', 'closed']);
+    vi.advanceTimersByTime(1_000);
+    expect(FakeWs.all).toHaveLength(2);
+    s.close();
+  });
+
+  it('keeps a socket that answers its probe', () => {
+    const status: string[] = [];
+    const s = start(status);
+    const first = FakeWs.all[0]!;
+    first.accept();
+    vi.advanceTimersByTime(25_000);
+    first.onmessage?.({ data: JSON.stringify({ type: 'subscribed', topics: ['lobby'] }) });
+    vi.advanceTimersByTime(20_000);
+    expect(first.closeCalls).toBe(0);
+    expect(FakeWs.all).toHaveLength(1);
+    expect(status).toEqual(['open']);
+    s.close();
+  });
+
+  it('close() stops the probes', () => {
+    const s = start();
+    const first = FakeWs.all[0]!;
+    first.accept();
+    s.close();
+    const sent = first.sent.length;
+    vi.advanceTimersByTime(120_000);
+    expect(first.sent.length).toBe(sent);
+    expect(FakeWs.all).toHaveLength(1);
+  });
+});
+
+describe('reconnect timing', () => {
+  it('spreads reconnects: the wait is between half and all of the backoff step', () => {
+    const waitFor = (random: number): number => {
+      FakeWs.all = [];
+      vi.spyOn(Math, 'random').mockReturnValue(random);
+      const s = connectStream({ url: 'wss://api.test/v1/stream', topics: ['lobby'], onEvent: () => {} });
+      FakeWs.all[0]!.accept();
+      FakeWs.all[0]!.drop();
+      let waited = 0;
+      while (FakeWs.all.length < 2 && waited < 5_000) { vi.advanceTimersByTime(10); waited += 10; }
+      s.close();
+      vi.restoreAllMocks();
+      return waited;
+    };
+    expect(waitFor(0)).toBe(500);
+    expect(waitFor(0.999)).toBe(1_000);
+  });
+
+  it('reconnects at once when the browser comes back online during the backoff', () => {
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal('addEventListener', (type: string, fn: () => void) => listeners.set(type, fn));
+    vi.stubGlobal('removeEventListener', (type: string) => listeners.delete(type));
+    const s = connectStream({ url: 'wss://api.test/v1/stream', topics: ['lobby'], onEvent: () => {} });
+    FakeWs.all[0]!.accept();
+    FakeWs.all[0]!.drop();
+    expect(FakeWs.all).toHaveLength(1);
+    listeners.get('online')!();
+    expect(FakeWs.all).toHaveLength(2);
+    s.close();
+    expect(listeners.has('online')).toBe(false);
+  });
+});

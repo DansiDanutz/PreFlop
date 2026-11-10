@@ -594,6 +594,13 @@ export function parseStreamFrame(raw: unknown): StreamEvent | null {
   }
 }
 
+/** A quiet open socket is probed this often; the server answers every probe (a re-subscribe) with a frame. */
+export const STREAM_KEEPALIVE_MS = 25_000;
+/** A probe unanswered for this long means the connection is dead, whatever the socket still reports. */
+export const STREAM_PROBE_TIMEOUT_MS = 5_000;
+const STREAM_RETRY_MIN_MS = 500;
+const STREAM_RETRY_MAX_MS = 10_000;
+
 /**
  * Live events over WebSocket with auto-reconnect. Topics: "lobby", "table:<id>". Pass a session
  * token to also receive your own bet events (bet.accepted, bet.settled, bet.voided): it is sent as
@@ -602,9 +609,40 @@ export function parseStreamFrame(raw: unknown): StreamEvent | null {
 export function connectStream(o: { url: string; topics: string[]; token?: string | null; onEvent: (e: StreamEvent) => void; onStatus?: (s: 'open' | 'closed') => void }) {
   let ws: WebSocket | null = null;
   let closed = false;
-  let retry = 500;
+  let retry = STREAM_RETRY_MIN_MS;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let keepalive: ReturnType<typeof setInterval> | null = null;
+  let probeTimer: ReturnType<typeof setTimeout> | null = null;
   let topics = [...o.topics];
+  const stopProbes = () => {
+    if (keepalive !== null) { clearInterval(keepalive); keepalive = null; }
+    if (probeTimer !== null) { clearTimeout(probeTimer); probeTimer = null; }
+  };
+  /** The connection is gone (closed by the peer, or found dead by a probe): report it and retry. */
+  const lost = (sock: WebSocket) => {
+    if (closed || ws !== sock) return;
+    ws = null;
+    stopProbes();
+    o.onStatus?.('closed');
+    retry = Math.min(retry * 2, STREAM_RETRY_MAX_MS);
+    // Jitter: after a deploy or an API restart every client would otherwise retry in the same instant.
+    timer = setTimeout(open, retry * (0.5 + Math.random() / 2));
+  };
+  /**
+   * A half-open connection (a phone that changed network or slept) never fires onclose and would
+   * show stale odds as live. The server answers a re-subscribe with a frame, so silence after one
+   * means the socket is dead.
+   */
+  const probe = (sock: WebSocket) => {
+    if (closed || ws !== sock || sock.readyState !== 1 || probeTimer !== null) return;
+    sock.send(JSON.stringify({ subscribe: topics }));
+    probeTimer = setTimeout(() => {
+      probeTimer = null;
+      if (closed || ws !== sock) return;
+      lost(sock);
+      sock.close();
+    }, STREAM_PROBE_TIMEOUT_MS);
+  };
   const open = () => {
     timer = null;
     // A reconnect scheduled before close() (logout, token change, unmount) never opens a socket.
@@ -613,22 +651,30 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
     ws = sock;
     sock.onopen = () => {
       if (closed || ws !== sock) { sock.close(); return; }
-      retry = 500;
+      retry = STREAM_RETRY_MIN_MS;
       o.onStatus?.('open');
       if (o.token) sock.send(JSON.stringify({ type: 'auth', token: o.token }));
       sock.send(JSON.stringify({ subscribe: topics }));
+      keepalive = setInterval(() => probe(sock), STREAM_KEEPALIVE_MS);
     };
     sock.onmessage = (m) => {
       if (closed || ws !== sock) return;
+      // Any frame proves the connection is alive.
+      if (probeTimer !== null) { clearTimeout(probeTimer); probeTimer = null; }
       const e = parseStreamFrame(m.data);
       if (e) o.onEvent(e);
     };
-    sock.onclose = () => {
-      if (closed || ws !== sock) return;
-      o.onStatus?.('closed');
-      timer = setTimeout(open, (retry = Math.min(retry * 2, 10_000)));
-    };
+    sock.onclose = () => lost(sock);
   };
+  /** The device is back online or the tab is visible again: do not wait out the backoff or the next probe. */
+  const wake = () => {
+    if (closed) return;
+    if (timer !== null) { clearTimeout(timer); open(); } else if (ws) probe(ws);
+  };
+  const onVisible = () => { if (typeof document !== 'undefined' && document.visibilityState === 'visible') wake(); };
+  const listens = typeof globalThis.addEventListener === 'function';
+  if (listens) globalThis.addEventListener('online', wake);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
   open();
   return {
     setTopics(next: string[]) {
@@ -636,10 +682,13 @@ export function connectStream(o: { url: string; topics: string[]; token?: string
       topics = [...next];
       if (ws?.readyState === 1) ws.send(JSON.stringify({ subscribe: topics, unsubscribe: un }));
     },
-    /** Disposes the stream for good: cancels a pending reconnect and closes the socket. */
+    /** Disposes the stream for good: cancels a pending reconnect and the probes, and closes the socket. */
     close() {
       closed = true;
       if (timer !== null) { clearTimeout(timer); timer = null; }
+      stopProbes();
+      if (listens) globalThis.removeEventListener('online', wake);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
       const s = ws;
       ws = null;
       s?.close();
