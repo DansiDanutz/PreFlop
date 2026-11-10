@@ -12,7 +12,7 @@ import { newId } from '../lib/ids.ts';
 import { BoundedRecord, CurrencyCode, PositiveMinor } from '../lib/json.ts';
 import { perIp } from '../lib/rateLimit.ts';
 import { applyDueLimits, toEurCents } from '../lib/rg.ts';
-import { assertRealMoneyAccount } from '../lib/accounts.ts';
+import { assertMayBet, assertRealMoneyAccount } from '../lib/accounts.ts';
 import { modeEnabled as modeEnabledIn } from '../growth/leaderboards.ts';
 import { assertPositive, chipsPurchase, lockRef, preparePayment, runPayment } from '../payments/service.ts';
 import { railFor, requireProvider } from '../providers/index.ts';
@@ -293,6 +293,13 @@ export async function accountRoutes(app: FastifyInstance, ctx: AppContext) {
     const r = rail(b.pay_with === 'EUR' ? 'real-fiat' : 'real-crypto');
     const res = await runPayment(ctx.db, `user:${u.id}`, key, req, r, 'createDeposit', async (c, id) => {
       if (!(await modeEnabledIn(c, 'virtual-chips'))) throw conflict('mode_disabled', 'virtual chips are not enabled');
+      // Chips cost real money: a self-excluded, suspended, under-18 or blocked-country account
+      // cannot pay for them, as it cannot bet. (Whether a purchase also needs KYC is a
+      // per-territory legal decision, docs/08; it is not required here.)
+      const who = (await c.query<{ status: string; country: string | null; date_of_birth: string | null }>(
+        `select status, country, to_char(date_of_birth, 'YYYY-MM-DD') as date_of_birth from users where id = $1`, [u.id])).rows[0]!;
+      if (who.status !== 'active') throw new ApiError(403, 'self_excluded', 'account cannot transact');
+      await assertMayBet(c, who);
       await preparePayment(c, { id, rail: r, kind: 'purchase', userId: u.id, ...chipsPurchase(b.chips, b.pay_with) });
     });
     return reply.code(res.status).send(res.body);
