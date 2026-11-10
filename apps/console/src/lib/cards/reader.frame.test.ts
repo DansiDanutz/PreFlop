@@ -17,7 +17,10 @@ type Scene = { card: string; x: number; y: number; rot: number }[];
 /** What a real table does to a frame; see drawScene in test-harness/reader.html. */
 type Conditions = { felt?: string; light?: number; skew?: number; blur?: number; noise?: number };
 const THREE: Scene = [{ card: 'Ah', x: 350, y: 330, rot: 0 }, { card: 'Kd', x: 640, y: 330, rot: 0 }, { card: '7c', x: 930, y: 330, rot: 0 }];
-const SCENES: { name: string; cards: Scene; flop: string[]; conditions?: Conditions }[] = [
+const TS_2C: Scene = [{ card: 'Ts', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2c', x: 930, y: 320, rot: 8 }];
+const TC_2S: Scene = [{ card: 'Tc', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2s', x: 930, y: 320, rot: 8 }];
+/** `minMargin`: every card's lead over its runner-up, where blur makes ♣ and ♠ close: a reading that is right by a hair fails. */
+const SCENES: { name: string; cards: Scene; flop: string[]; conditions?: Conditions; minMargin?: number }[] = [
   { name: 'three upright cards', cards: THREE, flop: ['Ah', 'Kd', '7c'] },
   { name: 'tilted, and one upside down', cards: [{ card: 'Ts', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2c', x: 930, y: 320, rot: 8 }], flop: ['Ts', 'Qh', '2c'] },
   { name: 'two landscape cards and one small turn', cards: [{ card: '9d', x: 300, y: 300, rot: 90 }, { card: 'Jc', x: 700, y: 300, rot: 5 }, { card: '5s', x: 1000, y: 300, rot: -90 }], flop: ['9d', 'Jc', '5s'] },
@@ -25,12 +28,16 @@ const SCENES: { name: string; cards: Scene; flop: string[]; conditions?: Conditi
   { name: 'uneven light across the table', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { light: 0.55 } },
   { name: 'camera not straight above (skewed view)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { skew: 0.18 } },
   { name: 'soft focus (1.5 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 1.5 } },
-  { name: 'badly out of focus (4 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 4 } },
+  { name: 'badly out of focus (4 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 4 }, minMargin: 0.05 },
+  { name: 'very badly out of focus (5 px blur)', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { blur: 5 }, minMargin: 0.05 },
   { name: 'sensor noise', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { noise: 28 } },
   { name: 'red felt, dim light, slight blur and noise together', cards: THREE, flop: ['Ah', 'Kd', '7c'], conditions: { felt: '#6b1d1d', light: 0.35, blur: 0.8, noise: 12 } },
   // black suits at an angle, out of focus: a blurred spade's point rounds like a club's top lobe (focus-level templates)
   { name: 'tilted black suits, 2 px blur and noise: spade stays a spade', cards: [{ card: 'Ts', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2c', x: 930, y: 320, rot: 8 }], flop: ['Ts', 'Qh', '2c'], conditions: { blur: 2, noise: 30 } },
   { name: 'tilted black suits, 2 px blur and noise: club stays a club', cards: [{ card: 'Tc', x: 350, y: 330, rot: -12 }, { card: 'Qh', x: 640, y: 340, rot: 180 }, { card: '2s', x: 930, y: 320, rot: 8 }], flop: ['Tc', 'Qh', '2s'], conditions: { blur: 2, noise: 30 } },
+  // the same black suits badly out of focus: compared at one shared focus level (vision.ts scoresAtSharedLevel)
+  { name: 'tilted black suits, 4 px blur: spade stays a spade', cards: TS_2C, flop: ['Ts', 'Qh', '2c'], conditions: { blur: 4 }, minMargin: 0.05 },
+  { name: 'tilted black suits, 4 px blur: club stays a club', cards: TC_2S, flop: ['Tc', 'Qh', '2s'], conditions: { blur: 4 }, minMargin: 0.05 },
 ];
 
 const chromiumPath = () => process.env.PLAYWRIGHT_CHROMIUM ?? (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
@@ -84,7 +91,7 @@ describe('card reader on synthetic frames (OpenCV.js in Chromium)', () => {
       expect(r.guesses).toHaveLength(3);
       for (const g of r.guesses) {
         expect(g.confidence).toBeGreaterThanOrEqual(MIN_CONFIDENCE);
-        expect(g.margin).toBeGreaterThanOrEqual(0);
+        expect(g.margin, `${g.card} margin`).toBeGreaterThanOrEqual(s.minMargin ?? 0);
         expect(g.margin).toBeLessThanOrEqual(1);
         expect(g.corners).toHaveLength(4);
       }
@@ -94,7 +101,7 @@ describe('card reader on synthetic frames (OpenCV.js in Chromium)', () => {
   }
 
   it('the first reading, templates included, stays well under a second (the OpenCV load itself is not counted)', () => {
-    console.info(`[reader.frame] first read (templates drawn at ${3} focus levels): ${firstRead.ms} ms`);
+    console.info(`[reader.frame] first read (rank templates at 3 focus levels, suit templates at 5): ${firstRead.ms} ms`);
     expect(firstRead.flop).toEqual(SCENES[0]!.flop);
     expect(firstRead.ms).toBeLessThan(1_000);
   });

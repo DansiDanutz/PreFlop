@@ -12,12 +12,15 @@
   // The same bundled fonts the console ships (main.tsx): the reader's glyph templates are drawn in
   // Inter 700 as in the real app, and the cards' indices in Inter 600, so the scene does not depend on
   // which system fonts a machine happens to have (Arial, Liberation, DejaVu … all read differently).
+  // Inter has no card suits, so ♠♥♦♣ come from the bundled DejaVu Sans, in the scene as in the templates.
   import '@fontsource/inter/600.css';
   import '@fontsource/inter/700.css';
+  import '@fontsource/dejavu-sans/400.css';
+  import '@fontsource/dejavu-sans/700.css';
   import { loadCv } from '/src/lib/cards/opencv.ts';
   import { readCards } from '/src/lib/cards/reader.ts';
   const SUIT = { s: '♠', h: '♥', d: '♦', c: '♣' };
-  const INDEX_FONT = '600 56px "Inter"', PIP_FONT = '110px "Inter"';
+  const INDEX_FONT = '600 56px "Inter", "DejaVu Sans"', PIP_FONT = '110px "Inter", "DejaVu Sans"';
   /**
    * Draws the felt with cards ("Ah", "Ts", …) at the given centres and rotations (degrees). `opts` adds
    * what a real table does to a frame: felt colour, uneven light (a dark gradient across the table),
@@ -72,7 +75,9 @@
     return readCards(cv, document.getElementById('felt'));
   };
   // Fonts must be in place before the first scene is drawn and before the reader draws its templates.
-  await Promise.all([document.fonts.load('bold 120px "Inter"'), document.fonts.load(INDEX_FONT), document.fonts.load(PIP_FONT)]);
+  // With the text, so each font file the scene uses is fetched (the suits' DejaVu as well as Inter's subsets).
+  const SCENE_TEXT = 'A23456789JQK10♠♥♦♣';
+  await Promise.all([document.fonts.load(INDEX_FONT, SCENE_TEXT), document.fonts.load(PIP_FONT, SCENE_TEXT)]);
   await document.fonts.ready;
   window.harnessReady = true;
 </script>

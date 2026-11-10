@@ -37,6 +37,15 @@ export const SUIT_GLYPHS: readonly { glyph: string; code: string; red: boolean }
   { glyph: '♠', code: 's', red: false }, { glyph: '♥', code: 'h', red: true }, { glyph: '♦', code: 'd', red: true }, { glyph: '♣', code: 'c', red: false },
 ];
 
+/**
+ * The font the glyph templates are drawn with, from bundled files only. Inter has no card suits
+ * (U+2660–2667 are in none of its subsets), so the suits come from the bundled DejaVu Sans instead
+ * of whatever symbol font the operating system has: Segoe UI Symbol and DejaVu draw a club differently.
+ */
+export const GLYPH_FONT = 'bold 120px "Inter", "DejaVu Sans"';
+/** Every glyph the templates draw: loading GLYPH_FONT for this text fetches each font file they use. */
+export const GLYPH_TEXT = [...RANK_GLYPHS, ...SUIT_GLYPHS].map((g) => g.glyph).join('');
+
 /** A guess below this is shown but never pre-filled. */
 export const MIN_CONFIDENCE = 0.45;
 
@@ -142,6 +151,23 @@ export function crownAgreement(sample: readonly number[], template: readonly num
   let diff = 0;
   for (let y = 0; y < rows; y++) diff += Math.abs((sample[y] ?? 0) - (template[y] ?? 0));
   return Math.max(0, Math.min(1, 1 - diff / rows));
+}
+
+/**
+ * Each candidate's score at one shared focus level: the level whose best candidate fits the sample
+ * best (`perLevel[candidate][level]`). Taking each candidate's own best level instead lets a blurrier
+ * template win only because it is blurrier: a heavily softened club then beats a crisper spade on a
+ * mildly blurred spade, and the reverse. Compared at one level, every candidate is as soft as the others.
+ */
+export function scoresAtSharedLevel(perLevel: readonly (readonly number[])[]): number[] {
+  const levels = Math.min(...perLevel.map((p) => p.length));
+  if (!perLevel.length || !Number.isFinite(levels) || levels < 1) return perLevel.map(() => -Infinity);
+  let shared = 0, bestFit = -Infinity;
+  for (let l = 0; l < levels; l++) {
+    const fit = Math.max(...perLevel.map((p) => (Number.isFinite(p[l]) ? p[l]! : -Infinity)));
+    if (fit > bestFit) { bestFit = fit; shared = l; }
+  }
+  return perLevel.map((p) => p[shared]!);
 }
 
 /** The gap between the best and the second-best score (0..1); 0 with fewer than two finite scores. */
