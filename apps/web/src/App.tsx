@@ -46,7 +46,9 @@ const NewsArticlePage = lazyNamed(news, 'NewsArticlePage');
 
 function ScrollToTop() {
   const { pathname } = useLocation();
-  useEffect(() => window.scrollTo(0, 0), [pathname]);
+  // Block body on purpose: current Chrome returns a Promise from scrollTo, and an effect that
+  // returns it hands React a "cleanup" it cannot call, which blanked the app on the next route change.
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 }
 
