@@ -156,7 +156,13 @@ export async function buildApp(db: Db, config: Config, opts: BuildOptions = {}):
     if (err instanceof ZodError) {
       return reply.code(400).type('application/problem+json').send({ type: 'bad_request', title: 'invalid request', status: 400, issues: err.issues });
     }
-    const e = err as { statusCode?: number; message?: string };
+    const e = err as { statusCode?: number; message?: string; code?: string };
+    // query_canceled: the statement timeout (lib/db.ts) cancelled a query, usually one waiting on a
+    // lock. The transaction rolled back; the client may retry.
+    if (e.code === '57014') {
+      req.log.warn(err);
+      return reply.code(503).header('retry-after', '1').type('application/problem+json').send({ type: 'retry_later', title: 'the database took too long, retry later', status: 503, request_id: req.id });
+    }
     if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ type: 'bad_request', title: e.message, status: e.statusCode });
     req.log.error(err);
     console.error(`[${req.id}]`, err);
