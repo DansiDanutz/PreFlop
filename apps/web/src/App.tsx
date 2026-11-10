@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Suspense, useEffect, useRef } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { AppLayout } from './components/AppShell.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { SiteLayout } from './components/site/SiteLayout.tsx';
 import { RequireAuth, useSessionGuard } from './lib/auth.tsx';
 import { lazyNamed } from './lib/lazy.ts';
@@ -84,6 +85,7 @@ export function App() {
     <>
       <ScrollToTop />
       <NativeBridge />
+      <ErrorBoundary>
       <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route element={<SiteLayout />}>
@@ -127,6 +129,7 @@ export function App() {
         <Route path="embed" element={<EmbedTablePage />} />
       </Routes>
       </Suspense>
+      </ErrorBoundary>
     </>
   );
 }

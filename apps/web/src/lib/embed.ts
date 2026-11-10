@@ -33,10 +33,9 @@ export function parseEmbedParams(p: URLSearchParams): EmbedOptions {
   };
 }
 
-/** The session token from the iframe URL: the fragment (#token=, preferred) or the query (?token=, older snippets). */
-export function embedToken(search: URLSearchParams, hash: string): string | null {
-  const h = new URLSearchParams(hash.replace(/^#/, ''));
-  return h.get('token') || search.get('token') || null;
+/** The session token from the iframe URL's fragment (#token=): never the query, which proxies and referrers would log. */
+export function embedToken(hash: string): string | null {
+  return new URLSearchParams(hash.replace(/^#/, '')).get('token') || null;
 }
 
 const rgb = (hex: string): [number, number, number] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];

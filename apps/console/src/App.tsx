@@ -3,8 +3,9 @@ import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { useAuth } from './lib/auth.tsx';
 import { session } from './lib/api.ts';
 import { pickLandingPortal } from './lib/portals.ts';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { Shell } from './components/Shell.tsx';
-import { Loading, ErrorBox } from './components/ui.tsx';
+import { Loading, SessionError } from './components/ui.tsx';
 import { lazyNamed } from './lib/lazy.ts';
 import { LoginPage } from './pages/Login.tsx';
 import { ClaimPage } from './pages/Claim.tsx';
@@ -41,11 +42,11 @@ const TournamentDetailPage = lazyNamed(tournaments, 'TournamentDetailPage');
 const AgentOverview = lazyNamed(() => import('./portals/agent/index.tsx'), 'AgentOverview');
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { token, loading, me, error } = useAuth();
+  const { token, loading, me, error, refetchMe, logout } = useAuth();
   const loc = useLocation();
   if (!token) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
   if (loading) return <div className="grid min-h-screen place-items-center"><Loading label="Signing you in…" /></div>;
-  if (!me) return <div className="mx-auto max-w-lg p-10"><ErrorBox error={error} /></div>;
+  if (!me) return <SessionError error={error} onRetry={() => void refetchMe()} onSignOut={() => void logout()} />;
   // require_staff_mfa: a PreFlop team account without 2FA can only enrol.
   if (me.mfa_enrollment_required && loc.pathname !== '/account/security') return <Navigate to="/account/security" replace />;
   return <>{children}</>;
@@ -60,6 +61,7 @@ function Landing() {
 export function App() {
   const shell = <RequireAuth><Shell noAccess={<NoAccessPage />} /></RequireAuth>;
   return (
+    <ErrorBoundary>
     <Suspense fallback={<div className="grid min-h-screen place-items-center"><Loading /></div>}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -152,5 +154,6 @@ export function App() {
       <Route path="*" element={<RequireAuth><NotFoundPage standalone /></RequireAuth>} />
     </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 }

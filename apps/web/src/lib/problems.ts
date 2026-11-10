@@ -1,4 +1,5 @@
 import { ApiError } from '@preflop/client';
+import { formatMoney } from '@preflop/ui';
 
 /** Account and responsible-gaming refusals (docs/14 "Accounts and security"), in the player's words. */
 export const ACCOUNT_PROBLEMS: Record<string, string> = {
@@ -39,6 +40,13 @@ export function betProblem(err: unknown): BetProblem {
       return { kind: 'insufficient_funds', message: 'Not enough free chips for this stake.' };
     case 'limit_exceeded':
       return { kind: 'limit_exceeded', message: `This stake is above the table limit (${p.title}). Try a smaller amount.` };
+    case 'invalid_stake':
+      // The API uses invalid_stake for both ends (below a room's minimum, above the currency maximum): its title says which.
+      return { kind: 'limit_exceeded', message: `This stake is not allowed here (${p.title}). Choose a different amount.` };
+    case 'house_limit':
+      return { kind: 'limit_exceeded', message: `The house cannot cover a payout this large${maxPayout(p)}. Try a smaller amount.` };
+    case 'user_round_limit':
+      return { kind: 'limit_exceeded', message: `Your predictions on this round would pay out more than allowed${maxPayout(p)}. Try a smaller amount.` };
     case 'table_not_ready':
       return { kind: 'table_not_ready', message: 'This table is not ready for predictions right now. Try again in a moment.' };
     case 'unauthorized':
@@ -63,6 +71,15 @@ export function betProblem(err: unknown): BetProblem {
   }
 }
 
+/**
+ * " (max €2,500.00)" from the problem's max_payout_minor, only when the problem also names its currency:
+ * a bare minor-unit number would read as ten or a hundred times the real cap.
+ */
+function maxPayout(p: ApiError['problem']): string {
+  if (typeof p.max_payout_minor !== 'number' || typeof p.currency !== 'string') return '';
+  return ` (max ${formatMoney(p.max_payout_minor, p.currency)})`;
+}
+
 /** True when an endpoint simply does not exist yet on the running API. */
 export const isNotImplemented = (err: unknown) => err instanceof ApiError && (err.status === 404 || err.status === 405 || err.status === 501);
 
@@ -74,7 +91,7 @@ export function errorText(err: unknown): string {
     if (err.type === 'invalid_credentials') return 'Wrong email or password.';
     if (err.type === 'bad_request') return 'Please check the form and try again.';
     if (ACCOUNT_PROBLEMS[err.type]) return ACCOUNT_PROBLEMS[err.type]!;
-    return err.problem.title || 'Something went wrong.';
+    return `${err.problem.title || 'Something went wrong.'}${err.requestId ? ` (ref ${err.requestId})` : ''}`;
   }
   return 'Could not reach PreFlop. Check your connection and try again.';
 }

@@ -44,7 +44,7 @@ const keys = await tx(db, async (c) => {
   return seedSimTable(c, { clubId: 'soak', tableId: 'soak-1', name: 'Soak' });
 });
 const sim = new SimTable(send, keysToFile(keys));
-const timing = { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs };
+const timing = { resultSlaMs: config.resultSlaMs, reviewSlaMs: config.reviewSlaMs, openSlaMs: config.openSlaMs, maxCaptureDelayMs: config.maxCaptureDelayMs };
 const api = async (method: string, url: string, token?: string, body?: unknown, headers: Record<string, string> = {}) => {
   const res = await app.inject({ method: method as 'GET', url, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { payload: JSON.stringify(body) } : {}) });
   return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };

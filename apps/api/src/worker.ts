@@ -1,53 +1,127 @@
 import { randomBytes } from 'node:crypto';
-import { hostname } from 'node:os';
 import { pruneNonces } from './auth/envelope.ts';
 import { pruneBetChanges } from './lib/statements.ts';
 import { type Db, tx } from './lib/db.ts';
 import { type MailTransport, deliverMail } from './lib/mailer.ts';
+import { localWorkerPrefix } from './lib/workerId.ts';
 import { AGENT_HINT, ALERT_TRIAGE, APPLICATION_HINT, type Decider, DecisionError, PROMOTION_HINT, REVIEW_HINT, saveHint, scrubContact, scrubDetails } from './lib/decisions.ts';
 import { deliverDue } from './routes/partner.ts';
 import { EventBatch, publish } from './lib/events.ts';
 import { recoverPayments } from './payments/recovery.ts';
 import type { Providers } from './providers/types.ts';
-import { type RoundRow, type Timing, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
+import { type TableRow, tableReadiness } from './rounds/readiness.ts';
+import { type RoundRow, type Timing, alert, ensureOpenRound, lockRound, resolve, voidRound } from './rounds/service.ts';
 
 /**
  * Durable post-commit work (docs/13 §4):
  * - outbox jobs: resolve_round (idempotent) and void_round (rejected evidence → refund);
  * - the sweeper: result deadline for LOCKED/DEALT, review SLA for REVIEW, immediate void of
- *   EVIDENCE_REJECTED, re-enqueue of DEALT rounds, and reopening betting on healthy tables;
- * - webhook delivery (claimed rows, safe with several workers) and nonce pruning;
+ *   EVIDENCE_REJECTED, open SLA for OPEN rounds at tables that stopped being ready, re-enqueue of
+ *   DEALT rounds, and reopening betting on healthy tables;
+ * - webhook delivery (claimed rows, safe with several workers), nonce pruning and the purge of
+ *   expired sessions, tokens and stale login failures (stored idempotent responses are kept);
  * - payment recovery: pending payments without a provider reference are asked again (docs/21).
  */
+
+/** Attempts per outbox job before it is parked (failed_at) and a critical alert is raised. */
+export const OUTBOX_MAX_ATTEMPTS = 8;
+/** Wait before attempt n+1 after n failures: 1 s, 2, 4, … capped at 5 min. */
+export const outboxBackoffMs = (failures: number): number => Math.min(300_000, 1000 * 2 ** Math.max(0, failures - 1));
+
+interface OutboxJob { id: number; kind: string; ref: string; attempts: number }
+
+/**
+ * A handler that threw rolled its transaction back; the job is rescheduled with backoff so the jobs
+ * behind it run on this pass, and after OUTBOX_MAX_ATTEMPTS it is parked for a person to look at.
+ */
+export async function recordOutboxFailure(db: Db, job: OutboxJob, e: unknown): Promise<void> {
+  const attempts = job.attempts + 1;
+  const error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+  const parked = attempts >= OUTBOX_MAX_ATTEMPTS;
+  const recorded = await tx(db, async (c) => {
+    // Compare-and-set on the attempt this worker ran: the failed transaction released the row lock,
+    // so another worker may already have run the job to completion or recorded this same attempt.
+    // A stale update must never reopen a finished job, overwrite newer retry counts or raise a false alert.
+    const u = await c.query(
+      `update outbox set attempts = $2, last_error = $3, next_attempt_at = now() + ($4 || ' milliseconds')::interval,
+              failed_at = case when $5 then now() end
+        where id = $1 and done_at is null and failed_at is null and attempts = $6`,
+      [job.id, attempts, error, String(outboxBackoffMs(attempts)), parked, job.attempts]);
+    if (!u.rowCount) return false;
+    if (parked) await alert(c, { roundId: job.ref, kind: 'outbox_job_failed', severity: 'critical', details: { outboxId: job.id, kind: job.kind, ref: job.ref, attempts, error } });
+    return true;
+  });
+  if (!recorded) return;
+  console.error(`outbox job ${job.id} (${job.kind} ${job.ref}) ${parked ? 'parked' : 'will retry'} after attempt ${attempts}/${OUTBOX_MAX_ATTEMPTS}: ${error}`);
+}
 
 export async function runOutboxOnce(db: Db, t: Timing, limit = 50): Promise<number> {
   let done = 0;
   for (let i = 0; i < limit; i++) {
     const ev = new EventBatch();
-    const did = await tx(db, async (c) => {
-      const job = (await c.query<{ id: number; kind: string; ref: string }>(
-        'select id, kind, ref from outbox where done_at is null order by id limit 1 for update skip locked')).rows[0];
-      if (!job) return false;
-      if (job.kind === 'resolve_round') await resolve(c, job.ref, t, ev);
-      else if (job.kind === 'void_round') {
-        const r = await lockRound(c, job.ref);
-        await voidRound(c, r, 'evidence rejected', 'system:evidence', ev, ['EVIDENCE_REJECTED']);
-      } else if (job.kind === 'void_paused') {
-        const r = await lockRound(c, job.ref);
-        await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev, ['OPEN', 'LOCKED', 'DEALT', 'REVIEW']);
-      } else if (job.kind === 'void_round_migrated') {
-        // Migration 021: the hand of a free-chip manual table that became play money only.
-        const r = await lockRound(c, job.ref);
-        await voidRound(c, r, 'manual tables are play money only (migration 021)', 'system:migration', ev, ['OPEN', 'LOCKED']);
-      }
-      await c.query('update outbox set done_at = now() where id = $1', [job.id]);
-      return true;
-    });
+    const claimed: { job: OutboxJob | null } = { job: null };
+    let did: boolean;
+    try {
+      did = await tx(db, async (c) => {
+        const job = (await c.query<OutboxJob>(
+          `select id, kind, ref, attempts from outbox where done_at is null and failed_at is null and next_attempt_at <= now()
+            order by next_attempt_at, id limit 1 for update skip locked`)).rows[0];
+        claimed.job = job ?? null;
+        if (!job) return false;
+        if (job.kind === 'resolve_round') await resolve(c, job.ref, t, ev);
+        else if (job.kind === 'void_round') {
+          const r = await lockRound(c, job.ref);
+          await voidRound(c, r, 'evidence rejected', 'system:evidence', ev, ['EVIDENCE_REJECTED']);
+        } else if (job.kind === 'void_paused') {
+          const r = await lockRound(c, job.ref);
+          await voidRound(c, r, 'table paused by outcome monitor', 'system:monitor', ev, ['OPEN', 'LOCKED', 'DEALT', 'REVIEW']);
+        } else if (job.kind === 'void_round_migrated') {
+          // Migration 021: the hand of a free-chip manual table that became play money only.
+          const r = await lockRound(c, job.ref);
+          await voidRound(c, r, 'manual tables are play money only (migration 021)', 'system:migration', ev, ['OPEN', 'LOCKED']);
+        }
+        await c.query('update outbox set done_at = now() where id = $1', [job.id]);
+        return true;
+      });
+    } catch (e) {
+      if (!claimed.job) throw e;
+      await recordOutboxFailure(db, claimed.job, e);
+      continue;
+    }
     publish(ev);
     if (!did) break;
     done++;
   }
   return done;
+}
+
+/**
+ * OPEN SLA (docs/13 §4): an OPEN round has no deadline of its own, so when its table stops being
+ * ready (heartbeat gone, paused, club suspended) after bets were accepted, the stakes would be held
+ * for good. A round OPEN for longer than OPEN_SLA_MS at a table that is not ready is voided and
+ * refunded. A ready table is never touched, however old its open round.
+ */
+export async function sweepStaleOpenRounds(db: Db, t: Timing): Promise<number> {
+  let voided = 0;
+  const stale = (await db.query<{ id: string; table_id: string }>(
+    `select id, table_id from rounds where state = 'OPEN' and opened_at + ($1 || ' milliseconds')::interval <= clock_timestamp()`, [String(t.openSlaMs)])).rows;
+  for (const s of stale) {
+    const table = (await db.query<TableRow>('select * from poker_tables where id = $1', [s.table_id])).rows[0];
+    if (!table || (await tableReadiness(db, table)).ok) continue;
+    const ev = new EventBatch();
+    const ok = await tx(db, async (c) => {
+      const r = await lockRound(c, s.id);
+      // Re-checked with the table row locked for share (round → table, the documented order). A
+      // heartbeat is an update of that row, so one in flight is waited for and then seen, and one
+      // after this check waits until the void has committed: a table that just became ready keeps its round.
+      const table = (await c.query<TableRow>('select * from poker_tables where id = $1 for share', [r.table_id])).rows[0];
+      if (!table || (await tableReadiness(c, table)).ok) return false;
+      return voidRound(c, r, 'open deadline passed: table not ready', 'system:sweeper', ev, ['OPEN']);
+    });
+    publish(ev);
+    if (ok) voided++;
+  }
+  return voided;
 }
 
 export async function sweepOnce(db: Db, t: Timing): Promise<{ voided: number; reenqueued: number; opened: number }> {
@@ -69,6 +143,7 @@ export async function sweepOnce(db: Db, t: Timing): Promise<{ voided: number; re
     publish(ev);
     if (ok) voided++;
   }
+  voided += await sweepStaleOpenRounds(db, t);
   const dealt = await db.query(`insert into outbox (kind, ref)
      select 'resolve_round', r.id from rounds r join captures c on c.round_id = r.id and c.image is not null
       where r.state = 'DEALT' and (select count(*) from flop_entries e where e.round_id = r.id) = 2
@@ -84,13 +159,42 @@ export async function sweepOnce(db: Db, t: Timing): Promise<{ voided: number; re
   return { voided, reenqueued, opened };
 }
 
+/** Rows that expired (or were spent) this long ago are of no use to anyone and are purged. */
+export const EXPIRED_RETENTION = '7 days';
+
+/**
+ * Purges rows past their use, in batches (as pruneNonces): sessions and partner tokens expired for
+ * EXPIRED_RETENTION, email tokens used or expired for that long, and login failures that old (a
+ * success deletes them at once; what is left is an account nobody signed in to since). Returns the
+ * number of rows deleted. Stored idempotent responses are kept: a retry with the original key gets
+ * the original response however late it comes (docs/02, docs/13 §5), and purging them would turn a
+ * delayed retry of a money write into a second attempt.
+ */
+export async function pruneExpired(db: Db, batch = 5000, maxBatches = 20): Promise<number> {
+  const sweeps = [
+    ['sessions', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
+    ['partner_tokens', `expires_at < now() - interval '${EXPIRED_RETENTION}'`],
+    ['email_tokens', `coalesce(used_at, expires_at) < now() - interval '${EXPIRED_RETENTION}'`],
+    ['login_failures', `at < now() - interval '${EXPIRED_RETENTION}'`],
+  ] as const;
+  let total = 0;
+  for (const [table, where] of sweeps) {
+    for (let i = 0; i < maxBatches; i++) {
+      const r = await db.query(`delete from ${table} where ctid = any(array(select ctid from ${table} where ${where} limit $1))`, [batch]);
+      total += r.rowCount ?? 0;
+      if ((r.rowCount ?? 0) < batch) break;
+    }
+  }
+  return total;
+}
+
 /** Records that this worker loop is alive (GET /v1/health/ready checks the freshest beat). */
 export async function beat(db: Db, workerId: string): Promise<void> {
   await db.query(`insert into worker_heartbeats (worker_id) values ($1)
     on conflict (worker_id) do update set beat_at = now(), ticks = worker_heartbeats.ticks + 1`, [workerId]);
 }
 
-export const newWorkerId = () => `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
+export const newWorkerId = () => `${localWorkerPrefix()}${randomBytes(4).toString('hex')}`;
 
 /** Starts the worker loop. The returned stop() waits for a running tick, then removes the heartbeat. */
 export interface WorkerMail { transport: MailTransport | null; from: string }
@@ -209,11 +313,13 @@ export function startWorker(db: Db, t: Timing, everyMs = 1000, mail?: WorkerMail
       const swept = await sweepOnce(db, t);
       // Payments whose provider call never finished are asked again (payments/recovery.ts).
       const recovered = providers ? await recoverPayments(db, providers) : { asked: 0, final: 0 };
-      // Housekeeping once a minute: consumed request nonces past the replay window.
+      // Housekeeping once a minute: consumed request nonces past the replay window, and rows
+      // (sessions, tokens, login failures) long expired.
       if (Date.now() - prunedAt >= 60_000) {
         prunedAt = Date.now();
         await pruneNonces(db);
         await pruneBetChanges(db);
+        await pruneExpired(db);
       }
       return jobs > 0 || swept.voided + swept.reenqueued + swept.opened > 0 || recovered.asked > 0;
     } catch (e) {

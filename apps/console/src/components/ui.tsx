@@ -83,6 +83,16 @@ export function ErrorBox({ error, onRetry }: { error: unknown; onRetry?: () => v
   );
 }
 
+/** RequireAuth when GET /v1/me failed: retry it, or sign out to get back to the login page. */
+export function SessionError({ error, onRetry, onSignOut }: { error: unknown; onRetry: () => void; onSignOut: () => void }) {
+  return (
+    <div className="mx-auto max-w-lg space-y-3 p-10">
+      <ErrorBox error={error} onRetry={onRetry} />
+      <Button variant="ghost" size="sm" onClick={onSignOut}>Sign out</Button>
+    </div>
+  );
+}
+
 export function Loading({ label = 'Loading…', rows = 0 }: { label?: string; rows?: number }) {
   if (rows > 0) {
     return (

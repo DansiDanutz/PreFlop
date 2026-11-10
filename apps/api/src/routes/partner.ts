@@ -190,7 +190,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
          from bets b join users u on u.id = b.user_id join rounds r on r.id = b.round_id join poker_tables t on t.id = r.table_id
         where b.partner_id = $1 order by b.placed_at desc limit $2`, [org.id, limit])).rows };
   });
-  const widgetView = (orgId: string, settings: Record<string, unknown>) => ({ settings, snippet: widgetSnippet(orgId, settings) });
+  const widgetView = (orgId: string, settings: Record<string, unknown>) => ({ settings, snippet: widgetSnippet(orgId, settings, ctx.config.mail.webUrl) });
   app.get(`${P}/widget`, async (req) => {
     const { org } = await requireOrg(ctx, req, oid(req), { kinds: ['partner'] });
     return widgetView(org.id, (org.settings.widget as Record<string, unknown>) ?? {});
@@ -216,6 +216,8 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     await ctx.db.query(`insert into partner_tokens (token_sha256, client_id, org_id, expires_at) values ($1, $2, $3, now() + interval '1 hour')`, [sha(token), c.id, c.org_id]);
     return { access_token: token, token_type: 'Bearer', expires_in: 3600 };
   });
+  /** The partner's own player id, as a path parameter (same bounds as player_ref in the bodies). */
+  const PlayerRef = z.object({ ref: z.string().min(1).max(100) });
   app.post('/v1/partner/players', async (req, reply) => {
     const p = await partnerFromToken(ctx.db, req);
     const b = z.object({ player_ref: z.string().min(1).max(100), display_name: z.string().max(60).optional(), date_of_birth: DateOfBirth.optional() }).parse(req.body);
@@ -223,10 +225,10 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const id = await partnerPlayer(ctx.db, p.orgId, b.player_ref, b.display_name, b.date_of_birth);
     return reply.code(201).send({ player_ref: b.player_ref, user_id: id });
   });
-  /** A player session for the widget iframe (?token=…). Never expose the partner token to browsers. */
+  /** A player session for the widget iframe (#token=…, see widget.ts). Never expose the partner token to browsers. */
   app.post('/v1/partner/players/:ref/session', async (req) => {
     const p = await partnerFromToken(ctx.db, req);
-    const { ref } = req.params as { ref: string };
+    const { ref } = PlayerRef.parse(req.params);
     const { date_of_birth: dob } = z.object({ date_of_birth: DateOfBirth.optional() }).parse(req.body ?? {});
     if (dob && !isAdult(dob)) throw new ApiError(403, 'underage', 'players must be 18 or over');
     const id = await partnerPlayer(ctx.db, p.orgId, ref, undefined, dob);
@@ -256,7 +258,7 @@ export async function partnerRoutes(app: FastifyInstance, ctx: AppContext) {
     const p = await partnerFromToken(ctx.db, req);
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw badRequest('Idempotency-Key header required (8–200 characters)');
-    const { ref } = req.params as { ref: string };
+    const { ref } = PlayerRef.parse(req.params);
     const b = z.object({ amount_minor: PositiveMinor, mode: z.enum(['play', 'virtual-chips']).default('virtual-chips') }).parse(req.body);
     const id = await partnerPlayer(ctx.db, p.orgId, ref);
     const currency = b.mode === 'play' ? 'PLAY' : 'CHIP';
