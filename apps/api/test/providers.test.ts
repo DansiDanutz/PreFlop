@@ -249,6 +249,41 @@ describe('provider adapters', () => {
     expect((await h.api('GET', '/v1/me/payments', p.token)).body.payments.find((x: any) => x.id === r3.body.payment.id).status).toBe('failed');
   });
 
+  it('a completed webhook that reports another amount or currency credits nothing: the payment is held for review until the amounts agree', async () => {
+    const p = await verifiedPlayer('Short');
+    const r = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-fiat', currency: 'EUR', amount_minor: 5_000, method: 'card' }, idemKey());
+    const review = async () => (await h.db.query('select status, details from payments where id = $1', [r.body.id])).rows[0];
+    // Underpaid: 10.00 arrived for a 50.00 deposit.
+    expect((await hook('psp-test', [{ type: 'payment', ref: r.body.provider_ref, status: 'completed', amountMinor: 1_000, currency: 'EUR' }])).body).toEqual({ received: 1, applied: 1 });
+    expect(await wallet(p.id, 'real-fiat', 'EUR')).toBe(0);
+    expect(await review()).toMatchObject({ status: 'pending', details: { review: { reason: 'amount_mismatch', reported_amount_minor: 1_000, reported_currency: 'EUR' } } });
+    // The right number in the wrong currency is no better.
+    await hook('psp-test', [{ type: 'payment', ref: r.body.provider_ref, status: 'completed', amountMinor: 5_000, currency: 'USD' }]);
+    expect(await wallet(p.id, 'real-fiat', 'EUR')).toBe(0);
+    expect((await review()).details.review).toMatchObject({ reported_amount_minor: 5_000, reported_currency: 'USD' });
+    const audited = (await h.db.query(`select event::jsonb as e from audit_log where event::jsonb->>'type' = 'payment.amount_mismatch' and event::jsonb->>'paymentId' = $1 order by seq`, [r.body.id])).rows;
+    expect(audited).toHaveLength(2);
+    expect(audited[0].e).toMatchObject({ expectedAmountMinor: 5_000, expectedCurrency: 'EUR', reportedAmountMinor: 1_000 });
+    // The provider reports the full amount: credited once, and the review mark is cleared.
+    await hook('psp-test', [{ type: 'payment', ref: r.body.provider_ref, status: 'completed', amountMinor: 5_000, currency: 'EUR' }]);
+    expect(await wallet(p.id, 'real-fiat', 'EUR')).toBe(5_000);
+    expect(await review()).toMatchObject({ status: 'completed', details: { review: null } });
+  });
+
+  it('an early webhook keeps the amount it reported: a short payment is still held when its reference arrives', async () => {
+    const p = await verifiedPlayer('EarlyShort');
+    const k = idemKey();
+    const id = keyedRef('pay', `user:${p.id}`, k['idempotency-key']!);
+    downNext.add(id);
+    const body = { mode: 'real-crypto', currency: 'USDT', amount_minor: 5_000_000, method: 'crypto' };
+    expect((await h.api('POST', '/v1/me/deposits', p.token, body, k)).status).toBe(502);
+    expect((await hook('custody-test', [{ type: 'payment', ref: `custody-test_${id}`, status: 'completed', amountMinor: 1_000_000, currency: 'USDT' }])).body).toEqual({ received: 1, applied: 0 });
+    downNext.delete(id);
+    expect((await h.api('POST', '/v1/me/deposits', p.token, body, k)).body).toMatchObject({ id, status: 'pending' });
+    expect(await wallet(p.id, 'real-crypto', 'USDT')).toBe(0);
+    expect((await h.db.query('select details from payments where id = $1', [id])).rows[0].details.review).toMatchObject({ reason: 'amount_mismatch', reported_amount_minor: 1_000_000 });
+  });
+
   it('a provider that does not answer keeps the payment pending: nothing is refunded on a guess, the same id is asked again, and an early webhook is kept until the reference arrives', async () => {
     const p = await verifiedPlayer('Down');
     const fund = await h.api('POST', '/v1/me/deposits', p.token, { mode: 'real-crypto', currency: 'USDT', amount_minor: 5_000_000, method: 'crypto' }, idemKey());
