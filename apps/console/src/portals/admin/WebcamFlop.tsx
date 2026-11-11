@@ -44,8 +44,10 @@ const cameraError = (e: unknown) => (e instanceof Error && e.name === 'NotAllowe
  * hands the flop to the operator, who confirms it. Nothing settles by itself. Recognition runs in
  * this browser (OpenCV.js); nothing leaves the laptop until the operator confirms.
  */
-export function WebcamFlop({ tableId, previousFlop, onReading, onCapture }: {
+export function WebcamFlop({ tableId, previousFlop, paused, onReading, onCapture }: {
   tableId: string;
+  /** True while the operator picks cards or confirms: the watcher stops so it never replaces them. */
+  paused: boolean;
   /** The last settled flop at this table: cards left on the felt are never taken for the new flop. */
   previousFlop: string[] | null;
   onReading: (cards: string[]) => void;
@@ -92,7 +94,9 @@ export function WebcamFlop({ tableId, previousFlop, onReading, onCapture }: {
       if (mounted.current) setDevices(all.filter((d) => d.kind === 'videoinput'));
     } catch (e) {
       if (!mounted.current || req !== request.current) return;
-      if (id) rememberCamera(tableId, null);
+      // A remembered camera that is gone (unplugged, virtual camera closed): forget it, so the next
+      // "Use webcam" opens the default camera instead of failing on the same device again.
+      if (id) { rememberCamera(tableId, null); setDeviceId(null); }
       setError(cameraError(e));
     }
   };
@@ -130,7 +134,7 @@ export function WebcamFlop({ tableId, previousFlop, onReading, onCapture }: {
 
   // Watching: a read every second; a flop read three times in a row is captured with its frame.
   useEffect(() => {
-    if (!watching || !stream) return;
+    if (!watching || paused || !stream) return;
     let state = initialWatch, running = false, cancelled = false;
     const tick = async () => {
       const v = video.current;
@@ -159,7 +163,7 @@ export function WebcamFlop({ tableId, previousFlop, onReading, onCapture }: {
     };
     const i = setInterval(() => void tick(), WATCH_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(i); };
-  }, [watching, stream]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [watching, paused, stream]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const unsure = reading?.guesses.filter((g) => g.confidence < MIN_CONFIDENCE) ?? [];
   return (
@@ -180,7 +184,8 @@ export function WebcamFlop({ tableId, previousFlop, onReading, onCapture }: {
         <span className="text-xs text-muted">Use the webcam over the table (or your streaming app's virtual camera). <Link to="/admin/manual/reader" className="underline">Test the reader</Link></span>
       </div>
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
-      {stream && watching && <p className="mt-2 text-xs text-muted" role="status">Watching for the flop: the frame is kept when the same three cards are read three times in a row.</p>}
+      {stream && watching && !paused && <p className="mt-2 text-xs text-muted" role="status">Watching for the flop: the frame is kept when the same three cards are read three times in a row.</p>}
+      {stream && watching && paused && <p className="mt-2 text-xs text-muted" role="status">Watching paused: you are picking the cards.</p>}
       {stream && <video ref={video} autoPlay playsInline muted className="mt-3 aspect-video w-full max-w-md rounded-[8px] border border-line bg-black" aria-label="Webcam view of the table" />}
       {reading && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" data-testid="webcam-reading">

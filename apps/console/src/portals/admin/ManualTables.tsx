@@ -56,12 +56,16 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
   const r = t.round;
   const [picked, setPicked] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
+  // Once the operator picks cards themselves, the watcher stops: a later camera reading never
+  // replaces their choice, nor the cards in an open confirmation.
+  const [edited, setEdited] = useState(false);
+  const pick = (cards: string[]) => { setEdited(true); setPicked(cards); };
   // The flop the webcam watcher captured for this hand, with its frame; still needs a staff tap.
   const [capture, setCapture] = useState<FlopCapture | null>(null);
   const [, tick] = useState(0);
   // A new hand clears the picker; the countdown re-renders every second while betting is closed.
   // A new hand (settled, or voided and replaced) clears the picker and any confirmation still open.
-  useEffect(() => { setPicked([]); setConfirming(false); setCapture(null); }, [r?.id]);
+  useEffect(() => { setPicked([]); setConfirming(false); setCapture(null); setEdited(false); }, [r?.id]);
   useEffect(() => {
     if (r?.state !== 'LOCKED') return;
     const i = setInterval(() => tick((n) => n + 1), 1000);
@@ -101,7 +105,9 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
           {r.state === 'LOCKED' && (
             <div className="space-y-3">
               {/* Keyed by the round: a new hand gets a fresh reader, so a proposal read for the previous hand can never be applied to this one. */}
-              <WebcamFlop key={r.id} tableId={t.id} previousFlop={t.last_settled?.flop ?? null} onReading={(cards) => setPicked(cards.slice(0, 3))} onCapture={(c) => { setCapture(c); setPicked(c.cards); }} />
+              <WebcamFlop key={r.id} tableId={t.id} previousFlop={t.last_settled?.flop ?? null} paused={edited || confirming}
+                onReading={(cards) => pick(cards.slice(0, 3))}
+                onCapture={(c) => { if (edited || confirming) return; setCapture(c); setPicked(c.cards); }} />
               {capture && (
                 <div className="flex flex-wrap items-start gap-4 rounded-[10px] border border-accent/50 bg-accent/5 p-3" data-testid="flop-capture">
                   <img src={capture.previewUrl} alt={`Frame the flop was read from: ${capture.cards.map(cardLabel).join(' ')}`} className="w-full max-w-xs rounded-[8px] border border-line" />
@@ -112,11 +118,11 @@ function ManualTableCard({ t, slaMs }: { t: ManualTable; slaMs: number }) {
                   </div>
                 </div>
               )}
-              <CardPicker picked={picked} onToggle={(c) => setPicked((p) => toggleCard(p, c))} />
+              <CardPicker picked={picked} onToggle={(c) => pick(toggleCard(picked, c))} />
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm text-muted">Flop: {picked.length ? <FlopText cards={picked} /> : 'pick three cards'}</span>
                 <Button onClick={() => setConfirming(true)} disabled={picked.length !== 3 || settle.isPending}>Settle hand</Button>
-                {picked.length > 0 && <Button variant="secondary" size="sm" onClick={() => setPicked([])}>Clear</Button>}
+                {picked.length > 0 && <Button variant="secondary" size="sm" onClick={() => pick([])}>Clear</Button>}
               </div>
             </div>
           )}
