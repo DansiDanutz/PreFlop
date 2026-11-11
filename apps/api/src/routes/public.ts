@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.ts';
 import { ApiError, notFound } from '../lib/errors.ts';
 import { localWorkerPrefix } from '../lib/workerId.ts';
+import { storedStream } from '../lib/streamLink.ts';
 import { type TableRow, tableReadiness } from '../rounds/readiness.ts';
 import { reviewDeadline, withReviewDeadline } from '../rounds/service.ts';
 
@@ -43,6 +44,7 @@ export async function tableSummaries(ctx: AppContext, where = 'true', params: un
       id: t.id, name: t.name, club_id: t.club_id, club_name: t.club_name, city: t.city, kind: t.kind, mode: t.mode, currency: t.currency,
       status: t.status, ready: ready.ok, problems: ready.problems,
       stream_live: !!t.link?.streamLive,
+      stream: storedStream(t),
       current_round: rounds[0] ? {
         id: rounds[0].id, hand_no: rounds[0].hand_no, state: rounds[0].state, step: rounds[0].procedure_step,
         review_deadline: reviewDeadline(rounds[0], ctx.config.reviewSlaMs),

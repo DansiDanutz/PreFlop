@@ -80,6 +80,13 @@ describe('security headers', () => {
     for (const [path, text] of Object.entries(generated())) expect(readFileSync(join(root, path), 'utf8'), path).toBe(text);
   });
 
+  it('the web app frames only the YouTube and Twitch players (manual table streams); the tablet frames nothing', () => {
+    for (const o of [{}, { embed: true, target: 'vercel' as const }, { target: 'nginx' as const }]) {
+      expect(cspFor('web', o)).toContain('frame-src https://www.youtube-nocookie.com https://player.twitch.tv;');
+    }
+    expect(cspFor('table')).toContain("frame-src 'none'");
+  });
+
   it('only the web /embed route can be framed, and only by https sites', () => {
     expect(cspFor('web')).toContain("frame-ancestors 'none'");
     expect(cspFor('console')).toContain("frame-ancestors 'none'");

@@ -3,6 +3,7 @@ import type { Tx } from '../lib/db.ts';
 import { conflict } from '../lib/errors.ts';
 import type { EventBatch } from '../lib/events.ts';
 import { tableReadiness } from './readiness.ts';
+import type { Snapshot } from './snapshot.ts';
 import { type RoundRow, type Timing, ensureOpenRound, event, getTable, parseThreeCards, settleRound, voidRound } from './service.ts';
 
 /**
@@ -39,7 +40,7 @@ export type ManualFlopOutcome =
  * Typed flop: LOCKED → DEALT → SETTLED in one transaction, then the next round opens. A flop typed
  * after the result deadline voids the hand (as the sweeper would) so an expired hand never pays.
  */
-export async function manualFlop(c: Tx, r: RoundRow, cards: unknown, userId: string, t: Timing, ev: EventBatch): Promise<ManualFlopOutcome> {
+export async function manualFlop(c: Tx, r: RoundRow, cards: unknown, userId: string, t: Timing, ev: EventBatch, snapshot: Snapshot | null = null): Promise<ManualFlopOutcome> {
   await manualTable(c, r);
   if (r.state !== 'LOCKED') throw conflict('invalid_round_state', r.state === 'OPEN' ? 'close betting before entering the flop' : `round is ${r.state}`);
   const valid = parseThreeCards(cards);
@@ -50,7 +51,11 @@ export async function manualFlop(c: Tx, r: RoundRow, cards: unknown, userId: str
   }
   await c.query(`update rounds set state = 'DEALT', deal_start_at = clock_timestamp(), procedure_step = 'dealing', flop_source = 'manual' where id = $1`, [r.id]);
   await event(c, r.id, 'manual_flop', `user:${userId}`);
-  await audit(c, { type: 'round.manual_flop', roundId: r.id, cards: valid, by: `user:${userId}` });
+  await audit(c, { type: 'round.manual_flop', roundId: r.id, cards: valid, by: `user:${userId}`, ...(snapshot ? { snapshotSha256: snapshot.sha256 } : {}) });
+  if (snapshot) {
+    await c.query('insert into manual_flop_snapshots (round_id, cards, read_cards, sha256, image, taken_by) values ($1, $2, $3, $4, $5, $6)',
+      [r.id, valid, snapshot.readCards, snapshot.sha256, snapshot.image, `user:${userId}`]);
+  }
   ev.push({ type: 'round.dealt', tableId: r.table_id, roundId: r.id, data: { handNo: r.hand_no, cards: valid } });
   const ok = await settleRound(c, { ...r, state: 'DEALT' }, valid, 'DEALT', `user:${userId}`, ev);
   if (!ok) throw conflict('invalid_round_state', 'the round changed while settling; reload');

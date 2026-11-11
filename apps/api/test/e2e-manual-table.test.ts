@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Browser, type Page, chromium } from 'playwright';
@@ -10,9 +11,9 @@ import { type Harness, bet, harness, walletOf } from './helpers.ts';
 /**
  * The operator's manual-table flow, end to end (docs/19): the real console (Vite dev server) against
  * the real API (this harness, listening on a port), in a real Chromium. The webcam is a canvas with
- * three drawn cards handed to the page as its camera. Sign in → close betting → use webcam → read
- * cards → use these cards → settle → the round is settled with those cards, the bet is paid and the
- * next hand is open. Needs a Chromium Playwright can launch (CI installs one; PLAYWRIGHT_CHROMIUM=<path>).
+ * three drawn cards handed to the page as its camera. Sign in → close betting → use webcam → the
+ * watcher captures the flop with its frame → confirm and settle → the round is settled with those
+ * cards, the frame is kept as evidence, the bet is paid and the next hand is open. Needs a Chromium Playwright can launch (CI installs one; PLAYWRIGHT_CHROMIUM=<path>).
  */
 
 const ADMIN = { email: 'e2e-admin@test.dev', password: 'admin-pass-1' };
@@ -120,20 +121,25 @@ describe('manual table, end to end in the console', () => {
     await card.getByRole('button', { name: 'Close betting' }).click();
     await card.getByRole('button', { name: 'Use webcam' }).click({ timeout: 30_000 });
     await page.waitForFunction(() => { const v = document.querySelector('video'); return !!v && v.videoWidth > 0; }, null, { timeout: 30_000 });
-    await card.getByRole('button', { name: 'Read cards' }).click();
-    // The first reading loads OpenCV.js (15 MB) in the browser.
-    const reading = card.getByTestId('webcam-reading');
-    await expect.poll(() => reading.textContent(), { timeout: 90_000 }).toContain('Read:');
-    await card.getByRole('button', { name: 'Use these cards' }).click();
+    // Watching starts with the camera: the first reading loads OpenCV.js (15 MB) in the browser, then
+    // three identical reads in a row capture the flop with its frame. Nothing settles without a tap.
+    const capture = card.getByTestId('flop-capture');
+    await expect.poll(() => capture.textContent(), { timeout: 90_000 }).toMatch(/A♥\s*K♦\s*7♣/);
     await expect.poll(() => card.getByText(/^Flop:/).textContent()).toMatch(/A♥\s*K♦\s*7♣/);
+    expect((await h.db.query<{ state: string }>('select state from rounds where id = $1', [`${table.id}:h1`])).rows[0]?.state).toBe('LOCKED');
 
-    await card.getByRole('button', { name: 'Settle hand' }).click();
+    await card.getByRole('button', { name: 'Confirm and settle' }).click();
     await page.getByRole('button', { name: 'Settle and pay' }).click();
 
     // The round settled on the cards the camera showed; the mixed-colour bet won; hand 2 is open.
     await expect.poll(async () => (await h.db.query<{ state: string }>('select state from rounds where id = $1', [`${table.id}:h1`])).rows[0]?.state, { timeout: 30_000 }).toBe('SETTLED');
     const round = (await h.db.query<{ flop: string[] }>('select flop from rounds where id = $1', [`${table.id}:h1`])).rows[0]!;
     expect(round.flop).toEqual(FLOP);
+    // The frame the flop was read from is kept with the hand: a JPEG whose SHA-256 matches.
+    const shot = (await h.db.query<{ cards: string[]; sha256: string; image: Buffer }>('select cards, sha256, image from manual_flop_snapshots where round_id = $1', [`${table.id}:h1`])).rows[0]!;
+    expect(shot.cards).toEqual(FLOP);
+    expect(shot.image.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+    expect(createHash('sha256').update(shot.image).digest('hex')).toBe(shot.sha256);
     // Paid exactly once, at the quoted payout: the stake left the wallet, the full return came back.
     expect(await walletOf(h, player.token)).toBe(before - 1_000 + payout);
     expect((await h.db.query<{ state: string }>('select state from rounds where id = $1', [`${table.id}:h2`])).rows[0]?.state).toBe('OPEN');

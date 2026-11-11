@@ -36,6 +36,9 @@ export interface TableRow {
   certification: Record<string, CertItem>;
   link: Omit<LinkSample, 'heartbeatAgeS'> | null;
   link_at: Date | null;
+  /** A manual table's YouTube/Twitch stream (migration 032); both null when it has none. */
+  stream_provider: 'youtube' | 'twitch' | null;
+  stream_id: string | null;
 }
 
 export async function physicalPlayEnabled(c: Db | Tx): Promise<boolean> {
